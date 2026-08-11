@@ -3,7 +3,6 @@ use std::collections::HashSet;
 use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_hir::{Block, BlockCheckMode, UnsafeSource};
 use rustc_lint::{LateContext, LateLintPass};
-use rustc_span::{BytePos, Span};
 
 use crate::baseline::emit;
 
@@ -32,70 +31,13 @@ impl StaleSafetyComment {
     }
 }
 
-const IDENT_STOPLIST: &[&str] = &[
-    "self", "Self", "mut", "true", "false", "None", "Some", "Ok", "Err", "Vec", "Box", "drop",
-    "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize", "f32",
-    "f64", "bool", "str", "String", "unsafe", "SAFETY",
-];
-
-/// Backticked mentions in comment text, reduced to their final identifier:
-/// `` `self.frames` `` and `` `VM::wake` `` both yield their last segment, and
-/// anything that is not identifier-shaped after that reduction is skipped.
-fn backticked_idents(text: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut rest = text;
-    while let Some(start) = rest.find('`') {
-        let after = &rest[start + 1..];
-        let Some(end) = after.find('`') else { break };
-        let token = &after[..end];
-        rest = &after[end + 1..];
-        let last = token
-            .trim_end_matches("()")
-            .rsplit(&[':', '.'][..])
-            .next()
-            .unwrap_or(token);
-        let is_ident = !last.is_empty()
-            && last
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_alphabetic() || c == '_')
-            && last.chars().all(|c| c.is_alphanumeric() || c == '_');
-        if is_ident && !IDENT_STOPLIST.contains(&last) {
-            out.push(last.to_string());
-        }
-    }
-    out
-}
-
-/// The contiguous run of `//` comment lines directly above `span`'s first
-/// line, joined, if any of them mentions SAFETY.
-fn safety_comment_above(cx: &LateContext<'_>, span: Span) -> Option<(String, Span)> {
-    let sm = cx.tcx.sess.source_map();
-    let lines = sm.span_to_lines(span).ok()?;
-    let file = lines.file;
-    let first = lines.lines.first()?.line_index;
-    let mut collected: Vec<String> = Vec::new();
-    let mut top = first;
-    for i in (0..first).rev() {
-        let line = file.get_line(i)?;
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("//") {
-            collected.push(trimmed.trim_start_matches('/').to_string());
-            top = i;
-        } else {
-            break;
-        }
-    }
-    if collected.is_empty() || !collected.iter().any(|l| l.contains("SAFETY")) {
-        return None;
-    }
-    collected.reverse();
-    let lo = file.line_bounds(top).start;
-    let hi = file.line_bounds(first.saturating_sub(1)).end;
-    Some((
-        collected.join("\n"),
-        Span::with_root_ctxt(BytePos(lo.0), BytePos(hi.0)),
-    ))
+/// The `//` run directly above `span`, when it mentions SAFETY.
+fn safety_comment_above(
+    cx: &LateContext<'_>,
+    span: rustc_span::Span,
+) -> Option<(String, rustc_span::Span)> {
+    let (text, cspan) = crate::claims::comment_above(cx, span)?;
+    text.contains("SAFETY").then_some((text, cspan))
 }
 
 impl<'tcx> LateLintPass<'tcx> for StaleSafetyComment {
@@ -148,7 +90,7 @@ impl<'tcx> LateLintPass<'tcx> for StaleSafetyComment {
             .map(|l| l.split("//").next().unwrap_or(""))
             .collect::<Vec<_>>()
             .join("\n");
-        for ident in backticked_idents(&comment) {
+        for ident in crate::claims::backticked_idents(&comment) {
             let in_file = code_only
                 .split(|c: char| !(c.is_alphanumeric() || c == '_'))
                 .any(|w| w == ident);

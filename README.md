@@ -30,6 +30,9 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 | `asymmetric_guard` | `self.can_x()` gating a mutation that touches state the guard never reads, so the guard cannot be sound |
 | `stale_safety_comment` | a `SAFETY:` comment naming an identifier that no longer exists in the function or the crate |
 | `unit_mismatch` | `timeout_ms + deadline_ns`: addition or comparison between names that claim different units |
+| `stale_panic_message` | a panic, assert, or `expect` message naming an identifier that no longer exists |
+| `lock_order` | two locks the crate acquires in both orders, with both locations named: the shape of a deadlock |
+| `forbidden_reach` | a config-declared ban ("from `sched::pick`, never reach `Vec::push`") violated by a concrete call path, printed as a witness chain |
 
 Each diagnostic states what the lint found, why the type is wrong, and the type that replaces it.
 
@@ -74,6 +77,13 @@ wildcard-local-enum-max-variants = 12
 # lines, (Span, u32) is flagged and (FileId, Span) is accepted.
 nonidentity-key-composite = true
 nonidentity-key-fixes = ["my_crate::span::FileId"]
+
+# Reachability bans. A finding prints the concrete call chain; dynamic
+# dispatch is invisible to the walk, so a clean run proves nothing, but every
+# finding is a path that exists.
+[[mordant.forbidden-reach]]
+from = "sched::pick"
+never = ["std::vec::Vec::push", "core::panicking"]
 ```
 
 ## Ratchet

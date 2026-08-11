@@ -14,11 +14,15 @@ dylint_linting::dylint_library!();
 mod asymmetric_guard;
 mod baseline;
 mod bypassed_validator;
+mod claims;
 mod discarded_error;
 mod exclusive_options;
+mod forbidden_reach;
 mod guard_flag;
+mod lock_order;
 mod nonidentity_key;
 mod parallel_bools;
+mod stale_panic_message;
 mod stale_safety_comment;
 mod stringified_error;
 mod stringly_error;
@@ -57,6 +61,9 @@ pub struct MordantConfig {
     /// suppress up to the recorded count per (lint, file) and surface only new
     /// findings. Regenerate with `MORDANT_BASELINE_WRITE=1`.
     pub baseline: Option<String>,
+    /// Reachability bans: from each matching root, no call path may reach a
+    /// banned definition. Findings carry the witness path.
+    pub forbidden_reach: Vec<forbidden_reach::ReachRule>,
 }
 
 fn default_min_fields() -> usize {
@@ -86,6 +93,9 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
         asymmetric_guard::ASYMMETRIC_GUARD,
         stale_safety_comment::STALE_SAFETY_COMMENT,
         unit_mismatch::UNIT_MISMATCH,
+        stale_panic_message::STALE_PANIC_MESSAGE,
+        lock_order::LOCK_ORDER,
+        forbidden_reach::FORBIDDEN_REACH,
         guard_flag::GUARD_FLAG,
         wildcard_local_enum::WILDCARD_LOCAL_ENUM,
         discarded_error::DISCARDED_ERROR,
@@ -103,6 +113,10 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
     lint_store.register_late_pass(|_| Box::new(asymmetric_guard::AsymmetricGuard::new()));
     lint_store.register_late_pass(|_| Box::new(stale_safety_comment::StaleSafetyComment::new()));
     lint_store.register_late_pass(|_| Box::new(unit_mismatch::UnitMismatch));
+    lint_store.register_late_pass(|_| Box::new(stale_panic_message::StalePanicMessage::new()));
+    lint_store.register_late_pass(|_| Box::new(lock_order::LockOrder::new()));
+    let c4 = config.clone();
+    lint_store.register_late_pass(move |_| Box::new(forbidden_reach::ForbiddenReach::new(&c4)));
     lint_store.register_late_pass(|_| Box::new(guard_flag::GuardFlag::new()));
     lint_store.register_late_pass(move |_| {
         Box::new(wildcard_local_enum::WildcardLocalEnum::new(&config))
@@ -123,6 +137,10 @@ fn ui() {
             nonidentity-key-methods = ["Value::to_raw"]
             nonidentity-key-composite = true
             nonidentity-key-fixes = ["FileId"]
+
+            [[mordant.forbidden-reach]]
+            from = "hot_path"
+            never = ["std::vec::Vec::push"]
             "#,
         )
         .run();
