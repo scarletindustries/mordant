@@ -33,6 +33,8 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 | `stale_panic_message` | a panic, assert, or `expect` message naming an identifier that no longer exists |
 | `lock_order` | two locks the crate acquires in both orders, with both locations named: the shape of a deadlock |
 | `forbidden_reach` | a config-declared ban ("from `sched::pick`, never reach `Vec::push`") violated by a concrete call path, printed as a witness chain |
+| `unread_none` | an `Option` field every reader unwraps and no reader handles: a state nobody survives, usually a two-phase object wanting two types |
+| `insert_then_unwrap` | `map.get(&k).unwrap()` re-fetching what `map.insert(k, ..)` just proved present, with nothing in between that could disturb either |
 
 Each diagnostic states what the lint found, why the type is wrong, and the type that replaces it.
 

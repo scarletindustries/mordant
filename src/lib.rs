@@ -20,6 +20,7 @@ mod discarded_error;
 mod exclusive_options;
 mod forbidden_reach;
 mod guard_flag;
+mod insert_then_unwrap;
 mod lock_order;
 mod nonidentity_key;
 mod parallel_bools;
@@ -29,6 +30,7 @@ mod stringified_error;
 mod stringly_error;
 mod unit_mismatch;
 mod unread_error_variant;
+mod unread_none;
 mod wildcard_local_enum;
 
 /// Read from `dylint.toml` under `[mordant]` in the linted workspace root.
@@ -98,6 +100,8 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
         lock_order::LOCK_ORDER,
         forbidden_reach::FORBIDDEN_REACH,
         guard_flag::GUARD_FLAG,
+        unread_none::UNREAD_NONE,
+        insert_then_unwrap::INSERT_THEN_UNWRAP,
         wildcard_local_enum::WILDCARD_LOCAL_ENUM,
         discarded_error::DISCARDED_ERROR,
     ]);
@@ -119,6 +123,8 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
     let c4 = config.clone();
     lint_store.register_late_pass(move |_| Box::new(forbidden_reach::ForbiddenReach::new(&c4)));
     lint_store.register_late_pass(|_| Box::new(guard_flag::GuardFlag::new()));
+    lint_store.register_late_pass(|_| Box::new(unread_none::UnreadNone::new()));
+    lint_store.register_late_pass(|_| Box::new(insert_then_unwrap::InsertThenUnwrap));
     lint_store.register_late_pass(move |_| {
         Box::new(wildcard_local_enum::WildcardLocalEnum::new(&config))
     });
