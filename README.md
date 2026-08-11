@@ -14,27 +14,27 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 
 ## Lints
 
-| lint | flags |
-|---|---|
-| `stringly_error` | `Result<T, String>` in a public signature, where a caller has no variants to match on |
-| `stringified_error` | the destruction site: `.map_err(\|e\| e.to_string())` on a typed error |
-| `exclusive_options` | a struct whose `Option` fields are never populated together, so the valid combinations are really an enum |
-| `parallel_bools` | bool fields only ever assigned as a pair, which together encode a state machine |
-| `nonidentity_key` | a map keyed on something that is not the canonical identity of what it names: a span, a pointer's bits, an unresolved path |
-| `bypassed_validator` | a struct literal that skips the type's own `Result<Self, _>` constructor |
-| `guard_flag` | a bool field that several methods test and bail on at entry, enforcing an ordering invariant at runtime |
-| `wildcard_local_enum` | a `_` arm over a small crate-local enum, which absorbs every future variant without a compile error |
-| `discarded_error` | `.ok();` in statement position, which reads like handling and makes the error unobservable |
+| lint                   | flags                                                                                                                                |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `stringly_error`       | `Result<T, String>` in a public signature, where a caller has no variants to match on                                                |
+| `stringified_error`    | the destruction site: `.map_err(\|e\| e.to_string())` on a typed error                                                               |
+| `exclusive_options`    | a struct whose `Option` fields are never populated together, so the valid combinations are really an enum                            |
+| `parallel_bools`       | bool fields only ever assigned as a pair, which together encode a state machine                                                      |
+| `nonidentity_key`      | a map keyed on something that is not the canonical identity of what it names: a span, a pointer's bits, an unresolved path           |
+| `bypassed_validator`   | a struct literal that skips the type's own `Result<Self, _>` constructor                                                             |
+| `guard_flag`           | a bool field that several methods test and bail on at entry, enforcing an ordering invariant at runtime                              |
+| `wildcard_local_enum`  | a `_` arm over a small crate-local enum, which absorbs every future variant without a compile error                                  |
+| `discarded_error`      | `.ok();` in statement position, which reads like handling and makes the error unobservable                                           |
 | `unread_error_variant` | a private enum variant that is constructed but never named by a pattern outside the enum's own impls, so its structure is never read |
-| `pub_invariant_fields` | a field of a validated type that is visible outside its module, so any holder can assign around the constructor's check |
-| `asymmetric_guard` | `self.can_x()` gating a mutation that touches state the guard never reads, so the guard cannot be sound |
-| `stale_safety_comment` | a `SAFETY:` comment naming an identifier that no longer exists in the file or any linked crate |
-| `unit_mismatch` | `timeout_ms + deadline_ns`: addition or comparison between names that claim different units |
-| `stale_panic_message` | a panic, assert, or `expect` message naming an identifier that no longer exists |
-| `lock_order` | two locks the crate acquires in both orders, with both locations named: the shape of a deadlock |
-| `forbidden_reach` | a config-declared ban ("from `sched::pick`, never reach `Vec::push`") violated by a concrete call path, printed as a witness chain |
-| `unread_none` | an `Option` field every reader unwraps and no reader handles: a state nobody survives, usually a two-phase object wanting two types |
-| `insert_then_unwrap` | `map.get(&k).unwrap()` re-fetching what `map.insert(k, ..)` just proved present, with nothing in between that could disturb either |
+| `pub_invariant_fields` | a field of a validated type that is visible outside its module, so any holder can assign around the constructor's check              |
+| `asymmetric_guard`     | `self.can_x()` gating a mutation that touches state the guard never reads, so the guard cannot be sound                              |
+| `stale_safety_comment` | a `SAFETY:` comment naming an identifier that no longer exists in the file or any linked crate                                       |
+| `unit_mismatch`        | `timeout_ms + deadline_ns`: addition or comparison between names that claim different units                                          |
+| `stale_panic_message`  | a panic, assert, or `expect` message naming an identifier that no longer exists                                                      |
+| `lock_order`           | two locks the crate acquires in both orders, with both locations named: the shape of a deadlock                                      |
+| `forbidden_reach`      | a config-declared ban ("from `sched::pick`, never reach `Vec::push`") violated by a concrete call path, printed as a witness chain   |
+| `unread_none`          | an `Option` field every reader unwraps and no reader handles: a state nobody survives, usually a two-phase object wanting two types  |
+| `insert_then_unwrap`   | `map.get(&k).unwrap()` re-fetching what `map.insert(k, ..)` just proved present, with nothing in between that could disturb either   |
 
 Each diagnostic states what the lint found, why the type is wrong, and the type that replaces it.
 
