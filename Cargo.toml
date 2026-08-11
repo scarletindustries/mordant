@@ -1,0 +1,27 @@
+[package]
+name = "mordant"
+version = "0.1.0"
+authors = ["Alistair Smith <alistairsmith01@gmail.com>"]
+description = "Lints that find code where the type system is not enforcing the invariants the code depends on"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/scarletindustries/mordant"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+clippy_utils = { git = "https://github.com/rust-lang/rust-clippy", rev = "9fca3bc9fc2bc83c60bde26d18ed68f11564b228" }
+dylint_linting = "6.0"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+[dev-dependencies]
+dylint_testing = "6.0"
+
+[package.metadata.rust-analyzer]
+rustc_private = true
+
+[workspace.metadata.dylint]
+libraries = [{ path = "." }]

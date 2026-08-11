@@ -1,0 +1,44 @@
+warning: public signature returns `Result<_, String>`
+  --> $DIR/stringly_error.rs:7:48
+   |
+LL | pub fn public_string_err_is_flagged(x: u32) -> Result<u32, String> {
+   |                                                ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: a string error has no variants to match on; define an error enum and return it
+   = note: `#[warn(stringly_error)]` on by default
+
+warning: public signature returns `Result<_, &str>`
+  --> $DIR/stringly_error.rs:11:45
+   |
+LL | pub fn public_str_err_is_flagged(x: u32) -> Result<u32, &'static str> {
+   |                                             ^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: a string error has no variants to match on; define an error enum and return it
+
+warning: public signature returns `Result<_, Cow<str>>`
+  --> $DIR/stringly_error.rs:15:45
+   |
+LL | pub fn public_cow_err_is_flagged(x: u32) -> Result<u32, Cow<'static, str>> {
+   |                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: a string error has no variants to match on; define an error enum and return it
+
+warning: public signature returns `Result<_, String>`
+  --> $DIR/stringly_error.rs:20:58
+   |
+LL |     fn req$DIRred_method_is_flagged(&self, input: &str) -> Result<u32, String>;
+   |                                                          ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: a string error has no variants to match on; define an error enum and return it
+
+warning: typed error `std::num::ParseIntError` collapsed into a string
+  --> $DIR/stringly_error.rs:42:9
+   |
+LL |         s.parse().map(Numeric).map_err(|e| e.to_string())
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: return the error type, or an error enum with a variant that wraps it
+   = note: `#[warn(stringified_error)]` on by default
+
+warning: 5 warnings emitted
+

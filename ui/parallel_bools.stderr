@@ -1,0 +1,11 @@
+warning: the bool fields `done`, `running` of `Task` are only ever assigned together (2 sites in 2 functions)
+  --> $DIR/parallel_bools.rs:4:1
+   |
+LL | struct Task {
+   | ^^^^^^^^^^^
+   |
+   = help: together these fields encode one state; an enum makes the unpaired combinations unrepresentable
+   = note: `#[warn(parallel_bools)]` on by default
+
+warning: 1 warning emitted
+

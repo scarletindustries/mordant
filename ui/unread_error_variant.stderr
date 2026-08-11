@@ -1,0 +1,11 @@
+warning: `LoadError::Corrupt` is constructed here, but no pattern outside `LoadError`'s own impls ever names it
+  --> $DIR/unread_error_variant.rs:26:18
+   |
+LL |         1 => Err(LoadError::Corrupt("bad header".to_owned())),
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: the variant's structure is never read; handle it distinctly or collapse it into another variant
+   = note: `#[warn(unread_error_variant)]` on by default
+
+warning: 1 warning emitted
+

@@ -1,0 +1,26 @@
+warning: this arm absorbs every future variant of `Op` (3 variants today)
+  --> $DIR/wildcard_local_enum.rs:12:9
+   |
+LL |         _ => 0,
+   |         ^
+   |
+   = note: `#[warn(wildcard_local_enum)]` on by default
+help: list the remaining variants; the compiler then flags every new one added
+   |
+LL -         _ => 0,
+LL +         Op::Sub | Op::Mul => 0,
+   |
+
+warning: this arm absorbs every future variant of `Op` (3 variants today)
+  --> $DIR/wildcard_local_enum.rs:19:9
+   |
+LL |         other => cost(other),
+   |         ^^^^^
+   |
+help: list the remaining variants; the compiler then flags every new one added
+   |
+LL |         other @ (Op::Sub | Op::Mul) => cost(other),
+   |               +++++++++++++++++++++
+
+warning: 2 warnings emitted
+

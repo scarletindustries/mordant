@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    # Weekly: surface clippy_utils / rustc_private drift within a week even
+    # with no commits.
+    - cron: "0 6 * * 1"
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain pins the nightly; rustup resolves it on first cargo use.
+      - run: rustup show
+      # .cargo/config.toml names dylint-link as the linker, and the ui tests
+      # build a dylint driver, so both binaries have to exist on the runner.
+      - run: cargo install cargo-dylint dylint-link --locked
+      - run: cargo fmt --check
+      - run: cargo build
+      - run: cargo test
+      - run: cargo clippy --all-targets -- -D warnings
+      # Mordant lints itself: the workspace metadata points the library at
+      # its own source tree.
+      - run: cargo dylint --all
+        env:
+          DYLINT_RUSTFLAGS: -D warnings

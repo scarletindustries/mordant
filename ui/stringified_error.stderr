@@ -1,0 +1,19 @@
+warning: typed error `ParseError` collapsed into a string
+  --> $DIR/stringified_error.rs:23:5
+   |
+LL |     r.map_err(|e| e.to_string())
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: return the error type, or an error enum with a variant that wraps it
+   = note: `#[warn(stringified_error)]` on by default
+
+warning: typed error `ParseError` collapsed into a string
+  --> $DIR/stringified_error.rs:27:5
+   |
+LL |     r.map_err(|e| format!("parse failed: {e}"))
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: return the error type, or an error enum with a variant that wraps it
+
+warning: 2 warnings emitted
+

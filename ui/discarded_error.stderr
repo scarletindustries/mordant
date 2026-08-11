@@ -1,0 +1,11 @@
+warning: `.ok()` in statement position discards the error unobserved
+  --> $DIR/discarded_error.rs:8:5
+   |
+LL |     fallible().ok();
+   |     ^^^^^^^^^^^^^^^
+   |
+   = help: handle the error, or state the discard with `let _ = ...`
+   = note: `#[warn(discarded_error)]` on by default
+
+warning: 1 warning emitted
+

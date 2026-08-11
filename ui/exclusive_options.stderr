@@ -1,0 +1,11 @@
+warning: no construction of `Outcome` sets more than one of `ok`, `err` to `Some` (2 sites checked)
+  --> $DIR/exclusive_options.rs:4:1
+   |
+LL | struct Outcome {
+   | ^^^^^^^^^^^^^^
+   |
+   = help: these fields encode one state; an enum with one variant per field represents it
+   = note: `#[warn(exclusive_options)]` on by default
+
+warning: 1 warning emitted
+
