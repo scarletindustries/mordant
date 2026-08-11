@@ -1,5 +1,5 @@
 use clippy_utils::visitors::for_each_expr;
-use rustc_hir::{Block, Expr, ExprKind, QPath, Stmt, StmtKind};
+use rustc_hir::{Block, Expr, ExprKind, QPath, StmtKind};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::sym;
