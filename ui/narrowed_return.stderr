@@ -1,5 +1,5 @@
 warning: this arm absorbs every future variant of `Token` (3 variants today)
-  --> $DIR/narrowed_return.rs:48:9
+  --> $DIR/narrowed_return.rs:63:9
    |
 LL |         other => other,
    |         ^^^^^
@@ -19,5 +19,13 @@ LL |         Token::Eof => unreachable!("the tokenizer never yields Eof here"),
    = help: the return type promises more than the function delivers; narrow it and this arm becomes unnecessary at compile time
    = note: `#[warn(narrowed_return)]` on by default
 
-warning: 2 warnings emitted
+warning: `via_local` only ever returns `Space`, `Word`; this arm panics on `Eof`, which it never constructs
+  --> $DIR/narrowed_return.rs:41:9
+   |
+LL |         Token::Eof => unreachable!("never yielded by via_local"),
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: the return type promises more than the function delivers; narrow it and this arm becomes unnecessary at compile time
+
+warning: 3 warnings emitted
 

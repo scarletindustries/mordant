@@ -38,6 +38,7 @@ mod stringly_error;
 mod unit_mismatch;
 mod unread_error_variant;
 mod unread_none;
+mod variant_flow;
 mod wildcard_local_enum;
 
 /// Read from `dylint.toml` under `[mordant]` in the linted workspace root.

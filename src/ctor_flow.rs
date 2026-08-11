@@ -93,7 +93,7 @@ pub(crate) fn checked_fields(
 
 // ── MIR access ───────────────────────────────────────────────────────────────
 
-fn mir_for<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> Option<MirRef<'tcx>> {
+pub(crate) fn mir_for<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> Option<MirRef<'tcx>> {
     if !tcx.def_kind(def).is_fn_like() || !tcx.is_mir_available(def.to_def_id()) {
         return None;
     }
@@ -109,7 +109,7 @@ fn mir_for<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> Option<MirRef<'tcx>> {
     }
 }
 
-enum MirRef<'tcx> {
+pub(crate) enum MirRef<'tcx> {
     Steal(rustc_data_structures::sync::MappedReadGuard<'tcx, Body<'tcx>>),
     Opt(&'tcx Body<'tcx>),
 }

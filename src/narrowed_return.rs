@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 
-use clippy_utils::visitors::for_each_expr;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use rustc_hir::intravisit::FnKind;
@@ -11,7 +10,8 @@ use rustc_span::Span;
 use rustc_span::def_id::LocalDefId;
 
 use crate::baseline::emit;
-use crate::enum_facts::{arm_variant, ctor_literal_variant, is_panic_arm};
+use crate::enum_facts::{arm_variant, is_panic_arm};
+use crate::variant_flow::returned_variants;
 
 rustc_session::declare_lint! {
     /// Flags a panicking match arm for a variant the matched call can never
@@ -20,8 +20,10 @@ rustc_session::declare_lint! {
     /// is not among them. The return type promises more than the function
     /// delivers; narrowing it deletes the caller's panic arm at compile time.
     ///
-    /// Any return position that is not a constructor literal makes the set
-    /// unknowable and the function is skipped entirely.
+    /// The return set comes from MIR dataflow: constructor aggregates traced
+    /// through plain copies between locals, so `let t = ...; t` and branches
+    /// resolve. Anything untraceable — a parameter, a call result, a
+    /// projection — makes the set unknowable and the function is skipped.
     pub NARROWED_RETURN,
     Warn,
     "panicking arm for a variant the callee never constructs"
@@ -29,8 +31,8 @@ rustc_session::declare_lint! {
 
 #[derive(Default)]
 pub struct NarrowedReturn {
-    /// fn -> provably-complete set of returned variants.
-    returns: HashMap<DefId, HashSet<DefId>>,
+    /// fn -> its enum and the provably-complete set of returned variants.
+    returns: HashMap<DefId, (DefId, HashSet<rustc_abi::VariantIdx>)>,
     /// (callee, panicked variant, arm span, caller-visible name) discovered
     /// at match sites, resolved against `returns` at the end.
     suspects: Vec<(DefId, DefId, Span)>,
@@ -41,35 +43,6 @@ rustc_session::impl_lint_pass!(NarrowedReturn => [NARROWED_RETURN]);
 impl NarrowedReturn {
     pub fn new() -> Self {
         Self::default()
-    }
-}
-
-/// Collect every expression that can leave the function as its value:
-/// explicit `return e`, plus the tail position, followed through blocks,
-/// both `if` branches, and every match arm. Anything else in tail position
-/// (a loop, a call, a variable) is not a constructor literal and poisons.
-fn tail_exprs<'tcx>(e: &'tcx Expr<'tcx>, out: &mut Vec<&'tcx Expr<'tcx>>) {
-    match &e.kind {
-        ExprKind::Block(b, _) => {
-            if let Some(tail) = b.expr {
-                tail_exprs(tail, out);
-            } else {
-                // A block with no tail returns (); for an enum-returning fn
-                // that means this path diverges, contributing nothing.
-            }
-        }
-        ExprKind::If(_, then, els) => {
-            tail_exprs(then, out);
-            if let Some(els) = els {
-                tail_exprs(els, out);
-            }
-        }
-        ExprKind::Match(_, arms, _) => {
-            for arm in *arms {
-                tail_exprs(arm.body, out);
-            }
-        }
-        _ => out.push(e),
     }
 }
 
@@ -94,32 +67,8 @@ impl<'tcx> LateLintPass<'tcx> for NarrowedReturn {
         if !adt.is_enum() || !adt.did().is_local() {
             return;
         }
-
-        let mut leaves: Vec<&Expr<'_>> = Vec::new();
-        tail_exprs(body.value, &mut leaves);
-        for_each_expr(cx, body.value, |e: &Expr<'tcx>| {
-            if let ExprKind::Ret(Some(v)) = &e.kind {
-                tail_exprs(v, &mut leaves);
-            }
-            std::ops::ControlFlow::<()>::Continue(())
-        });
-
-        let mut set = HashSet::new();
-        for leaf in leaves {
-            // A diverging leaf (panic, return-of-return) yields no value.
-            if cx.typeck_results().expr_ty(leaf).is_never() {
-                continue;
-            }
-            match ctor_literal_variant(cx, leaf) {
-                Some(v) => {
-                    set.insert(v);
-                }
-                // One non-literal return and the whole set is unknowable.
-                None => return,
-            }
-        }
-        if !set.is_empty() {
-            self.returns.insert(def_id.to_def_id(), set);
+        if let Some(set) = returned_variants(cx, def_id, adt.did()) {
+            self.returns.insert(def_id.to_def_id(), (adt.did(), set));
         }
     }
 
@@ -155,15 +104,23 @@ impl<'tcx> LateLintPass<'tcx> for NarrowedReturn {
 
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
         for (callee, variant, span) in &self.suspects {
-            let Some(returned) = self.returns.get(callee) else {
+            let Some((enum_did, returned)) = self.returns.get(callee) else {
                 continue;
             };
-            if returned.contains(variant) {
+            let adt = cx.tcx.adt_def(*enum_did);
+            let Some((vidx, _)) = adt
+                .variants()
+                .iter_enumerated()
+                .find(|(_, v)| v.def_id == *variant)
+            else {
+                continue;
+            };
+            if returned.contains(&vidx) {
                 continue;
             }
             let mut names: Vec<String> = returned
                 .iter()
-                .map(|v| format!("`{}`", cx.tcx.item_name(*v)))
+                .map(|v| format!("`{}`", adt.variant(*v).name))
                 .collect();
             names.sort();
             emit(

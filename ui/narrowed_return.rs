@@ -27,6 +27,21 @@ fn count(n: u32) -> u32 {
     }
 }
 
+// Flagged too: the MIR dataflow follows the local binding and both branch
+// assignments, so indirection does not make the set unknowable.
+fn via_local(n: u32) -> Token {
+    let t = if n > 0 { Token::Word(n) } else { Token::Space };
+    t
+}
+
+fn count_via_local(n: u32) -> u32 {
+    match via_local(n) {
+        Token::Word(w) => w,
+        Token::Space => 0,
+        Token::Eof => unreachable!("never yielded by via_local"),
+    }
+}
+
 // Fine: this producer can return Eof, so the panic arm is reachable.
 fn next_or_eof(n: u32) -> Token {
     if n > 100 { Token::Eof } else { Token::Word(n) }
@@ -58,5 +73,5 @@ fn count_passthrough(t: Token) -> u32 {
 }
 
 fn main() {
-    let _ = count(1) + count_or_eof(2) + count_passthrough(Token::Space);
+    let _ = count(1) + count_or_eof(2) + count_passthrough(Token::Space) + count_via_local(3);
 }
