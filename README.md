@@ -27,6 +27,9 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 | `discarded_error` | `.ok();` in statement position, which reads like handling and makes the error unobservable |
 | `unread_error_variant` | a private enum variant that is constructed but never named by a pattern outside the enum's own impls, so its structure is never read |
 | `pub_invariant_fields` | a field of a validated type that is visible outside its module, so any holder can assign around the constructor's check |
+| `asymmetric_guard` | `self.can_x()` gating a mutation that touches state the guard never reads, so the guard cannot be sound |
+| `stale_safety_comment` | a `SAFETY:` comment naming an identifier that no longer exists in the function or the crate |
+| `unit_mismatch` | `timeout_ms + deadline_ns`: addition or comparison between names that claim different units |
 
 Each diagnostic states what the lint found, why the type is wrong, and the type that replaces it.
 

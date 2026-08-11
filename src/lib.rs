@@ -11,6 +11,7 @@ extern crate rustc_span;
 
 dylint_linting::dylint_library!();
 
+mod asymmetric_guard;
 mod baseline;
 mod bypassed_validator;
 mod discarded_error;
@@ -18,8 +19,10 @@ mod exclusive_options;
 mod guard_flag;
 mod nonidentity_key;
 mod parallel_bools;
+mod stale_safety_comment;
 mod stringified_error;
 mod stringly_error;
+mod unit_mismatch;
 mod unread_error_variant;
 mod wildcard_local_enum;
 
@@ -80,6 +83,9 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
         bypassed_validator::BYPASSED_VALIDATOR,
         bypassed_validator::PUB_INVARIANT_FIELDS,
         unread_error_variant::UNREAD_ERROR_VARIANT,
+        asymmetric_guard::ASYMMETRIC_GUARD,
+        stale_safety_comment::STALE_SAFETY_COMMENT,
+        unit_mismatch::UNIT_MISMATCH,
         guard_flag::GUARD_FLAG,
         wildcard_local_enum::WILDCARD_LOCAL_ENUM,
         discarded_error::DISCARDED_ERROR,
@@ -94,6 +100,9 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
     lint_store.register_late_pass(|_| Box::new(parallel_bools::ParallelBools::new()));
     lint_store.register_late_pass(|_| Box::new(bypassed_validator::BypassedValidator::new()));
     lint_store.register_late_pass(|_| Box::new(unread_error_variant::UnreadErrorVariant::new()));
+    lint_store.register_late_pass(|_| Box::new(asymmetric_guard::AsymmetricGuard::new()));
+    lint_store.register_late_pass(|_| Box::new(stale_safety_comment::StaleSafetyComment::new()));
+    lint_store.register_late_pass(|_| Box::new(unit_mismatch::UnitMismatch));
     lint_store.register_late_pass(|_| Box::new(guard_flag::GuardFlag::new()));
     lint_store.register_late_pass(move |_| {
         Box::new(wildcard_local_enum::WildcardLocalEnum::new(&config))
