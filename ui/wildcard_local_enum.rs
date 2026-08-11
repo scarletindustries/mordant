@@ -48,6 +48,36 @@ fn extractor_false_is_fine(o: &Op) -> bool {
     }
 }
 
+fn extractor_empty_slice_is_fine(o: &Op) -> &'static [u32] {
+    match o {
+        Op::Add => &[1],
+        _ => &[],
+    }
+}
+
+fn extractor_empty_vec_is_fine(o: &Op) -> Vec<u32> {
+    match o {
+        Op::Add => vec![1],
+        _ => Vec::new(),
+    }
+}
+
+fn extractor_return_none_is_fine(o: &Op) -> Option<u32> {
+    match o {
+        Op::Add => Some(1),
+        _ => return None,
+    }
+}
+
+// An #[allow] on the arm itself is honored.
+fn arm_allow_is_fine(o: &Op) -> u32 {
+    match o {
+        Op::Add => 1,
+        #[allow(unknown_lints, wildcard_local_enum)]
+        _ => 0,
+    }
+}
+
 fn foreign_enum_is_fine(x: Option<u32>) -> u32 {
     match x {
         Some(v) => v,
@@ -68,6 +98,10 @@ fn main() {
     let _ = exhaustive_is_fine(Op::Mul);
     let _ = extractor_none_is_fine(&Op::Add);
     let _ = extractor_false_is_fine(&Op::Sub);
+    let _ = extractor_empty_slice_is_fine(&Op::Add);
+    let _ = extractor_empty_vec_is_fine(&Op::Sub);
+    let _ = extractor_return_none_is_fine(&Op::Mul);
+    let _ = arm_allow_is_fine(&Op::Add);
     let _ = foreign_enum_is_fine(Some(1));
     let _ = non_enum_is_fine(1);
 }
