@@ -1,4 +1,4 @@
-warning: `LoadError::Corrupt` is constructed here, but no pattern outside `LoadError`'s own impls ever names it
+warning: `LoadError::Corrupt` is constructed here, but no pattern outside `LoadError`'s trait impls ever names it
   --> $DIR/unread_error_variant.rs:26:18
    |
 LL |         1 => Err(LoadError::Corrupt("bad header".to_owned())),

@@ -54,6 +54,26 @@ fn drain(p: Poll) -> u32 {
     }
 }
 
+// Fine: an inherent accessor is the crate genuinely reading the structure,
+// unlike a trait impl, so both variants count as named.
+enum Ceiling {
+    Budget,
+    Tripwire(u64),
+}
+
+impl Ceiling {
+    fn tenths(&self, budget: u64) -> u64 {
+        match self {
+            Ceiling::Budget => budget,
+            Ceiling::Tripwire(t) => *t,
+        }
+    }
+}
+
+fn resolve(budget: u64) -> u64 {
+    Ceiling::Budget.tenths(budget) + Ceiling::Tripwire(3).tenths(budget)
+}
+
 // No pattern anywhere names any variant, so matching is not how this enum is
 // consumed and the lint stays silent about all of it.
 enum Trace {
@@ -76,6 +96,7 @@ fn trace() {
 
 fn main() {
     let _ = handle(0);
+    let _ = resolve(10);
     let _ = drain(Poll::Ready(1));
     let _ = drain(Poll::Pending);
     trace();
