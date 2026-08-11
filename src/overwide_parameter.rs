@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
 use clippy_utils::visitors::for_each_expr;
-use rustc_hir::def::{CtorOf, DefKind, Res};
+use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::DefId;
 use rustc_hir::intravisit::FnKind;
-use rustc_hir::{Body, Expr, ExprKind, FnDecl, HirId, Pat, PatExpr, PatExprKind, PatKind, QPath};
+use rustc_hir::{Body, Expr, ExprKind, FnDecl, HirId, PatKind, QPath};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::Span;
@@ -53,65 +53,6 @@ impl OverwideParameter {
     pub fn new() -> Self {
         Self::default()
     }
-}
-
-/// The variant a constructor-literal argument passes, or None for anything
-/// short of a literal constructor.
-fn ctor_literal_variant(cx: &LateContext<'_>, e: &Expr<'_>) -> Option<DefId> {
-    let res = match &e.kind {
-        ExprKind::Call(callee, _) => {
-            let ExprKind::Path(qpath) = &callee.kind else {
-                return None;
-            };
-            cx.qpath_res(qpath, callee.hir_id)
-        }
-        ExprKind::Path(qpath) => cx.qpath_res(qpath, e.hir_id),
-        ExprKind::Struct(qpath, ..) => cx.qpath_res(qpath, e.hir_id),
-        _ => return None,
-    };
-    match res {
-        Res::Def(DefKind::Variant, id) => Some(id),
-        Res::Def(DefKind::Ctor(CtorOf::Variant, _), id) => Some(cx.tcx.parent(id)),
-        _ => None,
-    }
-}
-
-/// The variant a match-arm pattern names at its head.
-fn arm_variant(cx: &LateContext<'_>, pat: &Pat<'_>) -> Option<DefId> {
-    let qpath = match &pat.kind {
-        PatKind::TupleStruct(qpath, ..) | PatKind::Struct(qpath, ..) => qpath,
-        PatKind::Expr(PatExpr {
-            kind: PatExprKind::Path(qpath),
-            ..
-        }) => qpath,
-        _ => return None,
-    };
-    match cx.qpath_res(qpath, pat.hir_id) {
-        Res::Def(DefKind::Variant, id) => Some(id),
-        Res::Def(DefKind::Ctor(CtorOf::Variant, _), id) => Some(cx.tcx.parent(id)),
-        _ => None,
-    }
-}
-
-/// A diverging arm that is a panic, not a `return`/`continue`: never-typed
-/// AND rooted in a panic-family macro.
-fn is_panic_arm(cx: &LateContext<'_>, body: &Expr<'_>) -> bool {
-    if !cx.typeck_results().expr_ty(body).is_never() {
-        return false;
-    }
-    let mut inner = body;
-    while let ExprKind::Block(b, _) = inner.kind {
-        match (b.stmts.len(), b.expr) {
-            (0, Some(tail)) => inner = tail,
-            _ => break,
-        }
-    }
-    clippy_utils::macros::macro_backtrace(inner.span).any(|mac| {
-        matches!(
-            cx.tcx.item_name(mac.def_id).as_str(),
-            "panic" | "unreachable" | "todo" | "unimplemented"
-        )
-    })
 }
 
 impl<'tcx> LateLintPass<'tcx> for OverwideParameter {
@@ -173,8 +114,8 @@ impl<'tcx> LateLintPass<'tcx> for OverwideParameter {
                         if arm.guard.is_some() {
                             continue;
                         }
-                        if let Some(variant) = arm_variant(cx, arm.pat)
-                            && is_panic_arm(cx, arm.body)
+                        if let Some(variant) = crate::enum_facts::arm_variant(cx, arm.pat)
+                            && crate::enum_facts::is_panic_arm(cx, arm.body)
                             && let Some(f) = &mut facts[idx]
                         {
                             f.panicking.push((variant, arm.span));
@@ -204,7 +145,7 @@ impl<'tcx> LateLintPass<'tcx> for OverwideParameter {
                 for (i, arg) in args.iter().enumerate() {
                     let facts = self.calls.entry((def, i)).or_default();
                     facts.sites += 1;
-                    match ctor_literal_variant(cx, arg) {
+                    match crate::enum_facts::ctor_literal_variant(cx, arg) {
                         Some(v) => {
                             facts.passed.insert(v);
                         }
@@ -225,7 +166,7 @@ impl<'tcx> LateLintPass<'tcx> for OverwideParameter {
                 for (i, arg) in args.iter().enumerate() {
                     let facts = self.calls.entry((def, i + 1)).or_default();
                     facts.sites += 1;
-                    match ctor_literal_variant(cx, arg) {
+                    match crate::enum_facts::ctor_literal_variant(cx, arg) {
                         Some(v) => {
                             facts.passed.insert(v);
                         }

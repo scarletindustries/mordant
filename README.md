@@ -36,6 +36,7 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 | `unread_none`          | an `Option` field every reader unwraps and no reader handles: a state nobody survives, usually a two-phase object wanting two types                                       |
 | `insert_then_unwrap`   | `map.get(&k).unwrap()` re-fetching what `map.insert(k, ..)` just proved present, with nothing in between that could disturb either                                        |
 | `overwide_parameter`   | a panicking arm for a variant no existing call site passes: the parameter type is wider than the function's domain, and narrowing it turns the panic into a compile error |
+| `narrowed_return`      | a panicking arm for a variant the callee provably never constructs: the return type promises more than the function delivers         |
 
 Each diagnostic states what the lint found, why the type is wrong, and the type that replaces it.
 

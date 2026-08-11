@@ -17,11 +17,13 @@ mod baseline;
 mod bypassed_validator;
 mod claims;
 mod discarded_error;
+mod enum_facts;
 mod exclusive_options;
 mod forbidden_reach;
 mod guard_flag;
 mod insert_then_unwrap;
 mod lock_order;
+mod narrowed_return;
 mod nonidentity_key;
 mod overwide_parameter;
 mod parallel_bools;
@@ -104,6 +106,7 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
         unread_none::UNREAD_NONE,
         insert_then_unwrap::INSERT_THEN_UNWRAP,
         overwide_parameter::OVERWIDE_PARAMETER,
+        narrowed_return::NARROWED_RETURN,
         wildcard_local_enum::WILDCARD_LOCAL_ENUM,
         discarded_error::DISCARDED_ERROR,
     ]);
@@ -128,6 +131,7 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
     lint_store.register_late_pass(|_| Box::new(unread_none::UnreadNone::new()));
     lint_store.register_late_pass(|_| Box::new(insert_then_unwrap::InsertThenUnwrap));
     lint_store.register_late_pass(|_| Box::new(overwide_parameter::OverwideParameter::new()));
+    lint_store.register_late_pass(|_| Box::new(narrowed_return::NarrowedReturn::new()));
     lint_store.register_late_pass(move |_| {
         Box::new(wildcard_local_enum::WildcardLocalEnum::new(&config))
     });
