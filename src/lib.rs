@@ -1,9 +1,12 @@
 #![feature(rustc_private)]
 #![warn(unused_extern_crates)]
 
+extern crate rustc_abi;
 extern crate rustc_ast;
+extern crate rustc_data_structures;
 extern crate rustc_errors;
 extern crate rustc_hir;
+extern crate rustc_index;
 extern crate rustc_lint;
 extern crate rustc_metadata;
 extern crate rustc_middle;
@@ -16,6 +19,7 @@ mod asymmetric_guard;
 mod baseline;
 mod bypassed_validator;
 mod claims;
+mod ctor_flow;
 mod discarded_error;
 mod enum_facts;
 mod exclusive_options;
@@ -57,6 +61,10 @@ pub struct MordantConfig {
     /// Types whose presence in a composite key restores identity (e.g. the
     /// file id that gives a span a coordinate space).
     pub nonidentity_key_fixes: Vec<String>,
+    /// Error types that mean "the environment refused" (allocation, IO,
+    /// syscall), added to the built-in std list. A constructor exit failing
+    /// with one of these is never treated as validating a field.
+    pub validator_resource_errors: Vec<String>,
     /// Minimum Option fields for `exclusive_options` to consider a struct.
     #[serde(default = "default_min_fields")]
     pub exclusive_options_min_fields: usize,
@@ -118,7 +126,9 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
     lint_store.register_late_pass(|_| Box::new(stringified_error::StringifiedError));
     lint_store.register_late_pass(move |_| Box::new(exclusive_options::ExclusiveOptions::new(&c3)));
     lint_store.register_late_pass(|_| Box::new(parallel_bools::ParallelBools::new()));
-    lint_store.register_late_pass(|_| Box::new(bypassed_validator::BypassedValidator::new()));
+    let c5 = config.clone();
+    lint_store
+        .register_late_pass(move |_| Box::new(bypassed_validator::BypassedValidator::new(&c5)));
     lint_store.register_late_pass(|_| Box::new(unread_error_variant::UnreadErrorVariant::new()));
     lint_store.register_late_pass(|_| Box::new(asymmetric_guard::AsymmetricGuard::new()));
     lint_store.register_late_pass(|_| Box::new(stale_safety_comment::StaleSafetyComment::new()));

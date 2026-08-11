@@ -21,12 +21,12 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 | `exclusive_options`    | a struct whose `Option` fields are never populated together, so the valid combinations are really an enum                                                                 |
 | `parallel_bools`       | bool fields only ever assigned as a pair, which together encode a state machine                                                                                           |
 | `nonidentity_key`      | a map keyed on something that is not the canonical identity of what it names: a span, a pointer's bits, an unresolved path                                                |
-| `bypassed_validator`   | a struct literal that skips the type's own `Result<Self, _>` constructor                                                                                                  |
+| `bypassed_validator`   | a struct literal that skips a constructor whose body rejects some value it then stores in a field                                                                         |
 | `guard_flag`           | a bool field that several methods test and bail on at entry, enforcing an ordering invariant at runtime                                                                   |
 | `wildcard_local_enum`  | a `_` arm over a small crate-local enum, which absorbs every future variant without a compile error                                                                       |
 | `discarded_error`      | `.ok();` in statement position, which reads like handling and makes the error unobservable                                                                                |
 | `unread_error_variant` | a private enum variant that is constructed but never named by a pattern outside the enum's own impls, so its structure is never read                                      |
-| `pub_invariant_fields` | a field of a validated type that is visible outside its module, so any holder can assign around the constructor's check                                                   |
+| `pub_invariant_fields` | a field whose value a constructor checks before storing, but which is assignable outside its module, so any holder can write around the check                             |
 | `asymmetric_guard`     | `self.can_x()` gating a mutation that touches state the guard never reads, so the guard cannot be sound                                                                   |
 | `stale_safety_comment` | a `SAFETY:` comment naming an identifier that no longer exists in the file or any linked crate                                                                            |
 | `unit_mismatch`        | `timeout_ms + deadline_ns`: addition or comparison between names that claim different units                                                                               |
@@ -81,6 +81,11 @@ wildcard-local-enum-max-variants = 12
 # lines, (Span, u32) is flagged and (FileId, Span) is accepted.
 nonidentity-key-composite = true
 nonidentity-key-fixes = ["my_crate::span::FileId"]
+
+# Error types that mean "the environment refused" (allocation, IO, syscall),
+# on top of the std ones. A constructor failing with one of these is not
+# treated as validating any field it stores.
+validator-resource-errors = ["my_alloc::AllocError", "my_sys::Error"]
 
 # Reachability bans. A finding prints the concrete call chain; dynamic
 # dispatch is invisible to the walk, so a clean run proves nothing, but every

@@ -18,7 +18,7 @@ use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
-use clippy_utils::diagnostics::span_lint_and_help;
+use clippy_utils::diagnostics::{span_lint_and_help, span_lint_and_then};
 use rustc_lint::{LateContext, LateLintPass, Lint};
 use rustc_span::{FileName, Span};
 
@@ -124,6 +124,26 @@ pub fn emit(
         return;
     }
     span_lint_and_help(cx, lint, span, msg.into(), None, help);
+}
+
+/// `emit` with a secondary span: the finding is at `span`, the evidence for
+/// it (the check, the other acquisition) is at `note_span`.
+pub fn emit_with_note(
+    cx: &LateContext<'_>,
+    lint: &'static Lint,
+    span: Span,
+    msg: impl Into<String>,
+    note_span: Span,
+    note: &'static str,
+    help: &'static str,
+) {
+    if suppressed(cx, lint, span) {
+        return;
+    }
+    span_lint_and_then(cx, lint, span, msg.into(), |diag| {
+        diag.span_note(note_span, note);
+        diag.help(help);
+    });
 }
 
 // Registered last: flushes write-mode recordings for this crate into the
