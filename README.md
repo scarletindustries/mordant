@@ -4,7 +4,7 @@
 
 Lints that find code where the type system is not enforcing the invariants the code depends on.
 
-[Documentation](https://scarlet.industries) • [Dylint](https://github.com/trailofbits/dylint)
+[Documentation](https://scarlet.industries/docs/mordant) • [Dylint](https://github.com/trailofbits/dylint)
 
 ---
 
