@@ -23,6 +23,7 @@ mod guard_flag;
 mod insert_then_unwrap;
 mod lock_order;
 mod nonidentity_key;
+mod overwide_parameter;
 mod parallel_bools;
 mod stale_panic_message;
 mod stale_safety_comment;
@@ -102,6 +103,7 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
         guard_flag::GUARD_FLAG,
         unread_none::UNREAD_NONE,
         insert_then_unwrap::INSERT_THEN_UNWRAP,
+        overwide_parameter::OVERWIDE_PARAMETER,
         wildcard_local_enum::WILDCARD_LOCAL_ENUM,
         discarded_error::DISCARDED_ERROR,
     ]);
@@ -125,6 +127,7 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
     lint_store.register_late_pass(|_| Box::new(guard_flag::GuardFlag::new()));
     lint_store.register_late_pass(|_| Box::new(unread_none::UnreadNone::new()));
     lint_store.register_late_pass(|_| Box::new(insert_then_unwrap::InsertThenUnwrap));
+    lint_store.register_late_pass(|_| Box::new(overwide_parameter::OverwideParameter::new()));
     lint_store.register_late_pass(move |_| {
         Box::new(wildcard_local_enum::WildcardLocalEnum::new(&config))
     });
