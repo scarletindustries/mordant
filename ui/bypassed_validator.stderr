@@ -1,14 +1,22 @@
+warning: `port::Port` is validated by `Port::new`, but this field is assignable outside its module
+  --> $DIR/bypassed_validator.rs:7:9
+   |
+LL |         pub(crate) n: u16,
+   |         ^^^^^^^^^^^^^^^^^
+   |
+   = help: make the field private; the validated invariant otherwise holds only until the first write
+   = note: `#[warn(pub_invariant_fields)]` on by default
+
 warning: `inner::Level` is validated by `Level::new`, but this field is assignable outside its module
-  --> $DIR/bypassed_validator.rs:41:9
+  --> $DIR/bypassed_validator.rs:87:9
    |
 LL |         pub value: u8,
    |         ^^^^^^^^^^^^^
    |
    = help: make the field private; the validated invariant otherwise holds only until the first write
-   = note: `#[warn(pub_invariant_fields)]` on by default
 
-warning: `Port` is constructed by literal here, but `Port::new` validates construction
-  --> $DIR/bypassed_validator.rs:27:5
+warning: `port::Port` is constructed by literal here, but `Port::new` validates construction
+  --> $DIR/bypassed_validator.rs:37:5
    |
 LL |     Port { n: 0 }
    |     ^^^^^^^^^^^^^
@@ -16,5 +24,5 @@ LL |     Port { n: 0 }
    = help: construct through the validating function, or move this literal into the type's impl
    = note: `#[warn(bypassed_validator)]` on by default
 
-warning: 2 warnings emitted
+warning: 3 warnings emitted
 

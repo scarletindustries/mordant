@@ -78,6 +78,12 @@ impl<'tcx> LateLintPass<'tcx> for BypassedValidator {
         let ImplItemKind::Fn(sig, _) = &item.kind else {
             return;
         };
+        // A constructor has no receiver. `fn parent(&self) -> Option<&Self>`
+        // and `fn clone(&self) -> Result<Self, _>` navigate or copy a value
+        // that already passed whatever check exists; they establish nothing.
+        if cx.tcx.associated_item(item.owner_id).is_method() {
+            return;
+        }
         let FnRetTy::Return(ret_hir_ty) = sig.decl.output else {
             return;
         };
@@ -85,9 +91,11 @@ impl<'tcx> LateLintPass<'tcx> for BypassedValidator {
         let ty::Adt(adt, args) = output.kind() else {
             return;
         };
+        // `Self` by value only: `Option<&Self>` from a receiver-less fn is a
+        // lookup into a table of existing values, not construction.
         let wraps_self = (cx.tcx.is_diagnostic_item(sym::Result, adt.did())
             || cx.tcx.is_diagnostic_item(sym::Option, adt.did()))
-            && matches!(args.type_at(0).peel_refs().kind(), ty::Adt(inner, _) if inner.did() == struct_did);
+            && matches!(args.type_at(0).kind(), ty::Adt(inner, _) if inner.did() == struct_did);
         if wraps_self {
             self.validators.entry(struct_did).or_insert(item.ident.name);
         }
@@ -101,11 +109,21 @@ impl<'tcx> LateLintPass<'tcx> for BypassedValidator {
         let ty::Adt(adt, _) = ty.kind() else {
             return;
         };
-        if !adt.is_struct() || !adt.did().is_local() {
+        let Some(struct_local) = adt.did().as_local() else {
+            return;
+        };
+        if !adt.is_struct() {
+            return;
+        }
+        // The type's own module can write the literal whatever the field
+        // visibility, so a literal there is the author's (a static table the
+        // `Option<Self>` lookup searches, a sibling helper), not a bypass.
+        // This is the same boundary `pub_invariant_fields` holds fields to.
+        if cx.tcx.parent_module(expr.hir_id) == cx.tcx.parent_module_from_def_id(struct_local) {
             return;
         }
         // Literals inside the type's own impls (constructors, Default,
-        // builders) are the implementation, not a bypass.
+        // builders) are the implementation even from another module.
         let owner = cx.tcx.hir_enclosing_body_owner(expr.hir_id);
         let mut cur = owner.to_def_id();
         while let Some(parent) = cx.tcx.opt_parent(cur) {
@@ -122,7 +140,9 @@ impl<'tcx> LateLintPass<'tcx> for BypassedValidator {
     }
 
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
-        for (did, ctor) in &self.validators {
+        let mut validators: Vec<_> = self.validators.iter().collect();
+        validators.sort_by_key(|(did, _)| cx.tcx.def_span(**did).lo());
+        for (did, ctor) in validators {
             let parent_mod = cx.tcx.parent_module_from_def_id(did.expect_local());
             for field in cx.tcx.adt_def(*did).non_enum_variant().fields.iter() {
                 let vis = cx.tcx.visibility(field.did);
