@@ -28,7 +28,7 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 | `unread_error_variant` | a private enum variant that is constructed but never named by a pattern outside the enum's own impls, so its structure is never read |
 | `pub_invariant_fields` | a field of a validated type that is visible outside its module, so any holder can assign around the constructor's check |
 | `asymmetric_guard` | `self.can_x()` gating a mutation that touches state the guard never reads, so the guard cannot be sound |
-| `stale_safety_comment` | a `SAFETY:` comment naming an identifier that no longer exists in the function or the crate |
+| `stale_safety_comment` | a `SAFETY:` comment naming an identifier that no longer exists in the file or any linked crate |
 | `unit_mismatch` | `timeout_ms + deadline_ns`: addition or comparison between names that claim different units |
 | `stale_panic_message` | a panic, assert, or `expect` message naming an identifier that no longer exists |
 | `lock_order` | two locks the crate acquires in both orders, with both locations named: the shape of a deadlock |

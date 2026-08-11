@@ -1,17 +1,27 @@
 //! Shared machinery for lints that treat prose as checkable claims: comment
-//! harvesting, backticked-name extraction, and the two scopes a name can
-//! legitimately live in (the file's code, the crate's definitions).
+//! harvesting, backticked-name extraction, and the scopes a name can
+//! legitimately live in (the file's code, this crate's definitions, and the
+//! definitions of every crate it links).
 
-use std::collections::HashMap;
+use std::cell::OnceCell;
+use std::collections::{HashMap, HashSet};
 
-use rustc_hir::def_id::LocalDefId;
+use rustc_hir::def_id::{DefId, DefIndex, LocalDefId};
 use rustc_lint::LateContext;
+use rustc_metadata::creader::CStore;
 use rustc_span::{BytePos, Span};
 
 pub(crate) const IDENT_STOPLIST: &[&str] = &[
     "self", "Self", "mut", "true", "false", "None", "Some", "Ok", "Err", "Vec", "Box", "drop",
     "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize", "f32",
     "f64", "bool", "str", "String", "unsafe", "SAFETY",
+];
+
+/// A backticked `name.ext` with one of these extensions is a file, not a
+/// path expression whose last segment is an identifier.
+const FILE_EXTENSIONS: &[&str] = &[
+    "rs", "toml", "md", "txt", "json", "yaml", "yml", "lock", "c", "h", "cc", "cpp", "hpp", "zig",
+    "js", "ts", "py", "go",
 ];
 
 /// Backticked mentions in text, reduced to their final identifier:
@@ -25,6 +35,13 @@ pub(crate) fn backticked_idents(text: &str) -> Vec<String> {
         let Some(end) = after.find('`') else { break };
         let token = &after[..end];
         rest = &after[end + 1..];
+        if token.contains('/')
+            || token
+                .rsplit_once('.')
+                .is_some_and(|(_, ext)| FILE_EXTENSIONS.contains(&ext))
+        {
+            continue;
+        }
         let last = token
             .trim_end_matches("()")
             .rsplit(&[':', '.'][..])
@@ -98,10 +115,63 @@ pub(crate) fn word_in(haystack: &str, ident: &str) -> bool {
         .any(|w| w == ident)
 }
 
+/// The definition names a claim may point at beyond its own file: everything
+/// this crate defines, and everything any linked crate defines. The upstream
+/// set is large (std alone is tens of thousands of names) and most crates
+/// never need it, so it is built on the first lookup that misses locally.
+pub(crate) struct DefNames {
+    local: HashMap<String, Option<LocalDefId>>,
+    upstream: OnceCell<HashSet<String>>,
+}
+
+impl DefNames {
+    pub(crate) fn collect(cx: &LateContext<'_>) -> Self {
+        Self {
+            local: crate_def_index(cx),
+            upstream: OnceCell::new(),
+        }
+    }
+
+    pub(crate) fn contains(&self, cx: &LateContext<'_>, ident: &str) -> bool {
+        self.local.contains_key(ident)
+            || self
+                .upstream
+                .get_or_init(|| upstream_def_names(cx))
+                .contains(ident)
+    }
+}
+
+/// Every named definition in every crate this one links, std included. A
+/// SAFETY comment in a workspace member routinely names the sibling crate or
+/// std type that owns the invariant, and none of those are in the local HIR.
+fn upstream_def_names(cx: &LateContext<'_>) -> HashSet<String> {
+    let mut names = HashSet::new();
+    let cstore = CStore::from_tcx(cx.tcx);
+    for &cnum in cx.tcx.crates(()) {
+        for i in 0..cstore.num_def_ids_untracked(cnum) {
+            let did = DefId {
+                krate: cnum,
+                index: DefIndex::from_usize(i),
+            };
+            // A proc-macro crate's def table is sparse: only the root and the
+            // macros themselves are encoded, and `def_key` unwraps on the
+            // holes. An absent entry decodes its path hash as zero, which no
+            // real definition has, so that is the probe for a hole.
+            if cx.tcx.def_path_hash(did).local_hash().as_u64() == 0 {
+                continue;
+            }
+            if let Some(name) = cx.tcx.def_key(did).get_opt_name() {
+                names.insert(name.to_string());
+            }
+        }
+    }
+    names
+}
+
 /// Every definition name in the crate, mapped to one owning def. Names that
 /// several defs share map to `None`, so a consumer needing THE definition
 /// (fingerprinting, spans) skips ambiguous names instead of guessing.
-pub(crate) fn crate_def_index(cx: &LateContext<'_>) -> HashMap<String, Option<LocalDefId>> {
+fn crate_def_index(cx: &LateContext<'_>) -> HashMap<String, Option<LocalDefId>> {
     let mut index: HashMap<String, Option<LocalDefId>> = HashMap::new();
     let mut insert = |name: String, def: Option<LocalDefId>| match index.entry(name) {
         std::collections::hash_map::Entry::Vacant(e) => {

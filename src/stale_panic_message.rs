@@ -1,19 +1,16 @@
-use std::collections::HashMap;
-
 use rustc_ast::LitKind;
-use rustc_hir::def_id::LocalDefId;
 use rustc_hir::{Expr, ExprKind};
 use rustc_lint::{LateContext, LateLintPass};
 
 use crate::baseline::emit;
-use crate::claims;
+use crate::claims::{self, DefNames};
 
 rustc_session::declare_lint! {
     /// Flags a panic-family message (`panic!`, `unreachable!`, `assert!`,
     /// `expect`) whose backticked identifiers no longer exist in the file's
-    /// code or among the crate's definitions. A crash message that explains
-    /// the invariant in terms of a guard a refactor renamed actively misleads
-    /// whoever reads the backtrace.
+    /// code or among the definitions of this crate or any crate it links. A
+    /// crash message that explains the invariant in terms of a guard a
+    /// refactor renamed actively misleads whoever reads the backtrace.
     pub STALE_PANIC_MESSAGE,
     Warn,
     "panic or assert message names an identifier that no longer exists"
@@ -21,7 +18,7 @@ rustc_session::declare_lint! {
 
 #[derive(Default)]
 pub struct StalePanicMessage {
-    def_index: HashMap<String, Option<LocalDefId>>,
+    defs: Option<DefNames>,
 }
 
 rustc_session::impl_lint_pass!(StalePanicMessage => [STALE_PANIC_MESSAGE]);
@@ -47,18 +44,19 @@ const PANIC_MACROS: &[&str] = &[
 
 impl StalePanicMessage {
     fn check_message(&self, cx: &LateContext<'_>, text: &str, at: rustc_span::Span) {
+        let Some(defs) = &self.defs else { return };
         let code = claims::file_code_only(cx, at);
         // The message text is itself part of the file's code lines; blank
         // every copy of it so the message cannot vouch for its own names.
         let code = code.replace(text, "");
         for ident in claims::backticked_idents(text) {
-            if !claims::word_in(&code, &ident) && !self.def_index.contains_key(&ident) {
+            if !claims::word_in(&code, &ident) && !defs.contains(cx, &ident) {
                 emit(
                     cx,
                     STALE_PANIC_MESSAGE,
                     at,
                     format!(
-                        "this message names `{ident}`, which appears nowhere in this file's code or the crate's definitions"
+                        "this message names `{ident}`, which appears nowhere in this file's code, this crate, or any crate it links"
                     ),
                     "whoever reads this at a crash site will search for a name that no longer exists; update the message",
                 );
@@ -69,7 +67,7 @@ impl StalePanicMessage {
 
 impl<'tcx> LateLintPass<'tcx> for StalePanicMessage {
     fn check_crate(&mut self, cx: &LateContext<'tcx>) {
-        self.def_index = claims::crate_def_index(cx);
+        self.defs = Some(DefNames::collect(cx));
     }
 
     fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
