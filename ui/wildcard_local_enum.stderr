@@ -22,5 +22,17 @@ help: list the remaining variants; the compiler then flags every new one added
 LL |         other @ (Op::Sub | Op::Mul) => cost(other),
    |               +++++++++++++++++++++
 
-warning: 2 warnings emitted
+warning: this arm absorbs every future variant of `Entry` (3 variants today)
+  --> $DIR/wildcard_local_enum.rs:66:9
+   |
+LL |         _ => 0,
+   |         ^
+   |
+help: list the remaining variants; the compiler then flags every new one added
+   |
+LL -         _ => 0,
+LL +         Entry::Memory | Entry::Irq => 0,
+   |
+
+warning: 3 warnings emitted
 

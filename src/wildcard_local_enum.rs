@@ -138,10 +138,15 @@ impl<'tcx> LateLintPass<'tcx> for WildcardLocalEnum {
         if !adt.is_enum() || !adt.did().is_local() {
             return;
         }
-        // `#[non_exhaustive]` already opted out of exhaustiveness.
-        if adt.is_variant_list_non_exhaustive() {
-            return;
-        }
+        // No `#[non_exhaustive]` exemption, deliberately. `is_local()` above
+        // means the enum is defined in the crate being compiled, and a
+        // `LateLintPass` only ever walks that same crate's bodies — so every
+        // match this lint can reach is a match in the defining crate, where
+        // `#[non_exhaustive]` has no effect and rustc checks exhaustiveness
+        // normally. It constrains downstream crates only. An earlier exemption
+        // here read "already opted out of exhaustiveness", which was false for
+        // every match the lint sees, and it silenced the lint on exactly the
+        // enums annotated *because* the author expects new variants.
         let n = adt.variants().len();
         if n > self.max_variants {
             return;
