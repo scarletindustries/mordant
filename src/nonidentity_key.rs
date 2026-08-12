@@ -16,13 +16,36 @@ rustc_session::declare_lint! {
     "map keyed on a value that is not the canonical identity of what it names"
 }
 
+/// A key-expression form `nonidentity-key-forms` can opt into. These variants
+/// are the whole of the accepted vocabulary, so a spelling this lint honours
+/// exists in exactly one place; a name that is not one of them selects no form,
+/// as it did when this was a pair of string comparisons.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KeyForm {
+    /// `f.to_bits()` where `f` is a float.
+    ToBits,
+    /// A raw pointer cast to an integer.
+    PtrCast,
+}
+
+impl KeyForm {
+    fn parse(name: &str) -> Option<Self> {
+        match name {
+            "to-bits" => Some(KeyForm::ToBits),
+            "ptr-cast" => Some(KeyForm::PtrCast),
+            _ => None,
+        }
+    }
+}
+
 pub struct NonidentityKey {
     deny_types: Vec<String>,
     deny_methods: Vec<String>,
     fix_types: Vec<String>,
     composite: bool,
-    form_to_bits: bool,
-    form_ptr_cast: bool,
+    /// The opted-in forms. Membership, not one flag per form: a form the
+    /// project did not name is absent rather than false.
+    forms: Vec<KeyForm>,
 }
 
 rustc_session::impl_lint_pass!(NonidentityKey => [NONIDENTITY_KEY]);
@@ -45,8 +68,11 @@ impl NonidentityKey {
             deny_methods: config.nonidentity_key_methods.clone(),
             fix_types: config.nonidentity_key_fixes.clone(),
             composite: config.nonidentity_key_composite,
-            form_to_bits: config.nonidentity_key_forms.iter().any(|f| f == "to-bits"),
-            form_ptr_cast: config.nonidentity_key_forms.iter().any(|f| f == "ptr-cast"),
+            forms: config
+                .nonidentity_key_forms
+                .iter()
+                .filter_map(|f| KeyForm::parse(f))
+                .collect(),
         }
     }
 
@@ -185,7 +211,7 @@ impl<'tcx> LateLintPass<'tcx> for NonidentityKey {
         let Some(key_expr) = args.first() else {
             return;
         };
-        if self.form_to_bits && is_float_to_bits(cx, key_expr) {
+        if self.forms.contains(&KeyForm::ToBits) && is_float_to_bits(cx, key_expr) {
             emit(
                 cx,
                 NONIDENTITY_KEY,
@@ -223,7 +249,7 @@ impl<'tcx> LateLintPass<'tcx> for NonidentityKey {
                 );
             }
         }
-        if self.form_ptr_cast && is_ptr_to_int_cast(cx, key_expr) {
+        if self.forms.contains(&KeyForm::PtrCast) && is_ptr_to_int_cast(cx, key_expr) {
             emit(
                 cx,
                 NONIDENTITY_KEY,

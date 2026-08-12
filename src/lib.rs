@@ -23,6 +23,7 @@ mod ctor_flow;
 mod discarded_error;
 mod enum_facts;
 mod exclusive_options;
+mod flag_cluster;
 mod forbidden_reach;
 mod guard_flag;
 mod insert_then_unwrap;
@@ -42,8 +43,19 @@ mod variant_flow;
 mod wildcard_local_enum;
 
 /// Read from `dylint.toml` under `[mordant]` in the linted workspace root.
+///
+/// `flag_cluster` is allowed on this one struct, and it is the lawful-lattice
+/// case the lint's own help describes rather than an exemption from it. The
+/// bools are opt-ins belonging to *different* lints: all four combinations are
+/// reachable from a `dylint.toml` and each means what it says, so there is no
+/// invariant between them for a type to carry. The field set is also this
+/// pack's public interface — every field is a TOML key, and Scarlet's `xtask`
+/// gate reads these field names out of the pinned source to decide which keys
+/// it may set — so grouping them into sub-structs would rename user-visible
+/// keys to satisfy a lint about internal invariants.
 #[derive(Clone, Default, serde::Deserialize)]
 #[serde(rename_all = "kebab-case", default)]
+#[cfg_attr(dylint_lib = "mordant", allow(flag_cluster))]
 pub struct MordantConfig {
     /// Fully qualified paths of types that are never a valid map key in this
     /// project (e.g. a span type with no file identity). Empty means silent.
@@ -72,6 +84,9 @@ pub struct MordantConfig {
     /// `wildcard_local_enum` stays silent above this many variants.
     #[serde(default = "default_max_variants")]
     pub wildcard_local_enum_max_variants: usize,
+    /// Bool fields at which `flag_cluster` fires.
+    #[serde(default = "default_min_bools")]
+    pub flag_cluster_min_bools: usize,
     /// Ratchet file name, resolved upward from each crate's manifest dir. Runs
     /// suppress up to the recorded count per (lint, file) and surface only new
     /// findings. Regenerate with `MORDANT_BASELINE_WRITE=1`.
@@ -89,6 +104,10 @@ fn default_max_variants() -> usize {
     12
 }
 
+fn default_min_bools() -> usize {
+    3
+}
+
 #[expect(clippy::no_mangle_with_rust_abi)]
 #[unsafe(no_mangle)]
 pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint::LintStore) {
@@ -102,6 +121,7 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
         stringified_error::STRINGIFIED_ERROR,
         exclusive_options::EXCLUSIVE_OPTIONS,
         parallel_bools::PARALLEL_BOOLS,
+        flag_cluster::FLAG_CLUSTER,
         bypassed_validator::BYPASSED_VALIDATOR,
         bypassed_validator::PUB_INVARIANT_FIELDS,
         unread_error_variant::UNREAD_ERROR_VARIANT,
@@ -127,6 +147,8 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
     lint_store.register_late_pass(|_| Box::new(stringified_error::StringifiedError));
     lint_store.register_late_pass(move |_| Box::new(exclusive_options::ExclusiveOptions::new(&c3)));
     lint_store.register_late_pass(|_| Box::new(parallel_bools::ParallelBools::new()));
+    let c6 = config.clone();
+    lint_store.register_late_pass(move |_| Box::new(flag_cluster::FlagCluster::new(&c6)));
     let c5 = config.clone();
     lint_store
         .register_late_pass(move |_| Box::new(bypassed_validator::BypassedValidator::new(&c5)));

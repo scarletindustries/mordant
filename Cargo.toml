@@ -11,6 +11,13 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
+[lints.rust]
+# dylint's driver sets `--cfg dylint_lib="<library>"` while it lints; a plain
+# `cargo build` / `cargo clippy` does not. That is what lets this pack `allow`
+# one of its own lints in its own source without `unknown_lints` firing when
+# the pack is compiled off-driver.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(dylint_lib, values("mordant"))'] }
+
 [dependencies]
 clippy_utils = { git = "https://github.com/rust-lang/rust-clippy", rev = "9fca3bc9fc2bc83c60bde26d18ed68f11564b228" }
 dylint_linting = "6.0"
