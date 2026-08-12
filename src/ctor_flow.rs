@@ -169,41 +169,62 @@ impl Atom {
     }
 }
 
+/// How well `PlaceInfo::atom` names what the projection actually read.
+///
+/// A `Downcast` is absorbing: it ends the exact field path and no later
+/// projection puts it back, so "payload" and "exact" cannot hold at once and
+/// every caller below branches payload-first. Three states, not four.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Exactness {
+    /// Pure field access: the atom is exact.
+    Exact,
+    /// A `Downcast` appeared: this reads a variant payload of the atom.
+    VariantPayload,
+    /// Some other projection: the atom names more than was read.
+    Inexact,
+}
+
+impl Exactness {
+    /// A projection this does not model. It can only lose precision, and it
+    /// cannot un-see a `Downcast`.
+    fn blur(self) -> Self {
+        match self {
+            Exactness::Exact | Exactness::Inexact => Exactness::Inexact,
+            Exactness::VariantPayload => Exactness::VariantPayload,
+        }
+    }
+}
+
 struct PlaceInfo {
     atom: Atom,
-    /// Projection was pure field access (the atom is exact).
-    pure: bool,
-    /// A `Downcast` appeared: this reads a variant payload of `atom`.
-    downcast: bool,
+    exactness: Exactness,
     index_locals: Vec<Local>,
 }
 
 fn place_info(place: Place<'_>) -> PlaceInfo {
     let mut path = Vec::new();
-    let mut pure = true;
-    let mut downcast = false;
+    let mut exactness = Exactness::Exact;
     let mut index_locals = Vec::new();
     for elem in place.projection.iter() {
         match elem {
-            ProjectionElem::Field(f, _) if pure => path.push(f.as_u32()),
+            ProjectionElem::Field(f, _) if exactness == Exactness::Exact => path.push(f.as_u32()),
             ProjectionElem::Field(..) => {}
             // `(*r).f`: the reference is the value for slicing purposes, so
             // a deref neither ends the field path nor makes it inexact.
             ProjectionElem::Deref => {}
-            ProjectionElem::Downcast(..) => {
-                downcast = true;
-                pure = false;
-            }
+            ProjectionElem::Downcast(..) => exactness = Exactness::VariantPayload,
             ProjectionElem::Index(v) => {
                 index_locals.push(v);
-                if pure {
+                if exactness == Exactness::Exact {
                     path.push(ANY_ELEM);
                 }
             }
-            ProjectionElem::ConstantIndex { .. } | ProjectionElem::Subslice { .. } if pure => {
+            ProjectionElem::ConstantIndex { .. } | ProjectionElem::Subslice { .. }
+                if exactness == Exactness::Exact =>
+            {
                 path.push(ANY_ELEM);
             }
-            _ => pure = false,
+            _ => exactness = exactness.blur(),
         }
     }
     PlaceInfo {
@@ -211,8 +232,7 @@ fn place_info(place: Place<'_>) -> PlaceInfo {
             local: place.local,
             path,
         },
-        pure,
-        downcast,
+        exactness,
         index_locals,
     }
 }
@@ -357,12 +377,10 @@ fn mentions_self(ty: Ty<'_>, self_did: DefId) -> bool {
 fn reads_of_place(place: Place<'_>, same: bool, out: &mut Vec<Read>) {
     let info = place_info(place);
     out.extend(info.index_locals.iter().map(|l| Read::Index(*l)));
-    if info.downcast {
-        out.push(Read::Payload(info.atom));
-    } else if same && info.pure {
-        out.push(Read::Same(info.atom));
-    } else {
-        out.push(Read::Derived(info.atom));
+    match info.exactness {
+        Exactness::VariantPayload => out.push(Read::Payload(info.atom)),
+        Exactness::Exact if same => out.push(Read::Same(info.atom)),
+        Exactness::Exact | Exactness::Inexact => out.push(Read::Derived(info.atom)),
     }
 }
 
@@ -407,7 +425,7 @@ fn gather<'tcx>(
                         let pinfo = place_info(p);
                         if p.projection.is_empty() {
                             alias[dest.local].push(p.local);
-                        } else if pinfo.downcast {
+                        } else if pinfo.exactness == Exactness::VariantPayload {
                             payload_alias[dest.local].push(p.local);
                         }
                     }
@@ -452,12 +470,14 @@ fn gather<'tcx>(
                         if let Some(p) = operand_place(op) {
                             let info = place_info(p);
                             reads.extend(info.index_locals.iter().map(|l| Read::Index(*l)));
-                            if info.downcast {
-                                reads.push(Read::Payload(info.atom));
-                            } else if info.pure {
-                                reads.push(Read::AggField(i as u32, info.atom));
-                            } else {
-                                reads.push(Read::Derived(info.atom));
+                            match info.exactness {
+                                Exactness::VariantPayload => {
+                                    reads.push(Read::Payload(info.atom));
+                                }
+                                Exactness::Exact => {
+                                    reads.push(Read::AggField(i as u32, info.atom));
+                                }
+                                Exactness::Inexact => reads.push(Read::Derived(info.atom)),
                             }
                         }
                     }

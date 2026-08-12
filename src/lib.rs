@@ -43,8 +43,19 @@ mod variant_flow;
 mod wildcard_local_enum;
 
 /// Read from `dylint.toml` under `[mordant]` in the linted workspace root.
+///
+/// `flag_cluster` is allowed on this one struct, and it is the lawful-lattice
+/// case the lint's own help describes rather than an exemption from it. The
+/// bools are opt-ins belonging to *different* lints: all four combinations are
+/// reachable from a `dylint.toml` and each means what it says, so there is no
+/// invariant between them for a type to carry. The field set is also this
+/// pack's public interface — every field is a TOML key, and Scarlet's `xtask`
+/// gate reads these field names out of the pinned source to decide which keys
+/// it may set — so grouping them into sub-structs would rename user-visible
+/// keys to satisfy a lint about internal invariants.
 #[derive(Clone, Default, serde::Deserialize)]
 #[serde(rename_all = "kebab-case", default)]
+#[cfg_attr(dylint_lib = "mordant", allow(flag_cluster))]
 pub struct MordantConfig {
     /// Fully qualified paths of types that are never a valid map key in this
     /// project (e.g. a span type with no file identity). Empty means silent.
