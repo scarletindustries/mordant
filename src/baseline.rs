@@ -11,6 +11,8 @@
 //! is the only key that survives normal development. Moving a finding between
 //! files consumes allowance in one file and overflows in the other, which is
 //! the desired ratchet behavior.
+//!
+//! The ratchet only ever sees findings rustc would report — see [`reportable`].
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -19,7 +21,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
 use clippy_utils::diagnostics::{span_lint_and_help, span_lint_and_then};
-use rustc_lint::{LateContext, LateLintPass, Lint};
+use rustc_lint::{LateContext, LateLintPass, Level, Lint, LintContext};
 use rustc_span::{FileName, Span};
 
 pub struct Baseline {
@@ -88,12 +90,41 @@ fn rel_file(cx: &LateContext<'_>, b: &Baseline, span: Span) -> Option<String> {
     Some(rel.to_string_lossy().into_owned())
 }
 
+/// Whether rustc's lint machinery will let this finding reach anyone.
+///
+/// The ratchet is consulted at the point a lint *fires*, which is one layer
+/// below the level check, the `#[allow]`s and the external-macro filter that
+/// decide whether the finding is ever reported. A finding that fails here is
+/// not the ratchet's business at either end: recording it writes a baseline
+/// entry for a site nobody can argue about, and consuming allowance for it
+/// lets a real finding in the same file through.
+///
+/// A `#[derive(Hash)]` on a two-variant enum is the case that bought this. It
+/// expands to a `_ => {}` arm carrying the derive's span, `wildcard_local_enum`
+/// fires on it in every run, and rustc drops it in every run because a derive
+/// expansion is an external macro.
+///
+/// These two conditions mirror the two early returns of
+/// `rustc_middle::lint::emit_lint_base`, in its order. They have to be asked
+/// separately because that function takes the diagnostic, not a verdict.
+fn reportable(cx: &LateContext<'_>, lint: &'static Lint, span: Span) -> bool {
+    match cx.get_lint_level_spec(lint).level() {
+        // `Expect` builds the diagnostic only to swallow it.
+        Level::Allow | Level::Expect => return false,
+        Level::Warn | Level::ForceWarn | Level::Deny | Level::Forbid => {}
+    }
+    lint.report_in_external_macro || !span.in_external_macro(cx.sess().source_map())
+}
+
 /// True when this finding is consumed by the baseline (or recorded, in write
 /// mode) and must not be emitted.
 pub fn suppressed(cx: &LateContext<'_>, lint: &'static Lint, span: Span) -> bool {
     let Some(Some(b)) = STATE.get().map(Option::as_ref) else {
         return false;
     };
+    if !reportable(cx, lint, span) {
+        return false;
+    }
     let Some(file) = rel_file(cx, b, span) else {
         return false;
     };

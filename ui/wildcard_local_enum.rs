@@ -135,4 +135,37 @@ fn main() {
     let _ = non_exhaustive_listed_is_fine(Entry::Irq);
     let _ = foreign_enum_is_fine(Some(1));
     let _ = non_enum_is_fine(1);
+    let _ = derive_generated_wild_is_not_reported(&Derived::Payload(1));
+    let _ = derive_generated_wild_is_not_reported(&Derived::Empty);
+    let _ = allowed_is_not_reported(Op::Add);
+}
+
+// The two ways a fired finding never reaches anyone. `baseline::reportable`
+// mirrors both, so this file is also what pins the assumption it mirrors: if
+// either of these starts being reported, the ratchet is under-recording.
+
+// `#[derive(Hash)]` over an enum with a fieldless variant expands to a
+// `_ => {}` arm over the enum itself, carrying the derive's span. The lint
+// fires on it every run; rustc drops it every run, because a derive expansion
+// is an external macro.
+#[derive(Hash)]
+enum Derived {
+    Payload(u32),
+    Empty,
+}
+
+fn derive_generated_wild_is_not_reported(d: &Derived) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    d.hash(&mut h);
+    h.finish()
+}
+
+#[allow(wildcard_local_enum)]
+fn allowed_is_not_reported(o: Op) -> i32 {
+    match o {
+        Op::Add => 1,
+        _ => 0,
+    }
 }
