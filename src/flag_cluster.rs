@@ -24,14 +24,10 @@ pub struct FlagCluster {
 
 rustc_session::impl_lint_pass!(FlagCluster => [FLAG_CLUSTER]);
 
-/// Below this the lint is meaningless, and `MordantConfig`'s derived `Default`
-/// yields 0 when the linted workspace has no `dylint.toml` at all.
-const FLOOR: usize = 2;
-
 impl FlagCluster {
     pub fn new(config: &MordantConfig) -> Self {
         Self {
-            min_bools: config.flag_cluster_min_bools.max(FLOOR),
+            min_bools: config.flag_cluster_min_bools,
         }
     }
 }

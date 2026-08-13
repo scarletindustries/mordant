@@ -54,7 +54,7 @@ mod wildcard_local_enum;
 /// gate reads these field names out of the pinned source to decide which keys
 /// it may set — so grouping them into sub-structs would rename user-visible
 /// keys to satisfy a lint about internal invariants.
-#[derive(Clone, Default, serde::Deserialize)]
+#[derive(Clone, serde::Deserialize)]
 #[serde(rename_all = "kebab-case", default)]
 #[cfg_attr(dylint_lib = "mordant", allow(flag_cluster))]
 pub struct MordantConfig {
@@ -115,6 +115,30 @@ fn default_min_bools() -> usize {
 
 fn default_min_sites() -> usize {
     2
+}
+
+/// `dylint_linting::config_or_default` returns this when the linted
+/// workspace has no `dylint.toml`. Field-level `serde(default = ...)` covers
+/// a present file that omits a key; both paths call the same fns, so the
+/// two cannot disagree.
+impl Default for MordantConfig {
+    fn default() -> Self {
+        Self {
+            nonidentity_key_types: Vec::new(),
+            nonidentity_key_forms: Vec::new(),
+            stringly_error_include_box_dyn: false,
+            nonidentity_key_methods: Vec::new(),
+            nonidentity_key_composite: false,
+            nonidentity_key_fixes: Vec::new(),
+            validator_resource_errors: Vec::new(),
+            exclusive_options_min_fields: default_min_fields(),
+            wildcard_local_enum_max_variants: default_max_variants(),
+            flag_cluster_min_bools: default_min_bools(),
+            stored_projection_min_sites: default_min_sites(),
+            baseline: None,
+            forbidden_reach: Vec::new(),
+        }
+    }
 }
 
 #[expect(clippy::no_mangle_with_rust_abi)]
@@ -213,4 +237,52 @@ fn ui() {
             "#,
         )
         .run();
+}
+
+/// `config_or_default` returns `Default` when the linted workspace has no
+/// `dylint.toml`. A derived `Default` yields 0 for every `usize`, which
+/// turns `wildcard_local_enum` off (`n > 0` for every enum) and makes
+/// `exclusive_options` consider every struct.
+#[test]
+fn config_default_thresholds_match_docs() {
+    let c = MordantConfig::default();
+    assert_eq!(c.exclusive_options_min_fields, 2);
+    assert_eq!(c.wildcard_local_enum_max_variants, 12);
+    assert_eq!(c.flag_cluster_min_bools, 3);
+    assert_eq!(c.stored_projection_min_sites, 2);
+}
+
+/// An empty table (file present, keys omitted) must not drift from
+/// `Default`. Field-level `serde(default = ...)` and this impl share the
+/// same fns.
+#[test]
+fn config_omitted_toml_keys_use_the_same_thresholds() {
+    let parsed: MordantConfig = toml::from_str("").expect("empty document is an empty table");
+    let d = MordantConfig::default();
+    assert_eq!(
+        parsed.exclusive_options_min_fields,
+        d.exclusive_options_min_fields
+    );
+    assert_eq!(
+        parsed.wildcard_local_enum_max_variants,
+        d.wildcard_local_enum_max_variants
+    );
+    assert_eq!(parsed.flag_cluster_min_bools, d.flag_cluster_min_bools);
+    assert_eq!(
+        parsed.stored_projection_min_sites,
+        d.stored_projection_min_sites
+    );
+}
+
+#[test]
+fn config_explicit_zero_thresholds_are_honored() {
+    let parsed: MordantConfig = toml::from_str(
+        "exclusive-options-min-fields = 0\n\
+         wildcard-local-enum-max-variants = 0\n\
+         flag-cluster-min-bools = 0\n",
+    )
+    .expect("explicit zeros parse");
+    assert_eq!(parsed.exclusive_options_min_fields, 0);
+    assert_eq!(parsed.wildcard_local_enum_max_variants, 0);
+    assert_eq!(parsed.flag_cluster_min_bools, 0);
 }
