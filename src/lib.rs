@@ -150,6 +150,14 @@ fn ui() {
             [[mordant.forbidden-reach]]
             from = "hot_path"
             never = ["std::vec::Vec::push"]
+
+            [[mordant.forbidden-reach]]
+            from = "two_bans"
+            never = ["std::vec::Vec::push", "Option::expect"]
+
+            [[mordant.forbidden-reach]]
+            from = "one_ban_twice"
+            never = ["std::vec::Vec::push"]
             "#,
         )
         .run();

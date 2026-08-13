@@ -1,0 +1,40 @@
+warning: `two_bans` reaches `std::vec::Vec::<T, A>::push`, which this project bans from it: two_bans -> std::vec::Vec::<T, A>::push
+  --> $DIR/forbidden_reach_multi.rs:7:1
+   |
+LL | / fn two_bans(n: u32) -> u32 {
+LL | |     let mut v = Vec::new();
+LL | |     v.push(n);
+LL | |     v[0] + Some(n).expect("n")
+LL | | }
+   | |_^
+   |
+   = help: one finding per banned definition reached; every arrow is a real call in this crate, so break the chain or amend the rule
+   = note: `#[warn(forbidden_reach)]` on by default
+
+warning: `two_bans` reaches `std::option::Option::<T>::expect`, which this project bans from it: two_bans -> std::option::Option::<T>::expect
+  --> $DIR/forbidden_reach_multi.rs:7:1
+   |
+LL | / fn two_bans(n: u32) -> u32 {
+LL | |     let mut v = Vec::new();
+LL | |     v.push(n);
+LL | |     v[0] + Some(n).expect("n")
+LL | | }
+   | |_^
+   |
+   = help: one finding per banned definition reached; every arrow is a real call in this crate, so break the chain or amend the rule
+
+warning: `one_ban_twice` reaches `std::vec::Vec::<T, A>::push`, which this project bans from it: one_ban_twice -> std::vec::Vec::<T, A>::push (and 1 further call site to it)
+  --> $DIR/forbidden_reach_multi.rs:15:1
+   |
+LL | / fn one_ban_twice(n: u32) -> u32 {
+LL | |     let mut v = Vec::new();
+LL | |     v.push(n);
+LL | |     v.push(n + 1);
+LL | |     v[0]
+LL | | }
+   | |_^
+   |
+   = help: one finding per banned definition reached; every arrow is a real call in this crate, so break the chain or amend the rule
+
+warning: 3 warnings emitted
+

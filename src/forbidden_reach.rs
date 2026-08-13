@@ -18,6 +18,12 @@ rustc_session::declare_lint! {
     /// expression in this crate. Dynamic dispatch and function pointers are
     /// invisible to the walk, so absence of a finding proves nothing — but a
     /// finding is a concrete path that exists.
+    ///
+    /// **One finding per (root, banned definition).** A root breaking two
+    /// entries of its `never` list reports twice; several call paths to the
+    /// same definition collapse into one finding, which names how many call
+    /// sites it stands for. So a count of findings is a count of bans broken,
+    /// never of call sites.
     pub FORBIDDEN_REACH,
     Warn,
     "a banned definition is reachable from a declared root"
@@ -139,14 +145,19 @@ impl<'tcx> LateLintPass<'tcx> for ForbiddenReach {
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
         for &(rule_idx, root, root_span) in &self.roots {
             let rule = &self.rules[rule_idx];
-            // BFS with parent links; the first banned hit yields the witness.
+            // BFS with parent links. The walk runs to exhaustion instead of stopping at the
+            // first banned callee, so a root breaking several `never` entries reports each
+            // of them; BFS order makes the parent chain recorded for a definition the
+            // shortest witness to it.
             let mut parent: HashMap<DefId, (DefId, Span)> = HashMap::new();
             let mut seen: HashSet<DefId> = HashSet::new();
             let mut queue = VecDeque::new();
             queue.push_back(root);
             seen.insert(root);
-            let mut hit: Option<(DefId, Span)> = None;
-            'bfs: while let Some(cur) = queue.pop_front() {
+            // (banned definition, call sites reaching it). One entry per definition, in walk
+            // order, so the findings a root emits do not depend on hash iteration.
+            let mut hits: Vec<(DefId, usize)> = Vec::new();
+            while let Some(cur) = queue.pop_front() {
                 let Some(edges) = self.calls.get(&cur) else {
                     continue;
                 };
@@ -156,9 +167,13 @@ impl<'tcx> LateLintPass<'tcx> for ForbiddenReach {
                         .iter()
                         .any(|n| rule.never.iter().any(|p| Self::matches_pattern(n, p)));
                     if banned {
-                        parent.insert(callee, (cur, at));
-                        hit = Some((callee, at));
-                        break 'bfs;
+                        match hits.iter_mut().find(|(def, _)| *def == callee) {
+                            Some((_, sites)) => *sites += 1,
+                            None => {
+                                parent.insert(callee, (cur, at));
+                                hits.push((callee, 1));
+                            }
+                        }
                     }
                     if callee.is_local() && seen.insert(callee) {
                         parent.insert(callee, (cur, at));
@@ -166,33 +181,40 @@ impl<'tcx> LateLintPass<'tcx> for ForbiddenReach {
                     }
                 }
             }
-            let Some((banned, at)) = hit else {
-                continue;
-            };
-            // Rebuild the witness path root -> ... -> banned.
-            let mut chain = vec![cx.tcx.def_path_str(banned)];
-            let mut cur = banned;
-            while cur != root {
-                let Some(&(prev, _)) = parent.get(&cur) else {
-                    break;
+            for (banned, sites) in hits {
+                // Rebuild the witness path root -> ... -> banned.
+                let mut chain = vec![cx.tcx.def_path_str(banned)];
+                let mut cur = banned;
+                while cur != root {
+                    let Some(&(prev, _)) = parent.get(&cur) else {
+                        break;
+                    };
+                    chain.push(cx.tcx.def_path_str(prev));
+                    cur = prev;
+                }
+                chain.reverse();
+                // Only the shortest path is printed, so say when the finding stands for more
+                // than the one call site on it.
+                let more = match sites {
+                    0 | 1 => String::new(),
+                    2 => " (and 1 further call site to it)".to_string(),
+                    n => format!(" (and {} further call sites to it)", n - 1),
                 };
-                chain.push(cx.tcx.def_path_str(prev));
-                cur = prev;
+                emit(
+                    cx,
+                    FORBIDDEN_REACH,
+                    root_span,
+                    format!(
+                        "`{}` reaches `{}`, which this project bans from it: {}{}",
+                        cx.tcx.def_path_str(root),
+                        cx.tcx.def_path_str(banned),
+                        chain.join(" -> "),
+                        more,
+                    ),
+                    "one finding per banned definition reached; every arrow is a real call in \
+                     this crate, so break the chain or amend the rule",
+                );
             }
-            chain.reverse();
-            emit(
-                cx,
-                FORBIDDEN_REACH,
-                root_span,
-                format!(
-                    "`{}` reaches `{}`, which this project bans from it: {}",
-                    cx.tcx.def_path_str(root),
-                    cx.tcx.def_path_str(banned),
-                    chain.join(" -> "),
-                ),
-                "every arrow is a real call in this crate; break the chain or amend the rule",
-            );
-            let _ = at;
         }
     }
 }
