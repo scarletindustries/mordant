@@ -34,6 +34,7 @@ mod overwide_parameter;
 mod parallel_bools;
 mod stale_panic_message;
 mod stale_safety_comment;
+mod stored_projection;
 mod stringified_error;
 mod stringly_error;
 mod unit_mismatch;
@@ -87,6 +88,10 @@ pub struct MordantConfig {
     /// Bool fields at which `flag_cluster` fires.
     #[serde(default = "default_min_bools")]
     pub flag_cluster_min_bools: usize,
+    /// Construction sites at which `stored_projection` will read a
+    /// correspondence between two fields.
+    #[serde(default = "default_min_sites")]
+    pub stored_projection_min_sites: usize,
     /// Ratchet file name, resolved upward from each crate's manifest dir. Runs
     /// suppress up to the recorded count per (lint, file) and surface only new
     /// findings. Regenerate with `MORDANT_BASELINE_WRITE=1`.
@@ -106,6 +111,10 @@ fn default_max_variants() -> usize {
 
 fn default_min_bools() -> usize {
     3
+}
+
+fn default_min_sites() -> usize {
+    2
 }
 
 #[expect(clippy::no_mangle_with_rust_abi)]
@@ -138,6 +147,7 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
         narrowed_return::NARROWED_RETURN,
         wildcard_local_enum::WILDCARD_LOCAL_ENUM,
         discarded_error::DISCARDED_ERROR,
+        stored_projection::STORED_PROJECTION,
     ]);
     let c1 = config.clone();
     let c2 = config.clone();
@@ -148,6 +158,9 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
     lint_store.register_late_pass(move |_| Box::new(exclusive_options::ExclusiveOptions::new(&c3)));
     lint_store.register_late_pass(|_| Box::new(parallel_bools::ParallelBools::new()));
     let c6 = config.clone();
+    // Cloned here rather than beside its registration below: `config` itself is
+    // moved into the `wildcard_local_enum` closure before that point.
+    let c7 = config.clone();
     lint_store.register_late_pass(move |_| Box::new(flag_cluster::FlagCluster::new(&c6)));
     let c5 = config.clone();
     lint_store
@@ -169,6 +182,7 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
         Box::new(wildcard_local_enum::WildcardLocalEnum::new(&config))
     });
     lint_store.register_late_pass(|_| Box::new(discarded_error::DiscardedError));
+    lint_store.register_late_pass(move |_| Box::new(stored_projection::StoredProjection::new(&c7)));
     // Last, so its check_crate_post flushes after every lint has recorded.
     lint_store.register_late_pass(|_| Box::new(baseline::BaselineWriter));
 }
@@ -187,6 +201,14 @@ fn ui() {
 
             [[mordant.forbidden-reach]]
             from = "hot_path"
+            never = ["std::vec::Vec::push"]
+
+            [[mordant.forbidden-reach]]
+            from = "two_bans"
+            never = ["std::vec::Vec::push", "Option::expect"]
+
+            [[mordant.forbidden-reach]]
+            from = "one_ban_twice"
             never = ["std::vec::Vec::push"]
             "#,
         )

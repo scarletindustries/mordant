@@ -6,7 +6,7 @@ LL | |     helper(n)
 LL | | }
    | |_^
    |
-   = help: every arrow is a real call in this crate; break the chain or amend the rule
+   = help: one finding per banned definition reached; every arrow is a real call in this crate, so break the chain or amend the rule
    = note: `#[warn(forbidden_reach)]` on by default
 
 warning: 1 warning emitted
