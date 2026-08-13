@@ -143,7 +143,7 @@ fn classify<'tcx>(cx: &LateContext<'tcx>, e: &'tcx Expr<'tcx>) -> Option<Val> {
             },
             _ => None,
         },
-        ExprKind::Struct(ref qpath, ..) => match cx.qpath_res(qpath, e.hir_id) {
+        ExprKind::Struct(qpath, ..) => match cx.qpath_res(qpath, e.hir_id) {
             Res::Def(DefKind::Variant, did) => Some(as_variant(did)),
             _ => None,
         },
