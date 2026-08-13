@@ -16,6 +16,7 @@ mod bypassed_validator;
 mod discarded_error;
 mod exclusive_options;
 mod flag_cluster;
+mod forbidden_reach;
 mod guard_flag;
 mod nonidentity_key;
 mod parallel_bools;
@@ -58,6 +59,9 @@ pub struct MordantConfig {
     /// suppress up to the recorded count per (lint, file) and surface only new
     /// findings. Regenerate with `MORDANT_BASELINE_WRITE=1`.
     pub baseline: Option<String>,
+    /// Reachability bans: from each matching root, no call path may reach a
+    /// banned definition. Findings carry the witness path.
+    pub forbidden_reach: Vec<forbidden_reach::ReachRule>,
 }
 
 fn default_min_fields() -> usize {
@@ -89,6 +93,7 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
         bypassed_validator::BYPASSED_VALIDATOR,
         bypassed_validator::PUB_INVARIANT_FIELDS,
         unread_error_variant::UNREAD_ERROR_VARIANT,
+        forbidden_reach::FORBIDDEN_REACH,
         guard_flag::GUARD_FLAG,
         wildcard_local_enum::WILDCARD_LOCAL_ENUM,
         discarded_error::DISCARDED_ERROR,
@@ -105,6 +110,8 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
     lint_store.register_late_pass(move |_| Box::new(flag_cluster::FlagCluster::new(&c4)));
     lint_store.register_late_pass(|_| Box::new(bypassed_validator::BypassedValidator::new()));
     lint_store.register_late_pass(|_| Box::new(unread_error_variant::UnreadErrorVariant::new()));
+    let c5 = config.clone();
+    lint_store.register_late_pass(move |_| Box::new(forbidden_reach::ForbiddenReach::new(&c5)));
     lint_store.register_late_pass(|_| Box::new(guard_flag::GuardFlag::new()));
     lint_store.register_late_pass(move |_| {
         Box::new(wildcard_local_enum::WildcardLocalEnum::new(&config))
@@ -125,6 +132,10 @@ fn ui() {
             nonidentity-key-methods = ["Value::to_raw"]
             nonidentity-key-composite = true
             nonidentity-key-fixes = ["FileId"]
+
+            [[mordant.forbidden-reach]]
+            from = "hot_path"
+            never = ["std::vec::Vec::push"]
             "#,
         )
         .run();

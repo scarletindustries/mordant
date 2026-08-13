@@ -27,6 +27,7 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 | `discarded_error` | `.ok();` in statement position, which reads like handling and makes the error unobservable |
 | `unread_error_variant` | a private enum variant that is constructed but never named by a pattern outside the enum's own impls, so its structure is never read |
 | `pub_invariant_fields` | a field of a validated type that is visible outside its module, so any holder can assign around the constructor's check |
+| `forbidden_reach` | a config-declared ban ("from `sched::pick`, never reach `Vec::push`") violated by a concrete call path, printed as a witness chain |
 
 Each diagnostic states what the lint found, why the type is wrong, and the type that replaces it.
 
@@ -71,6 +72,13 @@ wildcard-local-enum-max-variants = 12
 # lines, (Span, u32) is flagged and (FileId, Span) is accepted.
 nonidentity-key-composite = true
 nonidentity-key-fixes = ["my_crate::span::FileId"]
+
+# Reachability bans. A finding prints the concrete call chain; dynamic
+# dispatch is invisible to the walk, so a clean run proves nothing, but every
+# finding is a path that exists.
+[[mordant.forbidden-reach]]
+from = "sched::pick"
+never = ["std::vec::Vec::push", "core::panicking"]
 ```
 
 ## Ratchet
