@@ -54,6 +54,93 @@ fn drain(p: Poll) -> u32 {
     }
 }
 
+// Fine: an inherent accessor is the crate genuinely reading the structure,
+// unlike a trait impl, so both variants count as named.
+enum Ceiling {
+    Budget,
+    Tripwire(u64),
+}
+
+impl Ceiling {
+    fn tenths(&self, budget: u64) -> u64 {
+        match self {
+            Ceiling::Budget => budget,
+            Ceiling::Tripwire(t) => *t,
+        }
+    }
+}
+
+fn resolve(budget: u64) -> u64 {
+    Ceiling::Budget.tenths(budget) + Ceiling::Tripwire(3).tenths(budget)
+}
+
+// `==` against a variant distinguishes it like a pattern: `Off` is fine.
+// `Slow` and `Crawl` are constructed but only ever reach the fall-through
+// together, so nothing tells them apart and both are flagged.
+#[derive(PartialEq)]
+enum Mode {
+    Fast,
+    Slow,
+    Crawl,
+    Off,
+}
+
+fn speed(m: Mode) -> u32 {
+    if m == Mode::Off {
+        return 0;
+    }
+    if matches!(m, Mode::Fast) { 2 } else { 1 }
+}
+
+fn speeds() -> u32 {
+    speed(Mode::Fast) + speed(Mode::Slow) + speed(Mode::Crawl) + speed(Mode::Off)
+}
+
+// Fine: with `Active` and `Inactive` both named, `Done` is the only variant
+// left, so `!= Inactive` after `!= Active` reaches exactly it.
+#[derive(PartialEq)]
+enum Status {
+    Active,
+    Inactive,
+    Done,
+}
+
+fn step(s: &mut Status) -> bool {
+    if *s == Status::Active {
+        *s = Status::Done;
+        return true;
+    }
+    if *s != Status::Inactive {
+        return false;
+    }
+    *s = Status::Active;
+    true
+}
+
+fn run() -> bool {
+    let mut s = Status::Inactive;
+    step(&mut s) && step(&mut s) && !step(&mut s)
+}
+
+// A cast reads every discriminant, so `High` is read even though only `Low`
+// is ever named by a pattern.
+enum Level {
+    Low = 1,
+    High = 2,
+}
+
+fn code(l: Level) -> u8 {
+    l as u8
+}
+
+fn is_low(l: &Level) -> bool {
+    matches!(l, Level::Low)
+}
+
+fn levels() -> u8 {
+    u8::from(is_low(&Level::Low)) + code(Level::Low) + code(Level::High)
+}
+
 // No pattern anywhere names any variant, so matching is not how this enum is
 // consumed and the lint stays silent about all of it.
 enum Trace {
@@ -76,7 +163,11 @@ fn trace() {
 
 fn main() {
     let _ = handle(0);
+    let _ = resolve(10);
     let _ = drain(Poll::Ready(1));
     let _ = drain(Poll::Pending);
     trace();
+    let _ = speeds();
+    let _ = run();
+    let _ = levels();
 }

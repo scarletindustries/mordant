@@ -1,4 +1,4 @@
-use clippy_utils::diagnostics::span_lint_and_then;
+use clippy_utils::diagnostics::span_lint_hir_and_then;
 use clippy_utils::source::snippet_opt;
 use rustc_ast::LitKind;
 use rustc_errors::Applicability;
@@ -39,6 +39,26 @@ fn is_negative_extractor(cx: &LateContext<'_>, body: &Expr<'_>) -> bool {
     match body.kind {
         ExprKind::Lit(lit) => matches!(lit.node, LitKind::Bool(false)),
         ExprKind::Path(_) => clippy_utils::is_none_expr(cx, body),
+        // `&[]` and `[]`: the empty-slice answer.
+        ExprKind::AddrOf(_, _, inner) => is_negative_extractor(cx, inner),
+        ExprKind::Array(elems) => elems.is_empty(),
+        // `Vec::new()` / `String::new()`: an empty collection, constructed
+        // fresh, is an answer with no content, not behavior.
+        ExprKind::Call(callee, []) => {
+            if let ExprKind::Path(qpath) = &callee.kind
+                && let Some(def) = cx.qpath_res(qpath, callee.hir_id).opt_def_id()
+            {
+                let path = cx.tcx.def_path_str(def);
+                path.ends_with("Vec::<T>::new")
+                    || path.ends_with("Vec::new")
+                    || path.ends_with("String::new")
+            } else {
+                false
+            }
+        }
+        // `return None` / `return false`: the early-exit spelling of the same
+        // empty answers.
+        ExprKind::Ret(Some(inner)) => is_negative_extractor(cx, inner),
         _ => false,
     }
 }
@@ -200,9 +220,13 @@ impl<'tcx> LateLintPass<'tcx> for WildcardLocalEnum {
                     _ => list,
                 })
             });
-            span_lint_and_then(
+            // Emitted against the ARM's hir id, so an #[allow] placed on the
+            // arm itself is honored; a plain span emission would only see the
+            // enclosing match's lint level.
+            span_lint_hir_and_then(
                 cx,
                 WILDCARD_LOCAL_ENUM,
+                arm.hir_id,
                 arm.pat.span,
                 format!(
                     "this arm absorbs every future variant of `{}` ({n} variants today)",

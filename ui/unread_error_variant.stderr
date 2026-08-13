@@ -1,4 +1,4 @@
-warning: `LoadError::Corrupt` is constructed here, but no pattern outside `LoadError`'s own impls ever names it
+warning: `LoadError::Corrupt` is constructed here, but no pattern outside `LoadError`'s trait impls ever names it
   --> $DIR/unread_error_variant.rs:26:18
    |
 LL |         1 => Err(LoadError::Corrupt("bad header".to_owned())),
@@ -7,5 +7,21 @@ LL |         1 => Err(LoadError::Corrupt("bad header".to_owned())),
    = help: the variant's structure is never read; handle it distinctly or collapse it into another variant
    = note: `#[warn(unread_error_variant)]` on by default
 
-warning: 1 warning emitted
+warning: `Mode::Slow` is constructed here, but no pattern outside `Mode`'s trait impls ever names it
+  --> $DIR/unread_error_variant.rs:96:31
+   |
+LL |     speed(Mode::Fast) + speed(Mode::Slow) + speed(Mode::Crawl) + speed(Mode::Off)
+   |                               ^^^^^^^^^^
+   |
+   = help: the variant's structure is never read; handle it distinctly or collapse it into another variant
+
+warning: `Mode::Crawl` is constructed here, but no pattern outside `Mode`'s trait impls ever names it
+  --> $DIR/unread_error_variant.rs:96:51
+   |
+LL |     speed(Mode::Fast) + speed(Mode::Slow) + speed(Mode::Crawl) + speed(Mode::Off)
+   |                                                   ^^^^^^^^^^^
+   |
+   = help: the variant's structure is never read; handle it distinctly or collapse it into another variant
+
+warning: 3 warnings emitted
 

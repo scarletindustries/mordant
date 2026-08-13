@@ -1,20 +1,121 @@
-warning: `inner::Level` is validated by `Level::new`, but this field is assignable outside its module
-  --> $DIR/bypassed_validator.rs:41:9
+warning: `Port::new` rejects some values of `n` before storing it, but the field is assignable outside its module
+  --> $DIR/bypassed_validator.rs:7:9
+   |
+LL |         pub(crate) n: u16,
+   |         ^^^^^^^^^^^^^^^^^
+   |
+note: the check a direct write skips
+  --> $DIR/bypassed_validator.rs:13:16
+   |
+LL |             if n <= u16::MAX as u32 {
+   |                ^^^^^^^^^^^^^^^^^^^^
+   = help: make the field private; the checked invariant otherwise holds only until the first outside write
+   = note: `#[warn(pub_invariant_fields)]` on by default
+
+warning: `Header::decode` rejects some values of `port` before storing it, but the field is assignable outside its module
+  --> $DIR/bypassed_validator.rs:151:9
+   |
+LL |         pub port: u32,
+   |         ^^^^^^^^^^^^^
+   |
+note: the check a direct write skips
+  --> $DIR/bypassed_validator.rs:159:16
+   |
+LL |             if port == 0 {
+   |                ^^^^^^^^^
+   = help: make the field private; the checked invariant otherwise holds only until the first outside write
+
+warning: `Even::new` rejects some values of `n` before storing it, but the field is assignable outside its module
+  --> $DIR/bypassed_validator.rs:194:9
+   |
+LL |         pub n: u32,
+   |         ^^^^^^^^^^
+   |
+note: the check a direct write skips
+  --> $DIR/bypassed_validator.rs:201:17
+   |
+LL |             if !is_even(n) {
+   |                 ^^^^^^^^^^
+   = help: make the field private; the checked invariant otherwise holds only until the first outside write
+
+warning: `Checked::from_pairs` rejects some values of `port` before storing it, but the field is assignable outside its module
+  --> $DIR/bypassed_validator.rs:211:9
+   |
+LL |         pub port: u32,
+   |         ^^^^^^^^^^^^^
+   |
+note: the check a direct write skips
+  --> $DIR/bypassed_validator.rs:218:16
+   |
+LL |             if port > 65535 {
+   |                ^^^^^^^^^^^^
+   = help: make the field private; the checked invariant otherwise holds only until the first outside write
+
+warning: `Small::new` rejects some values of `n` before storing it, but the field is assignable outside its module
+  --> $DIR/bypassed_validator.rs:227:9
+   |
+LL |         pub n: u8,
+   |         ^^^^^^^^^
+   |
+note: the check a direct write skips
+  --> $DIR/bypassed_validator.rs:231:31
+   |
+LL |             n.and_then(|n| if n < 10 { Some(Small { n }) } else { None })
+   |                               ^^^^^^
+   = help: make the field private; the checked invariant otherwise holds only until the first outside write
+
+warning: `NonZero::new` rejects some values of `n` before storing it, but the field is assignable outside its module
+  --> $DIR/bypassed_validator.rs:237:9
+   |
+LL |         pub n: i32,
+   |         ^^^^^^^^^^
+   |
+note: the check a direct write skips
+  --> $DIR/bypassed_validator.rs:241:13
+   |
+LL |             match n {
+   |             ^^^^^^^
+   = help: make the field private; the checked invariant otherwise holds only until the first outside write
+
+warning: `Level::new` rejects some values of `value` before storing it, but the field is assignable outside its module
+  --> $DIR/bypassed_validator.rs:252:9
    |
 LL |         pub value: u8,
    |         ^^^^^^^^^^^^^
    |
-   = help: make the field private; the validated invariant otherwise holds only until the first write
-   = note: `#[warn(pub_invariant_fields)]` on by default
+note: the check a direct write skips
+  --> $DIR/bypassed_validator.rs:257:16
+   |
+LL |             if v <= 10 { Ok(Level { value: v }) } else { Err(()) }
+   |                ^^^^^^^
+   = help: make the field private; the checked invariant otherwise holds only until the first outside write
 
-warning: `Port` is constructed by literal here, but `Port::new` validates construction
-  --> $DIR/bypassed_validator.rs:27:5
+warning: `port::Port` is constructed by literal here, but `Port::new` checks `n` before constructing one
+  --> $DIR/bypassed_validator.rs:37:5
    |
 LL |     Port { n: 0 }
    |     ^^^^^^^^^^^^^
    |
-   = help: construct through the validating function, or move this literal into the type's impl
+note: the check this literal never runs
+  --> $DIR/bypassed_validator.rs:13:16
+   |
+LL |             if n <= u16::MAX as u32 {
+   |                ^^^^^^^^^^^^^^^^^^^^
+   = help: construct through the validating function, or move this literal into the type's module
    = note: `#[warn(bypassed_validator)]` on by default
 
-warning: 2 warnings emitted
+warning: `validators::NonZero` is constructed by literal here, but `NonZero::new` checks `n` before constructing one
+  --> $DIR/bypassed_validator.rs:299:13
+   |
+LL |     let _ = validators::NonZero { n: 0 };
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the check this literal never runs
+  --> $DIR/bypassed_validator.rs:241:13
+   |
+LL |             match n {
+   |             ^^^^^^^
+   = help: construct through the validating function, or move this literal into the type's module
+
+warning: 9 warnings emitted
 

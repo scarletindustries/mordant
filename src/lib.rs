@@ -1,34 +1,62 @@
 #![feature(rustc_private)]
 #![warn(unused_extern_crates)]
 
+extern crate rustc_abi;
 extern crate rustc_ast;
+extern crate rustc_data_structures;
 extern crate rustc_errors;
 extern crate rustc_hir;
+extern crate rustc_index;
 extern crate rustc_lint;
+extern crate rustc_metadata;
 extern crate rustc_middle;
 extern crate rustc_session;
 extern crate rustc_span;
 
 dylint_linting::dylint_library!();
 
+mod asymmetric_guard;
 mod baseline;
 mod bypassed_validator;
+mod claims;
+mod ctor_flow;
 mod discarded_error;
+mod enum_facts;
 mod exclusive_options;
 mod flag_cluster;
 mod forbidden_reach;
 mod guard_flag;
+mod insert_then_unwrap;
+mod lock_order;
+mod narrowed_return;
 mod nonidentity_key;
+mod overwide_parameter;
 mod parallel_bools;
+mod stale_panic_message;
+mod stale_safety_comment;
 mod stored_projection;
 mod stringified_error;
 mod stringly_error;
+mod unit_mismatch;
 mod unread_error_variant;
+mod unread_none;
+mod variant_flow;
 mod wildcard_local_enum;
 
 /// Read from `dylint.toml` under `[mordant]` in the linted workspace root.
+///
+/// `flag_cluster` is allowed on this one struct, and it is the lawful-lattice
+/// case the lint's own help describes rather than an exemption from it. The
+/// bools are opt-ins belonging to *different* lints: all four combinations are
+/// reachable from a `dylint.toml` and each means what it says, so there is no
+/// invariant between them for a type to carry. The field set is also this
+/// pack's public interface — every field is a TOML key, and Scarlet's `xtask`
+/// gate reads these field names out of the pinned source to decide which keys
+/// it may set — so grouping them into sub-structs would rename user-visible
+/// keys to satisfy a lint about internal invariants.
 #[derive(Clone, Default, serde::Deserialize)]
 #[serde(rename_all = "kebab-case", default)]
+#[cfg_attr(dylint_lib = "mordant", allow(flag_cluster))]
 pub struct MordantConfig {
     /// Fully qualified paths of types that are never a valid map key in this
     /// project (e.g. a span type with no file identity). Empty means silent.
@@ -47,6 +75,10 @@ pub struct MordantConfig {
     /// Types whose presence in a composite key restores identity (e.g. the
     /// file id that gives a span a coordinate space).
     pub nonidentity_key_fixes: Vec<String>,
+    /// Error types that mean "the environment refused" (allocation, IO,
+    /// syscall), added to the built-in std list. A constructor exit failing
+    /// with one of these is never treated as validating a field.
+    pub validator_resource_errors: Vec<String>,
     /// Minimum Option fields for `exclusive_options` to consider a struct.
     #[serde(default = "default_min_fields")]
     pub exclusive_options_min_fields: usize,
@@ -102,8 +134,17 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
         bypassed_validator::BYPASSED_VALIDATOR,
         bypassed_validator::PUB_INVARIANT_FIELDS,
         unread_error_variant::UNREAD_ERROR_VARIANT,
+        asymmetric_guard::ASYMMETRIC_GUARD,
+        stale_safety_comment::STALE_SAFETY_COMMENT,
+        unit_mismatch::UNIT_MISMATCH,
+        stale_panic_message::STALE_PANIC_MESSAGE,
+        lock_order::LOCK_ORDER,
         forbidden_reach::FORBIDDEN_REACH,
         guard_flag::GUARD_FLAG,
+        unread_none::UNREAD_NONE,
+        insert_then_unwrap::INSERT_THEN_UNWRAP,
+        overwide_parameter::OVERWIDE_PARAMETER,
+        narrowed_return::NARROWED_RETURN,
         wildcard_local_enum::WILDCARD_LOCAL_ENUM,
         discarded_error::DISCARDED_ERROR,
         stored_projection::STORED_PROJECTION,
@@ -116,21 +157,32 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
     lint_store.register_late_pass(|_| Box::new(stringified_error::StringifiedError));
     lint_store.register_late_pass(move |_| Box::new(exclusive_options::ExclusiveOptions::new(&c3)));
     lint_store.register_late_pass(|_| Box::new(parallel_bools::ParallelBools::new()));
-    let c4 = config.clone();
+    let c6 = config.clone();
     // Cloned here rather than beside its registration below: `config` itself is
     // moved into the `wildcard_local_enum` closure before that point.
-    let c6 = config.clone();
-    lint_store.register_late_pass(move |_| Box::new(flag_cluster::FlagCluster::new(&c4)));
-    lint_store.register_late_pass(|_| Box::new(bypassed_validator::BypassedValidator::new()));
-    lint_store.register_late_pass(|_| Box::new(unread_error_variant::UnreadErrorVariant::new()));
+    let c7 = config.clone();
+    lint_store.register_late_pass(move |_| Box::new(flag_cluster::FlagCluster::new(&c6)));
     let c5 = config.clone();
-    lint_store.register_late_pass(move |_| Box::new(forbidden_reach::ForbiddenReach::new(&c5)));
+    lint_store
+        .register_late_pass(move |_| Box::new(bypassed_validator::BypassedValidator::new(&c5)));
+    lint_store.register_late_pass(|_| Box::new(unread_error_variant::UnreadErrorVariant::new()));
+    lint_store.register_late_pass(|_| Box::new(asymmetric_guard::AsymmetricGuard::new()));
+    lint_store.register_late_pass(|_| Box::new(stale_safety_comment::StaleSafetyComment::new()));
+    lint_store.register_late_pass(|_| Box::new(unit_mismatch::UnitMismatch));
+    lint_store.register_late_pass(|_| Box::new(stale_panic_message::StalePanicMessage::new()));
+    lint_store.register_late_pass(|_| Box::new(lock_order::LockOrder::new()));
+    let c4 = config.clone();
+    lint_store.register_late_pass(move |_| Box::new(forbidden_reach::ForbiddenReach::new(&c4)));
     lint_store.register_late_pass(|_| Box::new(guard_flag::GuardFlag::new()));
+    lint_store.register_late_pass(|_| Box::new(unread_none::UnreadNone::new()));
+    lint_store.register_late_pass(|_| Box::new(insert_then_unwrap::InsertThenUnwrap));
+    lint_store.register_late_pass(|_| Box::new(overwide_parameter::OverwideParameter::new()));
+    lint_store.register_late_pass(|_| Box::new(narrowed_return::NarrowedReturn::new()));
     lint_store.register_late_pass(move |_| {
         Box::new(wildcard_local_enum::WildcardLocalEnum::new(&config))
     });
     lint_store.register_late_pass(|_| Box::new(discarded_error::DiscardedError));
-    lint_store.register_late_pass(move |_| Box::new(stored_projection::StoredProjection::new(&c6)));
+    lint_store.register_late_pass(move |_| Box::new(stored_projection::StoredProjection::new(&c7)));
     // Last, so its check_crate_post flushes after every lint has recorded.
     lint_store.register_late_pass(|_| Box::new(baseline::BaselineWriter));
 }

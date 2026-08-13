@@ -23,7 +23,7 @@ LL |         other @ (Op::Sub | Op::Mul) => cost(other),
    |               +++++++++++++++++++++
 
 warning: this arm absorbs every future variant of `Entry` (3 variants today)
-  --> $DIR/wildcard_local_enum.rs:66:9
+  --> $DIR/wildcard_local_enum.rs:96:9
    |
 LL |         _ => 0,
    |         ^

@@ -1,0 +1,35 @@
+warning: `timeout_ms` claims ms and `deadline_ns` claims ns; arithmetic between them mixes units
+  --> $DIR/unit_mismatch.rs:11:5
+   |
+LL |     t.timeout_ms + t.deadline_ns
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: convert one side, or rename whichever name is lying about its unit
+   = note: `#[warn(unit_mismatch)]` on by default
+
+warning: `timeout_ms` claims ms and `deadline_ns` claims ns; comparison between them mixes units
+  --> $DIR/unit_mismatch.rs:15:5
+   |
+LL |     t.timeout_ms < t.deadline_ns
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: convert one side, or rename whichever name is lying about its unit
+
+warning: `timeout_ms` claims ms and `size_bytes` claims bytes; comparison between them mixes units
+  --> $DIR/unit_mismatch.rs:19:5
+   |
+LL |     t.timeout_ms == t.size_bytes
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: convert one side, or rename whichever name is lying about its unit
+
+warning: `timeout_ms` claims ms and `elapsed_ns` claims ns; arithmetic between them mixes units
+  --> $DIR/unit_mismatch.rs:40:5
+   |
+LL |     t.timeout_ms + elapsed_ns()
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: convert one side, or rename whichever name is lying about its unit
+
+warning: 4 warnings emitted
+

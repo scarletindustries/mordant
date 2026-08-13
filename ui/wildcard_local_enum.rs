@@ -48,6 +48,36 @@ fn extractor_false_is_fine(o: &Op) -> bool {
     }
 }
 
+fn extractor_empty_slice_is_fine(o: &Op) -> &'static [u32] {
+    match o {
+        Op::Add => &[1],
+        _ => &[],
+    }
+}
+
+fn extractor_empty_vec_is_fine(o: &Op) -> Vec<u32> {
+    match o {
+        Op::Add => vec![1],
+        _ => Vec::new(),
+    }
+}
+
+fn extractor_return_none_is_fine(o: &Op) -> Option<u32> {
+    match o {
+        Op::Add => Some(1),
+        _ => return None,
+    }
+}
+
+// An #[allow] on the arm itself is honored.
+fn arm_allow_is_fine(o: &Op) -> u32 {
+    match o {
+        Op::Add => 1,
+        #[allow(unknown_lints, wildcard_local_enum)]
+        _ => 0,
+    }
+}
+
 // `#[non_exhaustive]` constrains downstream crates only. In the defining crate
 // — the only place this lint can see a match — rustc still checks
 // exhaustiveness, so a wildcard here absorbs future variants exactly as it does
@@ -96,6 +126,10 @@ fn main() {
     let _ = exhaustive_is_fine(Op::Mul);
     let _ = extractor_none_is_fine(&Op::Add);
     let _ = extractor_false_is_fine(&Op::Sub);
+    let _ = extractor_empty_slice_is_fine(&Op::Add);
+    let _ = extractor_empty_vec_is_fine(&Op::Sub);
+    let _ = extractor_return_none_is_fine(&Op::Mul);
+    let _ = arm_allow_is_fine(&Op::Add);
     let _ = non_exhaustive_wild_is_flagged(Entry::Cpu);
     let _ = non_exhaustive_listed_is_fine(Entry::Memory);
     let _ = non_exhaustive_listed_is_fine(Entry::Irq);
