@@ -20,6 +20,7 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 | `stringified_error`    | the destruction site: `.map_err(\|e\| e.to_string())` on a typed error                                                                                                    |
 | `exclusive_options`    | a struct whose `Option` fields are never populated together, so the valid combinations are really an enum                                                                 |
 | `parallel_bools`       | bool fields only ever assigned as a pair, which together encode a state machine                                                                                           |
+| `flag_cluster`         | a named-field struct with several independent bools: n bools is 2^n representable states, and if fewer are legal an enum names the ones that are                          |
 | `nonidentity_key`      | a map keyed on something that is not the canonical identity of what it names: a span, a pointer's bits, an unresolved path                                                |
 | `bypassed_validator`   | a struct literal that skips a constructor whose body rejects some value it then stores in a field                                                                         |
 | `guard_flag`           | a bool field that several methods test and bail on at entry, enforcing an ordering invariant at runtime                                                                   |
@@ -35,6 +36,7 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 | `forbidden_reach`      | a config-declared ban ("from `sched::pick`, never reach `Vec::push`") violated by a concrete call path, printed as a witness chain                                        |
 | `unread_none`          | an `Option` field every reader unwraps and no reader handles: a state nobody survives, usually a two-phase object wanting two types                                       |
 | `insert_then_unwrap`   | `map.get(&k).unwrap()` re-fetching what `map.insert(k, ..)` just proved present, with nothing in between that could disturb either                                        |
+| `stored_projection`    | two fields whose constant values agree one-for-one at every construction site: one is a stored projection of the other, so the type admits pairings the constructors never make |
 | `overwide_parameter`   | a panicking arm for a variant no existing call site passes: the parameter type is wider than the function's domain, and narrowing it turns the panic into a compile error |
 | `narrowed_return`      | a panicking arm for a variant the callee provably never constructs: the return type promises more than the function delivers         |
 
@@ -75,6 +77,8 @@ nonidentity-key-types = ["my_crate::span::Span"]
 nonidentity-key-forms = ["ptr-cast"]
 nonidentity-key-methods = ["my_crate::value::Value::to_bits"]
 wildcard-local-enum-max-variants = 12
+flag-cluster-min-bools = 3
+stored-projection-min-sites = 2
 
 # Opt-in: flag composite keys (tuples, structs one level deep) that carry a
 # denied type unless one of the fixing types sits beside it. With these two
