@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use rustc_hir::def::{CtorKind, CtorOf, DefKind, Res};
+use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::DefId;
 use rustc_hir::{Expr, ExprKind, StructTailExpr};
 use rustc_lint::{LateContext, LateLintPass};
@@ -9,6 +9,7 @@ use rustc_span::Symbol;
 use crate::MordantConfig;
 use crate::adt_facts::{has_fixed_repr, has_positional_fields};
 use crate::baseline::emit;
+use crate::enum_facts::ctor_literal_variant;
 use crate::hir_shapes::assigned_adt_field;
 
 rustc_session::declare_lint! {
@@ -132,28 +133,15 @@ fn peel<'tcx>(e: &'tcx Expr<'tcx>) -> &'tcx Expr<'tcx> {
 
 fn classify<'tcx>(cx: &LateContext<'tcx>, e: &'tcx Expr<'tcx>) -> Option<Val> {
     let e = peel(e);
+    // `Some(x)`, `Wide(n)` — the variant is the fact, the payload is not.
+    if let Some(v) = ctor_literal_variant(cx, e) {
+        return Some(as_variant(v));
+    }
     match e.kind {
         ExprKind::Path(ref qpath) => match cx.qpath_res(qpath, e.hir_id) {
-            Res::Def(DefKind::Ctor(CtorOf::Variant, CtorKind::Const), did) => {
-                Some(as_variant(cx.tcx.parent(did)))
-            }
             Res::Def(DefKind::Const { .. } | DefKind::AssocConst { .. }, did) => {
                 Some(as_named_const(did))
             }
-            _ => None,
-        },
-        // `Some(x)`, `Wide(n)` — the variant is the fact, the payload is not.
-        ExprKind::Call(f, _) => match f.kind {
-            ExprKind::Path(ref qpath) => match cx.qpath_res(qpath, f.hir_id) {
-                Res::Def(DefKind::Ctor(CtorOf::Variant, CtorKind::Fn), did) => {
-                    Some(as_variant(cx.tcx.parent(did)))
-                }
-                _ => None,
-            },
-            _ => None,
-        },
-        ExprKind::Struct(qpath, ..) => match cx.qpath_res(qpath, e.hir_id) {
-            Res::Def(DefKind::Variant, did) => Some(as_variant(did)),
             _ => None,
         },
         ExprKind::Lit(lit) => Some(Val::Lit(format!("{:?}", lit.node))),
