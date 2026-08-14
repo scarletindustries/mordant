@@ -1,4 +1,3 @@
-use clippy_utils::peel_blocks;
 use clippy_utils::res::MaybeResPath;
 use clippy_utils::source::snippet_opt;
 use rustc_ast::LitKind;
@@ -94,7 +93,14 @@ fn is_negative_extractor(cx: &LateContext<'_>, body: &Expr<'_>) -> bool {
 /// the dispatch on; the inner match is where the variants are or are not
 /// listed, and this lint judges it on its own.
 fn redispatches(body: &Expr<'_>, binding: HirId) -> bool {
-    let ExprKind::Match(mut scrut, _, MatchSource::Normal) = peel_blocks(body).kind else {
+    let mut body = body;
+    while let ExprKind::Block(block, None) = body.kind
+        && block.stmts.is_empty()
+        && let Some(tail) = block.expr
+    {
+        body = tail;
+    }
+    let ExprKind::Match(mut scrut, _, MatchSource::Normal) = body.kind else {
         return false;
     };
     while let ExprKind::AddrOf(_, _, inner) | ExprKind::Unary(UnOp::Deref, inner) = scrut.kind {

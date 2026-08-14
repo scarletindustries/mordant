@@ -91,7 +91,15 @@ pub(crate) fn is_panic_arm(cx: &LateContext<'_>, body: &Expr<'_>) -> bool {
     if !cx.typeck_results().expr_ty(body).is_never() {
         return false;
     }
-    let inner = clippy_utils::peel_blocks(body);
+    // Not `clippy_utils::peel_blocks`: `_ => unsafe { unreachable!() }` is
+    // still a panic arm.
+    let mut inner = body;
+    while let ExprKind::Block(b, _) = inner.kind
+        && b.stmts.is_empty()
+        && let Some(tail) = b.expr
+    {
+        inner = tail;
+    }
     clippy_utils::macros::macro_backtrace(inner.span).any(|mac| {
         matches!(
             cx.tcx.item_name(mac.def_id).as_str(),
