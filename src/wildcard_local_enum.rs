@@ -11,6 +11,7 @@ use rustc_span::Span;
 use crate::MordantConfig;
 use crate::baseline::emit_hir_then;
 use crate::enum_facts::{pat_head_qpath, variant_of_res};
+use crate::hir_shapes::peel_blocks_unsafe;
 
 rustc_session::declare_lint! {
     /// Flags `_` (or a catch-all binding) matching over a small crate-local
@@ -93,14 +94,7 @@ fn is_negative_extractor(cx: &LateContext<'_>, body: &Expr<'_>) -> bool {
 /// the dispatch on; the inner match is where the variants are or are not
 /// listed, and this lint judges it on its own.
 fn redispatches(body: &Expr<'_>, binding: HirId) -> bool {
-    let mut body = body;
-    while let ExprKind::Block(block, None) = body.kind
-        && block.stmts.is_empty()
-        && let Some(tail) = block.expr
-    {
-        body = tail;
-    }
-    let ExprKind::Match(mut scrut, _, MatchSource::Normal) = body.kind else {
+    let ExprKind::Match(mut scrut, _, MatchSource::Normal) = peel_blocks_unsafe(body).kind else {
         return false;
     };
     while let ExprKind::AddrOf(_, _, inner) | ExprKind::Unary(UnOp::Deref, inner) = scrut.kind {

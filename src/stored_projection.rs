@@ -10,7 +10,7 @@ use crate::MordantConfig;
 use crate::adt_facts::{has_fixed_repr, has_positional_fields};
 use crate::baseline::emit;
 use crate::enum_facts::ctor_literal_variant;
-use crate::hir_shapes::assigned_adt_field;
+use crate::hir_shapes::{assigned_adt_field, peel_blocks_unsafe};
 
 rustc_session::declare_lint! {
     /// Flags two fields of one type whose constant values agree one-for-one
@@ -124,9 +124,9 @@ impl Val {
 
 /// Strip the wrappers that do not change which value an expression names.
 fn peel<'tcx>(e: &'tcx Expr<'tcx>) -> &'tcx Expr<'tcx> {
+    let e = peel_blocks_unsafe(e);
     match e.kind {
-        ExprKind::AddrOf(_, _, inner) | ExprKind::DropTemps(inner) => peel(inner),
-        ExprKind::Block(b, None) if b.stmts.is_empty() => b.expr.map_or(e, peel),
+        ExprKind::AddrOf(_, _, inner) => peel(inner),
         _ => e,
     }
 }

@@ -5,7 +5,7 @@
 //! spelled identically.
 
 use rustc_hir::def_id::DefId;
-use rustc_hir::{Expr, ExprKind, QPath, Stmt, StmtKind, UnOp};
+use rustc_hir::{Block, Expr, ExprKind, QPath, Stmt, StmtKind, UnOp};
 use rustc_lint::LateContext;
 use rustc_middle::ty::AdtDef;
 use rustc_span::symbol::kw;
@@ -104,6 +104,24 @@ pub(crate) fn peel_not<'h>(mut e: &'h Expr<'h>) -> (&'h Expr<'h>, bool) {
             _ => return (e, negated),
         }
     }
+}
+
+/// `e` under any nesting of `{ tail }` / `unsafe { tail }` (no statements)
+/// and HIR temporaries. `clippy_utils::peel_blocks` stops at `unsafe`.
+pub(crate) fn peel_blocks_unsafe<'h>(mut e: &'h Expr<'h>) -> &'h Expr<'h> {
+    while let ExprKind::DropTemps(inner)
+    | ExprKind::Block(
+        &Block {
+            stmts: [],
+            expr: Some(inner),
+            ..
+        },
+        None,
+    ) = e.kind
+    {
+        e = inner;
+    }
+    e
 }
 
 /// The statement's expression, for `let` its initializer.

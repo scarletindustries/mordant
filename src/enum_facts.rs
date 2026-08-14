@@ -9,6 +9,8 @@ use rustc_hir::def_id::DefId;
 use rustc_hir::{Expr, ExprKind, Pat, PatExpr, PatExprKind, PatKind, QPath};
 use rustc_lint::LateContext;
 
+use crate::hir_shapes::peel_blocks_unsafe;
+
 /// The variant `res` names, whether spelled as the variant itself (unit and
 /// struct variants) or as its constructor (tuple variants).
 pub(crate) fn variant_of_res(cx: &LateContext<'_>, res: Res) -> Option<DefId> {
@@ -91,15 +93,7 @@ pub(crate) fn is_panic_arm(cx: &LateContext<'_>, body: &Expr<'_>) -> bool {
     if !cx.typeck_results().expr_ty(body).is_never() {
         return false;
     }
-    // Not `clippy_utils::peel_blocks`: `_ => unsafe { unreachable!() }` is
-    // still a panic arm.
-    let mut inner = body;
-    while let ExprKind::Block(b, _) = inner.kind
-        && b.stmts.is_empty()
-        && let Some(tail) = b.expr
-    {
-        inner = tail;
-    }
+    let inner = peel_blocks_unsafe(body);
     clippy_utils::macros::macro_backtrace(inner.span).any(|mac| {
         matches!(
             cx.tcx.item_name(mac.def_id).as_str(),

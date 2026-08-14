@@ -10,7 +10,7 @@ use rustc_span::{Span, sym};
 use crate::adt_facts::{matches_config_path, result_err_ty};
 use crate::baseline::{emit, emit_with_note};
 use crate::enum_facts::{arm_variant, ctor_literal_variant};
-use crate::hir_shapes::callee_of;
+use crate::hir_shapes::{callee_of, peel_blocks_unsafe as peel};
 
 rustc_session::declare_lint! {
     /// Flags a call whose failure is replaced by a fixed value and never
@@ -152,25 +152,6 @@ fn fallible_call<'tcx>(cx: &LateContext<'tcx>, call: &Expr<'tcx>) -> Option<Fall
     let callee = callee_of(cx, call)?.def();
     matches!(cx.tcx.def_kind(callee), DefKind::Fn | DefKind::AssocFn)
         .then_some(FallibleCall { callee, wrapper })
-}
-
-/// Unlike `clippy_utils::peel_blocks`, sees through `unsafe { .. }` too:
-/// `unsafe { f(x) }.unwrap_or(0)` is an ordinary receiver here.
-fn peel<'h>(mut e: &'h Expr<'h>) -> &'h Expr<'h> {
-    loop {
-        match e.kind {
-            ExprKind::DropTemps(inner) => e = inner,
-            ExprKind::Block(
-                Block {
-                    stmts: [],
-                    expr: Some(tail),
-                    ..
-                },
-                None,
-            ) => e = tail,
-            _ => return e,
-        }
-    }
 }
 
 /// `recv`, or the `Result` under a value-position `.ok()` on it.
