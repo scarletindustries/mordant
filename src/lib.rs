@@ -16,6 +16,8 @@ extern crate rustc_span;
 
 dylint_linting::dylint_library!();
 
+use rustc_data_structures::sync;
+
 mod adt_facts;
 mod asymmetric_guard;
 mod baseline;
@@ -145,81 +147,72 @@ pub struct MordantConfig {
 
 #[expect(clippy::no_mangle_with_rust_abi)]
 #[unsafe(no_mangle)]
-pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint::LintStore) {
+pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintStore) {
+    use {
+        asymmetric_guard::AsymmetricGuard, baseline::BaselineWriter,
+        bypassed_validator::BypassedValidator, defaulted_failure::DefaultedFailure,
+        discarded_error::DiscardedError, exclusive_options::ExclusiveOptions,
+        flag_cluster::FlagCluster, forbidden_reach::ForbiddenReach, guard_flag::GuardFlag,
+        insert_then_unwrap::InsertThenUnwrap, lock_order::LockOrder,
+        narrowed_return::NarrowedReturn, nonidentity_key::NonidentityKey,
+        overwide_parameter::OverwideParameter, parallel_bools::ParallelBools,
+        stale_across_reentry::StaleAcrossReentry, stale_panic_message::StalePanicMessage,
+        stale_safety_comment::StaleSafetyComment, stored_projection::StoredProjection,
+        stringified_error::StringifiedError, stringly_error::StringlyError,
+        unchecked_input_len::UncheckedInputLen, unit_mismatch::UnitMismatch,
+        unread_error_variant::UnreadErrorVariant, unread_none::UnreadNone,
+        wildcard_local_enum::WildcardLocalEnum,
+    };
     dylint_linting::init_config(sess);
     let config: MordantConfig = dylint_linting::config_or_default(env!("CARGO_PKG_NAME"));
     let config: &'static MordantConfig = Box::leak(Box::new(config));
     baseline::setup(&config.baseline);
-    lint_store.register_lints(&[
-        stringly_error::STRINGLY_ERROR,
-        nonidentity_key::NONIDENTITY_KEY,
-        stringified_error::STRINGIFIED_ERROR,
-        exclusive_options::EXCLUSIVE_OPTIONS,
-        parallel_bools::PARALLEL_BOOLS,
-        flag_cluster::FLAG_CLUSTER,
-        bypassed_validator::BYPASSED_VALIDATOR,
-        unread_error_variant::UNREAD_ERROR_VARIANT,
-        asymmetric_guard::ASYMMETRIC_GUARD,
-        stale_safety_comment::STALE_SAFETY_COMMENT,
-        unit_mismatch::UNIT_MISMATCH,
-        stale_panic_message::STALE_PANIC_MESSAGE,
-        lock_order::LOCK_ORDER,
-        forbidden_reach::FORBIDDEN_REACH,
-        guard_flag::GUARD_FLAG,
-        unread_none::UNREAD_NONE,
-        insert_then_unwrap::INSERT_THEN_UNWRAP,
-        overwide_parameter::OVERWIDE_PARAMETER,
-        narrowed_return::NARROWED_RETURN,
-        wildcard_local_enum::WILDCARD_LOCAL_ENUM,
-        discarded_error::DISCARDED_ERROR,
-        stored_projection::STORED_PROJECTION,
-        stale_across_reentry::STALE_ACROSS_REENTRY,
-        defaulted_failure::DEFAULTED_FAILURE,
-        unchecked_input_len::UNCHECKED_INPUT_LEN,
-    ]);
-    lint_store.register_late_pass(move |_| Box::new(stringly_error::StringlyError { config }));
-    lint_store.register_late_pass(move |_| Box::new(nonidentity_key::NonidentityKey::new(config)));
-    lint_store.register_late_pass(|_| Box::new(stringified_error::StringifiedError));
-    lint_store
-        .register_late_pass(move |_| Box::new(exclusive_options::ExclusiveOptions::new(config)));
-    lint_store.register_late_pass(|_| Box::new(parallel_bools::ParallelBools::default()));
-    // The opt-in lints stay registered above so `allow(..)` / `-A` of them
-    // still resolve; only their passes are skipped.
-    if config.flag_cluster_enabled {
-        lint_store.register_late_pass(move |_| Box::new(flag_cluster::FlagCluster { config }));
-    }
-    lint_store
-        .register_late_pass(move |_| Box::new(bypassed_validator::BypassedValidator::new(config)));
-    lint_store
-        .register_late_pass(|_| Box::new(unread_error_variant::UnreadErrorVariant::default()));
-    lint_store.register_late_pass(|_| Box::new(asymmetric_guard::AsymmetricGuard::default()));
-    if config.stale_safety_comment_enabled {
-        lint_store
-            .register_late_pass(|_| Box::new(stale_safety_comment::StaleSafetyComment::default()));
-    }
-    lint_store.register_late_pass(|_| Box::new(unit_mismatch::UnitMismatch));
-    lint_store.register_late_pass(|_| Box::new(stale_panic_message::StalePanicMessage::default()));
-    lint_store.register_late_pass(|_| Box::new(lock_order::LockOrder::default()));
-    lint_store.register_late_pass(move |_| Box::new(forbidden_reach::ForbiddenReach::new(config)));
-    lint_store.register_late_pass(|_| Box::new(guard_flag::GuardFlag::default()));
-    lint_store.register_late_pass(|_| Box::new(unread_none::UnreadNone::default()));
-    lint_store.register_late_pass(|_| Box::new(insert_then_unwrap::InsertThenUnwrap));
-    lint_store.register_late_pass(|_| Box::new(overwide_parameter::OverwideParameter::default()));
-    lint_store.register_late_pass(|_| Box::new(narrowed_return::NarrowedReturn::default()));
-    lint_store
-        .register_late_pass(move |_| Box::new(wildcard_local_enum::WildcardLocalEnum { config }));
-    lint_store.register_late_pass(|_| Box::new(discarded_error::DiscardedError));
-    lint_store
-        .register_late_pass(move |_| Box::new(stored_projection::StoredProjection::new(config)));
-    lint_store
-        .register_late_pass(move |_| Box::new(stale_across_reentry::StaleAcrossReentry { config }));
-    lint_store
-        .register_late_pass(move |_| Box::new(defaulted_failure::DefaultedFailure::new(config)));
-    if config.unchecked_input_len_enabled {
-        lint_store.register_late_pass(|_| Box::new(unchecked_input_len::UncheckedInputLen));
-    }
+    add(s, true, move || StringlyError { config });
+    add(s, true, move || NonidentityKey::new(config));
+    add(s, true, || StringifiedError);
+    add(s, true, move || ExclusiveOptions::new(config));
+    add(s, true, ParallelBools::default);
+    add(s, config.flag_cluster_enabled, move || FlagCluster {
+        config,
+    });
+    add(s, true, move || BypassedValidator::new(config));
+    add(s, true, UnreadErrorVariant::default);
+    add(s, true, AsymmetricGuard::default);
+    add(
+        s,
+        config.stale_safety_comment_enabled,
+        StaleSafetyComment::default,
+    );
+    add(s, true, || UnitMismatch);
+    add(s, true, StalePanicMessage::default);
+    add(s, true, LockOrder::default);
+    add(s, true, move || ForbiddenReach::new(config));
+    add(s, true, GuardFlag::default);
+    add(s, true, UnreadNone::default);
+    add(s, true, || InsertThenUnwrap);
+    add(s, true, OverwideParameter::default);
+    add(s, true, NarrowedReturn::default);
+    add(s, true, move || WildcardLocalEnum { config });
+    add(s, true, || DiscardedError);
+    add(s, true, move || StoredProjection::new(config));
+    add(s, true, move || StaleAcrossReentry { config });
+    add(s, true, move || DefaultedFailure::new(config));
+    add(s, config.unchecked_input_len_enabled, || UncheckedInputLen);
     // Last, so its check_crate_post flushes after every lint has recorded.
-    lint_store.register_late_pass(|_| Box::new(baseline::BaselineWriter));
+    add(s, true, || BaselineWriter);
+}
+
+/// Registers the pass's lints unconditionally, so `allow(..)` / `-A` of an
+/// opt-in lint still resolves when only its pass is skipped.
+fn add<T: for<'tcx> rustc_lint::LateLintPass<'tcx> + 'static>(
+    s: &mut rustc_lint::LintStore,
+    enabled: bool,
+    make: impl Fn() -> T + sync::DynSend + sync::DynSync + 'static,
+) {
+    s.register_lints(&make().get_lints());
+    if enabled {
+        s.register_late_pass(move |_| Box::new(make()));
+    }
 }
 
 #[test]
