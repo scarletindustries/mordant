@@ -217,4 +217,36 @@ pub fn records() -> [Record; 2] {
     ]
 }
 
+/// `owner` is filled in after construction, so the literals are not the only
+/// thing deciding it: every `Detached` site starts it at `None`, and `attach`
+/// pairs it with `Detached` anyway.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Source {
+    Attached,
+    Detached,
+}
+
+pub struct Job {
+    source: Source,
+    owner: Option<u32>,
+}
+
+pub fn attached(owner: u32) -> Job {
+    Job {
+        source: Source::Attached,
+        owner: Some(owner),
+    }
+}
+
+pub fn detached() -> Job {
+    Job {
+        source: Source::Detached,
+        owner: None,
+    }
+}
+
+pub fn attach(job: &mut Job, owner: u32) {
+    job.owner = Some(owner);
+}
+
 fn main() {}

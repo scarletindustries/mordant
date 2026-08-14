@@ -21,6 +21,10 @@ rustc_session::declare_lint! {
     /// biject whenever a small table's rows differ, which is a property of
     /// the table and not of the type; see `Val::decides`.
     ///
+    /// A field that is also assigned somewhere (`x.f = …`) is skipped: the
+    /// constructors are then not the only thing deciding it, and a value the
+    /// literals always pair one way may be re-paired later.
+    ///
     /// Silent on any type with an explicit `repr`, on foreign types, and
     /// below `stored-projection-min-sites` construction sites.
     pub STORED_PROJECTION,
@@ -31,6 +35,8 @@ rustc_session::declare_lint! {
 pub struct StoredProjection {
     min_sites: usize,
     seen: HashMap<DefId, Vec<Site>>,
+    /// (variant, field) pairs written by an assignment rather than a literal.
+    assigned: HashMap<DefId, BTreeSet<Symbol>>,
 }
 
 rustc_session::impl_lint_pass!(StoredProjection => [STORED_PROJECTION]);
@@ -43,6 +49,7 @@ impl StoredProjection {
         Self {
             min_sites: config.stored_projection_min_sites.max(FLOOR),
             seen: HashMap::new(),
+            assigned: HashMap::new(),
         }
     }
 }
@@ -152,8 +159,43 @@ fn classify<'tcx>(cx: &LateContext<'tcx>, e: &'tcx Expr<'tcx>) -> Option<Val> {
     }
 }
 
+impl StoredProjection {
+    /// `s.f = …`, through any number of derefs and autoderefs: `f` of `s`'s
+    /// struct is decided by more than its literals.
+    fn note_assignment<'tcx>(&mut self, cx: &LateContext<'tcx>, place: &'tcx Expr<'tcx>) {
+        let mut place = place;
+        while let ExprKind::Unary(rustc_hir::UnOp::Deref, inner) | ExprKind::DropTemps(inner) =
+            place.kind
+        {
+            place = inner;
+        }
+        let ExprKind::Field(base, field) = place.kind else {
+            return;
+        };
+        let Some(adt) = cx
+            .typeck_results()
+            .expr_ty_adjusted(base)
+            .peel_refs()
+            .ty_adt_def()
+        else {
+            return;
+        };
+        if !adt.is_struct() || !adt.did().is_local() {
+            return;
+        }
+        self.assigned
+            .entry(adt.non_enum_variant().def_id)
+            .or_default()
+            .insert(field.name);
+    }
+}
+
 impl<'tcx> LateLintPass<'tcx> for StoredProjection {
     fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
+        if let ExprKind::Assign(place, ..) | ExprKind::AssignOp(_, place, _) = expr.kind {
+            self.note_assignment(cx, place);
+            return;
+        }
         let ExprKind::Struct(qpath, fields, _) = expr.kind else {
             return;
         };
@@ -217,6 +259,9 @@ impl<'tcx> LateLintPass<'tcx> for StoredProjection {
             let mut common: BTreeSet<Symbol> = sites[0].fields.keys().copied().collect();
             for s in &sites[1..] {
                 common.retain(|k| s.fields.contains_key(k));
+            }
+            if let Some(assigned) = self.assigned.get(&did) {
+                common.retain(|f| !assigned.contains(f));
             }
             let common: Vec<Symbol> = common.into_iter().collect();
             for i in 0..common.len() {
