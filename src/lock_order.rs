@@ -48,12 +48,6 @@ pub struct LockOrder {
 
 rustc_session::impl_lint_pass!(LockOrder => [LOCK_ORDER]);
 
-impl LockOrder {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 /// `self.a.b.lock()` (or `.read()` / `.write()`) on a `Mutex`/`RwLock`
 /// receiver: the lock's identity is the field path and the type of `self`.
 fn lock_acquisition(cx: &LateContext<'_>, e: &Expr<'_>) -> Option<Lock> {

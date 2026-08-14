@@ -206,7 +206,7 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
     lint_store.register_late_pass(|_| Box::new(stringified_error::StringifiedError));
     lint_store
         .register_late_pass(move |_| Box::new(exclusive_options::ExclusiveOptions::new(config)));
-    lint_store.register_late_pass(|_| Box::new(parallel_bools::ParallelBools::new()));
+    lint_store.register_late_pass(|_| Box::new(parallel_bools::ParallelBools::default()));
     // The opt-in lints stay registered above so `allow(..)` / `-A` of them
     // still resolve; only their passes are skipped.
     if config.flag_cluster_enabled {
@@ -214,21 +214,22 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
     }
     lint_store
         .register_late_pass(move |_| Box::new(bypassed_validator::BypassedValidator::new(config)));
-    lint_store.register_late_pass(|_| Box::new(unread_error_variant::UnreadErrorVariant::new()));
-    lint_store.register_late_pass(|_| Box::new(asymmetric_guard::AsymmetricGuard::new()));
+    lint_store
+        .register_late_pass(|_| Box::new(unread_error_variant::UnreadErrorVariant::default()));
+    lint_store.register_late_pass(|_| Box::new(asymmetric_guard::AsymmetricGuard::default()));
     if config.stale_safety_comment_enabled {
         lint_store
-            .register_late_pass(|_| Box::new(stale_safety_comment::StaleSafetyComment::new()));
+            .register_late_pass(|_| Box::new(stale_safety_comment::StaleSafetyComment::default()));
     }
     lint_store.register_late_pass(|_| Box::new(unit_mismatch::UnitMismatch));
-    lint_store.register_late_pass(|_| Box::new(stale_panic_message::StalePanicMessage::new()));
-    lint_store.register_late_pass(|_| Box::new(lock_order::LockOrder::new()));
+    lint_store.register_late_pass(|_| Box::new(stale_panic_message::StalePanicMessage::default()));
+    lint_store.register_late_pass(|_| Box::new(lock_order::LockOrder::default()));
     lint_store.register_late_pass(move |_| Box::new(forbidden_reach::ForbiddenReach::new(config)));
-    lint_store.register_late_pass(|_| Box::new(guard_flag::GuardFlag::new()));
-    lint_store.register_late_pass(|_| Box::new(unread_none::UnreadNone::new()));
+    lint_store.register_late_pass(|_| Box::new(guard_flag::GuardFlag::default()));
+    lint_store.register_late_pass(|_| Box::new(unread_none::UnreadNone::default()));
     lint_store.register_late_pass(|_| Box::new(insert_then_unwrap::InsertThenUnwrap));
-    lint_store.register_late_pass(|_| Box::new(overwide_parameter::OverwideParameter::new()));
-    lint_store.register_late_pass(|_| Box::new(narrowed_return::NarrowedReturn::new()));
+    lint_store.register_late_pass(|_| Box::new(overwide_parameter::OverwideParameter::default()));
+    lint_store.register_late_pass(|_| Box::new(narrowed_return::NarrowedReturn::default()));
     lint_store
         .register_late_pass(move |_| Box::new(wildcard_local_enum::WildcardLocalEnum::new(config)));
     lint_store.register_late_pass(|_| Box::new(discarded_error::DiscardedError));

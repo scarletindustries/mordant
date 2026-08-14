@@ -34,12 +34,6 @@ pub struct UnreadNone {
 
 rustc_session::impl_lint_pass!(UnreadNone => [UNREAD_NONE]);
 
-impl UnreadNone {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 /// The crate-private local struct owning this field access, when the field is
 /// an `Option`.
 fn option_field_of<'tcx>(

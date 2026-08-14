@@ -69,12 +69,6 @@ pub struct AsymmetricGuard {
 
 rustc_session::impl_lint_pass!(AsymmetricGuard => [ASYMMETRIC_GUARD]);
 
-impl AsymmetricGuard {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 /// The inherent method a `self.m(..)` call resolves to, with its self type,
 /// when that type is a crate-local ADT.
 fn self_method_call<'tcx>(cx: &LateContext<'tcx>, e: &Expr<'tcx>) -> Option<(DefId, DefId)> {

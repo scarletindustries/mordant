@@ -41,12 +41,6 @@ pub struct UnreadErrorVariant {
 
 rustc_session::impl_lint_pass!(UnreadErrorVariant => [UNREAD_ERROR_VARIANT]);
 
-impl UnreadErrorVariant {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 /// True when `hir_id` sits inside a TRAIT impl whose self type is `enum_did`.
 /// `Display`, `Debug`, `From` and derive expansions must match every variant
 /// to exist, so their patterns prove nothing. Inherent methods are not

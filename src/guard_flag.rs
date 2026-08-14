@@ -37,12 +37,6 @@ pub struct GuardFlag {
 
 rustc_session::impl_lint_pass!(GuardFlag => [GUARD_FLAG]);
 
-impl GuardFlag {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 /// `self.field` where `self` is the literal receiver.
 fn self_bool_field<'tcx>(
     cx: &LateContext<'tcx>,

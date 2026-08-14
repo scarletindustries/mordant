@@ -48,10 +48,6 @@ pub struct OverwideParameter {
 rustc_session::impl_lint_pass!(OverwideParameter => [OVERWIDE_PARAMETER]);
 
 impl OverwideParameter {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// One call of `def`, with the value sent to each body param index.
     fn record_call<'tcx>(
         &mut self,

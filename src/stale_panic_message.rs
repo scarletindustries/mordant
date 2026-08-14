@@ -23,12 +23,6 @@ pub struct StalePanicMessage {
 
 rustc_session::impl_lint_pass!(StalePanicMessage => [STALE_PANIC_MESSAGE]);
 
-impl StalePanicMessage {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 const PANIC_MACROS: &[&str] = &[
     "panic",
     "unreachable",

@@ -33,12 +33,6 @@ pub struct ParallelBools {
 
 rustc_session::impl_lint_pass!(ParallelBools => [PARALLEL_BOOLS]);
 
-impl ParallelBools {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 /// The crate-private local struct behind `ty`, if it has 2+ bool fields.
 fn relevant_struct<'tcx>(cx: &LateContext<'tcx>, ty: ty::Ty<'tcx>) -> Option<ty::AdtDef<'tcx>> {
     let adt = private_local_struct(cx, ty)?;
