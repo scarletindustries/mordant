@@ -7,7 +7,7 @@ use rustc_lint::{LateContext, LateLintPass};
 use rustc_span::Symbol;
 
 use crate::MordantConfig;
-use crate::adt_facts::{has_fixed_repr, has_positional_fields, struct_literal};
+use crate::adt_facts::{has_fixed_repr, has_positional_fields};
 use crate::baseline::emit;
 use crate::hir_shapes::assigned_adt_field;
 
@@ -184,29 +184,31 @@ impl<'tcx> LateLintPass<'tcx> for StoredProjection {
             self.note_assignment(cx, place);
             return;
         }
-        let Some(lit) = struct_literal(cx, expr) else {
-            return;
-        };
         // A `..base` literal overrides part of a value that already exists, so
         // the fields written are the ones deliberately being made to differ.
-        if !matches!(lit.tail, StructTailExpr::None) {
+        let ExprKind::Struct(qpath, fields, StructTailExpr::None) = expr.kind else {
+            return;
+        };
+        // Typeck rather than the path, so an alias or `Self` resolves.
+        let Some(adt) = cx.typeck_results().expr_ty(expr).ty_adt_def() else {
+            return;
+        };
+        if !adt.did().is_local() {
             return;
         }
-        if !lit.adt.did().is_local() {
-            return;
-        }
+        let variant = adt.variant_of_res(cx.qpath_res(qpath, expr.hir_id));
         // A wire record legitimately restates what a sibling implies.
-        if has_fixed_repr(lit.adt) || has_positional_fields(lit.variant) {
+        if has_fixed_repr(adt) || has_positional_fields(variant) {
             return;
         }
         let mut vals = BTreeMap::new();
-        for f in lit.fields {
+        for f in fields {
             if let Some(v) = classify(cx, f.expr) {
                 vals.insert(f.ident.name, v);
             }
         }
         self.seen
-            .entry(lit.variant.def_id)
+            .entry(variant.def_id)
             .or_default()
             .push(Site { fields: vals });
     }
