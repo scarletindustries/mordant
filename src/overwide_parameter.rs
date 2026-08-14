@@ -28,11 +28,6 @@ rustc_session::declare_lint! {
     "panicking arm for a variant no existing call site passes"
 }
 
-struct EnumParam {
-    /// Variants with a diverging panic arm in this fn's body.
-    panicking: Vec<(DefId, Span)>,
-}
-
 #[derive(Default)]
 struct CallFacts {
     passed: HashSet<DefId>,
@@ -42,8 +37,8 @@ struct CallFacts {
 
 #[derive(Default)]
 pub struct OverwideParameter {
-    /// fn -> per-param enum facts (None for params this lint ignores).
-    fns: HashMap<DefId, Vec<Option<EnumParam>>>,
+    /// (fn, param idx) -> variants with a diverging panic arm in the fn body.
+    panicking: HashMap<(DefId, usize), Vec<(DefId, Span)>>,
     calls: HashMap<(DefId, usize), CallFacts>,
     /// Functions referenced other than by direct call: indirect callers are
     /// invisible, so their call-site sets are unknowable.
@@ -96,58 +91,43 @@ impl<'tcx> LateLintPass<'tcx> for OverwideParameter {
             return;
         }
         // Param locals whose type is a crate-local enum.
-        let mut params: Vec<Option<(HirId, DefId)>> = Vec::new();
-        for param in body.params {
-            let PatKind::Binding(_, hir_id, _, None) = param.pat.kind else {
-                params.push(None);
-                continue;
-            };
-            let pty = cx.typeck_results().pat_ty(param.pat).peel_refs();
-            match pty.kind() {
-                ty::Adt(adt, _) if adt.is_enum() && adt.did().is_local() => {
-                    params.push(Some((hir_id, adt.did())));
-                }
-                _ => params.push(None),
-            }
-        }
+        let params: Vec<Option<HirId>> = body
+            .params
+            .iter()
+            .map(|param| {
+                let PatKind::Binding(_, hir_id, _, None) = param.pat.kind else {
+                    return None;
+                };
+                let pty = cx.typeck_results().pat_ty(param.pat).peel_refs();
+                matches!(pty.kind(), ty::Adt(adt, _) if adt.is_enum() && adt.did().is_local())
+                    .then_some(hir_id)
+            })
+            .collect();
         if params.iter().all(Option::is_none) {
             return;
         }
         // Panicking arms in matches whose scrutinee is exactly the param.
-        let mut facts: Vec<Option<EnumParam>> = params
-            .iter()
-            .map(|p| {
-                p.map(|_| EnumParam {
-                    panicking: Vec::new(),
-                })
-            })
-            .collect();
+        let fn_def = def_id.to_def_id();
         for_each_expr(cx, body.value, |e: &Expr<'tcx>| {
             if let ExprKind::Match(scrut, arms, _) = e.kind
                 && let ExprKind::Path(QPath::Resolved(None, path)) = &scrut.kind
                 && let Res::Local(scrut_local) = path.res
+                && let Some(idx) = params.iter().position(|p| *p == Some(scrut_local))
             {
-                for (idx, p) in params.iter().enumerate() {
-                    let Some((param_hir, _)) = p else { continue };
-                    if *param_hir != scrut_local {
-                        continue;
-                    }
-                    for arm in arms {
-                        if arm.guard.is_some() {
-                            continue;
-                        }
-                        if let Some(variant) = crate::enum_facts::arm_variant(cx, arm.pat)
-                            && crate::enum_facts::is_panic_arm(cx, arm.body)
-                            && let Some(f) = &mut facts[idx]
-                        {
-                            f.panicking.push((variant, arm.span));
-                        }
+                for arm in arms {
+                    if arm.guard.is_none()
+                        && let Some(variant) = crate::enum_facts::arm_variant(cx, arm.pat)
+                        && crate::enum_facts::is_panic_arm(cx, arm.body)
+                    {
+                        self.panicking
+                            .entry((fn_def, idx))
+                            .or_default()
+                            .push((variant, arm.span));
                     }
                 }
             }
             std::ops::ControlFlow::<()>::Continue(())
         });
-        self.fns.insert(def_id.to_def_id(), facts);
     }
 
     fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
@@ -209,43 +189,40 @@ impl<'tcx> LateLintPass<'tcx> for OverwideParameter {
 
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
         let mut findings: Vec<(Span, String)> = Vec::new();
-        for (fn_def, params) in &self.fns {
+        for (key @ (fn_def, _), arms) in &self.panicking {
             if self.poisoned.contains(fn_def) {
                 continue;
             }
-            for (idx, facts) in params.iter().enumerate() {
-                let Some(facts) = facts else { continue };
-                let Some(calls) = self.calls.get(&(*fn_def, idx)) else {
-                    // Never called: nothing provable about its domain.
-                    continue;
-                };
-                if calls.unknown || calls.sites == 0 {
+            let Some(calls) = self.calls.get(key) else {
+                // Never called: nothing provable about its domain.
+                continue;
+            };
+            if calls.unknown || calls.sites == 0 {
+                continue;
+            }
+            for (variant, span) in arms {
+                if calls.passed.contains(variant) {
                     continue;
                 }
-                for (variant, span) in &facts.panicking {
-                    if calls.passed.contains(variant) {
-                        continue;
-                    }
-                    let mut passed: Vec<String> = calls
-                        .passed
-                        .iter()
-                        .map(|v| format!("`{}`", cx.tcx.item_name(*v)))
-                        .collect();
-                    passed.sort();
-                    findings.push((
-                        *span,
-                        format!(
-                            "all {} call sites of `{}` pass {}; this arm panics on `{}`, which no existing caller sends",
-                            calls.sites,
-                            cx.tcx.item_name(*fn_def),
-                            passed.join(", "),
-                            cx.tcx.item_name(*variant),
-                        ),
-                    ));
-                }
+                let mut passed: Vec<String> = calls
+                    .passed
+                    .iter()
+                    .map(|v| format!("`{}`", cx.tcx.item_name(*v)))
+                    .collect();
+                passed.sort();
+                findings.push((
+                    *span,
+                    format!(
+                        "all {} call sites of `{}` pass {}; this arm panics on `{}`, which no existing caller sends",
+                        calls.sites,
+                        cx.tcx.item_name(*fn_def),
+                        passed.join(", "),
+                        cx.tcx.item_name(*variant),
+                    ),
+                ));
             }
         }
-        // `fns` is a HashMap; report in source order.
+        // `panicking` is a HashMap; report in source order.
         findings.sort_by_key(|(span, _)| span.lo());
         for (span, msg) in findings {
             emit(
