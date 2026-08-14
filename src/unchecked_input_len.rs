@@ -207,34 +207,19 @@ fn overlap(a: &[Step], b: &[Step]) -> bool {
 /// represents. An index or subslice ends the path inexactly: what was read is
 /// some part of the prefix.
 fn key_of(place: Place<'_>) -> (Key, bool) {
-    let mut path = Vec::new();
+    let mut key = Key {
+        local: place.local,
+        path: Vec::new(),
+    };
     for elem in place.projection.iter() {
         match elem {
             ProjectionElem::Deref => {}
-            ProjectionElem::Field(f, _) => path.push(Step::Field(f.as_u32())),
-            ProjectionElem::Downcast(_, v) => path.push(Step::Variant(v.as_u32())),
-            ProjectionElem::Index(_)
-            | ProjectionElem::ConstantIndex { .. }
-            | ProjectionElem::Subslice { .. }
-            | ProjectionElem::OpaqueCast(_)
-            | ProjectionElem::UnwrapUnsafeBinder(_) => {
-                return (
-                    Key {
-                        local: place.local,
-                        path,
-                    },
-                    false,
-                );
-            }
+            ProjectionElem::Field(f, _) => key.path.push(Step::Field(f.as_u32())),
+            ProjectionElem::Downcast(_, v) => key.path.push(Step::Variant(v.as_u32())),
+            _ => return (key, false),
         }
     }
-    (
-        Key {
-            local: place.local,
-            path,
-        },
-        true,
-    )
+    (key, true)
 }
 
 fn mutably_lent<'tcx>(rvalue: &Rvalue<'tcx>) -> Option<Place<'tcx>> {
