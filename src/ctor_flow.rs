@@ -575,14 +575,19 @@ fn closure_over(start: Local, mut succ: impl FnMut(Local) -> Vec<Local>) -> Hash
 /// variant payload was consumed on the way (produced, not inspected).
 fn storage_slice(defs: &IndexVec<Local, Vec<Def>>, roots: &[Atom]) -> (Vec<Atom>, Vec<Atom>) {
     let mut produced: Vec<Atom> = Vec::new();
-    let slice = walk_slice(defs, roots, |_, r| match r {
-        Read::Derived(a) => Some(a.clone()),
-        Read::Payload(a) => {
-            produced.push(a.clone());
-            None
-        }
-        _ => None,
-    });
+    let slice = walk_slice(
+        defs,
+        roots,
+        |_| (),
+        |(), r| match r {
+            Read::Derived(a) => Some(a.clone()),
+            Read::Payload(a) => {
+                produced.push(a.clone());
+                None
+            }
+            _ => None,
+        },
+    );
     (slice, produced)
 }
 
@@ -592,20 +597,29 @@ fn storage_slice(defs: &IndexVec<Local, Vec<Def>>, roots: &[Atom]) -> (Vec<Atom>
 /// method failing on a stored value implicates that value, not everything
 /// its constructor was handed).
 fn decision_slice(defs: &IndexVec<Local, Vec<Def>>, roots: &[Atom], opaque: &[Atom]) -> Vec<Atom> {
-    walk_slice(defs, roots, |at, r| match r {
-        Read::Derived(a) | Read::Payload(a) | Read::Discr(a) | Read::ViaMut(a) => Some(a.clone()),
-        Read::Index(l) => Some(Atom::whole(*l)),
-        Read::CallArg(a) => (!opaque.iter().any(|p| p.overlaps(at))).then(|| a.clone()),
-        Read::Same(_) | Read::AggField(..) | Read::CallArgMut => None,
-    })
+    walk_slice(
+        defs,
+        roots,
+        |at| !opaque.iter().any(|p| p.overlaps(at)),
+        |&enter_calls, r| match r {
+            Read::Derived(a) | Read::Payload(a) | Read::Discr(a) | Read::ViaMut(a) => {
+                Some(a.clone())
+            }
+            Read::Index(l) => Some(Atom::whole(*l)),
+            Read::CallArg(a) => enter_calls.then(|| a.clone()),
+            Read::Same(_) | Read::AggField(..) | Read::CallArgMut => None,
+        },
+    )
 }
 
 /// Worklist closure of `roots` over `defs`. `Same` and `AggField` compose
-/// paths here; any other read is followed to whatever atom `other` names.
-fn walk_slice(
+/// paths here; any other read is followed to whatever atom `other` names,
+/// given the per-atom state `enter` computed once when the atom was dequeued.
+fn walk_slice<S>(
     defs: &IndexVec<Local, Vec<Def>>,
     roots: &[Atom],
-    mut other: impl FnMut(&Atom, &Read) -> Option<Atom>,
+    mut enter: impl FnMut(&Atom) -> S,
+    mut other: impl FnMut(&S, &Read) -> Option<Atom>,
 ) -> Vec<Atom> {
     let mut seen: HashSet<Atom> = HashSet::new();
     let mut q: VecDeque<Atom> = roots.iter().cloned().collect();
@@ -613,6 +627,7 @@ fn walk_slice(
         if !seen.insert(at.clone()) {
             continue;
         }
+        let s = enter(&at);
         for def in &defs[at.local] {
             let (below, rem): (bool, &[u32]) = if is_prefix(&def.dest, &at.path) {
                 (true, &at.path[def.dest.len()..])
@@ -628,7 +643,7 @@ fn walk_slice(
                         (rem[0] == *i).then(|| a.extended(&rem[1..]))
                     }
                     Read::AggField(_, a) => Some(a.clone()),
-                    _ => other(&at, r),
+                    _ => other(&s, r),
                 });
             }
         }
