@@ -172,7 +172,11 @@ impl StoredProjection {
         let ExprKind::Field(base, field) = place.kind else {
             return;
         };
-        let Some(adt) = cx.typeck_results().expr_ty_adjusted(base).peel_refs().ty_adt_def()
+        let Some(adt) = cx
+            .typeck_results()
+            .expr_ty_adjusted(base)
+            .peel_refs()
+            .ty_adt_def()
         else {
             return;
         };
