@@ -60,6 +60,26 @@ impl Sched {
     fn count(&self) -> usize {
         self.queue.len() + self.conns.len()
     }
+
+    // Fine: `detach` sits under a condition of its own; `can_donate` opened the
+    // method, it did not approve this call.
+    fn donate_when_idle(&mut self) {
+        if !self.can_donate() {
+            return;
+        }
+        if self.conns.is_empty() {
+            self.detach();
+        }
+    }
+
+    // Fine: same, in the then-branch form.
+    fn donate_if_idle(&mut self) {
+        if self.can_donate() {
+            if self.conns.is_empty() {
+                self.detach();
+            }
+        }
+    }
 }
 
 fn main() {
@@ -73,5 +93,7 @@ fn main() {
     let _ = s.donate_binding();
     s.flush();
     s.report();
+    s.donate_when_idle();
+    s.donate_if_idle();
     s.detach();
 }
