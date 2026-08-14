@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::DefId;
@@ -66,30 +66,11 @@ struct Site {
 /// A `Variant` records *which* variant and never its payload: `Some(n)` and
 /// `Some(m)` are the same fact here, which is what makes an `Option` beside an
 /// enum legible as one correspondence rather than as many.
-///
-/// A definition is held as its `(krate, index)` pair because `DefId` is not
-/// `Ord` and the comparisons below need a total order. `local` travels beside
-/// it rather than being read back off `krate == 0`, which is an encoding
-/// detail.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 enum Val {
-    Variant { at: (u32, u32), local: bool },
-    NamedConst { at: (u32, u32), local: bool },
+    Variant(DefId),
+    NamedConst(DefId),
     Lit(String),
-}
-
-fn as_variant(d: DefId) -> Val {
-    Val::Variant {
-        at: (d.krate.as_u32(), d.index.as_u32()),
-        local: d.is_local(),
-    }
-}
-
-fn as_named_const(d: DefId) -> Val {
-    Val::NamedConst {
-        at: (d.krate.as_u32(), d.index.as_u32()),
-        local: d.is_local(),
-    }
 }
 
 impl Val {
@@ -117,8 +98,8 @@ impl Val {
     /// names a closed set of states, a sibling restates one of them, and the
     /// repair is a method on the enum — `Ceiling::limit()`, or folding the
     /// field into the variant as `Wide { remaining }`.
-    const fn decides(&self) -> bool {
-        matches!(self, Val::Variant { local: true, .. })
+    fn decides(&self) -> bool {
+        matches!(self, Val::Variant(d) if d.is_local())
     }
 }
 
@@ -135,12 +116,12 @@ fn classify<'tcx>(cx: &LateContext<'tcx>, e: &'tcx Expr<'tcx>) -> Option<Val> {
     let e = peel(e);
     // `Some(x)`, `Wide(n)` — the variant is the fact, the payload is not.
     if let Some(v) = ctor_literal_variant(cx, e) {
-        return Some(as_variant(v));
+        return Some(Val::Variant(v));
     }
     match e.kind {
         ExprKind::Path(ref qpath) => match cx.qpath_res(qpath, e.hir_id) {
             Res::Def(DefKind::Const { .. } | DefKind::AssocConst { .. }, did) => {
-                Some(as_named_const(did))
+                Some(Val::NamedConst(did))
             }
             _ => None,
         },
@@ -232,8 +213,8 @@ impl<'tcx> LateLintPass<'tcx> for StoredProjection {
                     if !(va.iter().all(|v| v.decides()) || vb.iter().all(|v| v.decides())) {
                         continue;
                     }
-                    let da: BTreeSet<&&Val> = va.iter().collect();
-                    let db: BTreeSet<&&Val> = vb.iter().collect();
+                    let da: HashSet<&&Val> = va.iter().collect();
+                    let db: HashSet<&&Val> = vb.iter().collect();
                     // One distinct value on either side is a constant, not a
                     // correspondence.
                     if da.len() < 2 || db.len() < 2 {
@@ -266,8 +247,8 @@ impl<'tcx> LateLintPass<'tcx> for StoredProjection {
 /// Do `a` and `b` agree one-for-one — each value of one always beside the same
 /// value of the other, in both directions?
 fn bijective(a: &[&Val], b: &[&Val]) -> bool {
-    let mut fwd: BTreeMap<&Val, &Val> = BTreeMap::new();
-    let mut rev: BTreeMap<&Val, &Val> = BTreeMap::new();
+    let mut fwd: HashMap<&Val, &Val> = HashMap::new();
+    let mut rev: HashMap<&Val, &Val> = HashMap::new();
     for (x, y) in a.iter().zip(b.iter()) {
         if *fwd.entry(x).or_insert(y) != *y {
             return false;
@@ -281,10 +262,19 @@ fn bijective(a: &[&Val], b: &[&Val]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use rustc_hir::def_id::{CrateNum, DefId, DefIndex};
+
     use super::{Val, bijective};
 
     fn lit(s: &str) -> Val {
         Val::Lit(s.to_string())
+    }
+
+    fn def(krate: u32, index: u32) -> DefId {
+        DefId {
+            krate: CrateNum::from_u32(krate),
+            index: DefIndex::from_u32(index),
+        }
     }
 
     #[test]
@@ -322,30 +312,18 @@ mod tests {
     /// positive this lint was measured emitting before `decides` narrowed.
     #[test]
     fn a_named_constant_decides_nothing() {
-        let c = Val::NamedConst {
-            at: (0, 7),
-            local: true,
-        };
-        assert!(!c.decides());
+        assert!(!Val::NamedConst(def(0, 7)).decides());
     }
 
     /// A foreign variant is `Some`/`None`, which is `exclusive_options`' shape
     /// rather than this one.
     #[test]
     fn a_foreign_variant_decides_nothing() {
-        let v = Val::Variant {
-            at: (2, 7),
-            local: false,
-        };
-        assert!(!v.decides());
+        assert!(!Val::Variant(def(2, 7)).decides());
     }
 
     #[test]
     fn a_local_enum_variant_decides() {
-        let v = Val::Variant {
-            at: (0, 7),
-            local: true,
-        };
-        assert!(v.decides());
+        assert!(Val::Variant(def(0, 7)).decides());
     }
 }
