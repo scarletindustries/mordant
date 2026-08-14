@@ -2,12 +2,10 @@ use std::collections::HashMap;
 
 use clippy_utils::visitors::{Descend, for_each_expr};
 use rustc_hir::def_id::DefId;
-use rustc_hir::intravisit::FnKind;
-use rustc_hir::{Body, Expr, ExprKind, FnDecl, PatKind, QPath, Stmt, StmtKind};
+use rustc_hir::{Block, Expr, ExprKind, PatKind, QPath, Stmt, StmtKind};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::Span;
-use rustc_span::def_id::LocalDefId;
 
 use crate::baseline::emit;
 use crate::hir_shapes::{dotted, field_chain, is_self_path, stmt_expr};
@@ -122,53 +120,37 @@ fn is_drop_of(e: &Expr<'_>, name: rustc_span::Symbol) -> bool {
 }
 
 impl<'tcx> LateLintPass<'tcx> for LockOrder {
-    fn check_fn(
-        &mut self,
-        cx: &LateContext<'tcx>,
-        kind: FnKind<'tcx>,
-        _decl: &'tcx FnDecl<'tcx>,
-        body: &'tcx Body<'tcx>,
-        _span: Span,
-        _def_id: LocalDefId,
-    ) {
-        if matches!(kind, FnKind::Closure) {
-            return;
-        }
-        // Walk every block: a `let guard = <lock>` makes later statements of
-        // the same block "while holding", until a `drop(guard)`.
-        for_each_expr(cx, body.value, |e: &Expr<'tcx>| {
-            if let ExprKind::Block(block, _) = e.kind {
-                for (i, stmt) in block.stmts.iter().enumerate() {
-                    let Some((first, guard_name)) = stmt_lock_binding(cx, stmt) else {
-                        continue;
-                    };
-                    for le in block.stmts[i + 1..].iter().filter_map(stmt_expr) {
-                        if is_drop_of(le, guard_name) {
-                            break;
-                        }
-                        let mut second: Option<(Lock, Span)> = None;
-                        for_each_expr(cx, le, |inner: &Expr<'_>| {
-                            // A closure built here runs whenever its holder
-                            // decides, possibly after the guard is gone; what
-                            // it locks is not locked now.
-                            if matches!(inner.kind, ExprKind::Closure(..)) {
-                                return std::ops::ControlFlow::<(), Descend>::Continue(Descend::No);
-                            }
-                            if let Some(l) = lock_acquisition(cx, inner)
-                                && l != first
-                            {
-                                second = Some((l, inner.span));
-                            }
-                            std::ops::ControlFlow::<(), Descend>::Continue(Descend::Yes)
-                        });
-                        if let Some((second, at)) = second {
-                            self.pairs.entry((first.clone(), second)).or_insert(at);
-                        }
+    // A `let guard = <lock>` makes later statements of the same block "while
+    // holding", until a `drop(guard)`.
+    fn check_block(&mut self, cx: &LateContext<'tcx>, block: &'tcx Block<'tcx>) {
+        for (i, stmt) in block.stmts.iter().enumerate() {
+            let Some((first, guard_name)) = stmt_lock_binding(cx, stmt) else {
+                continue;
+            };
+            for le in block.stmts[i + 1..].iter().filter_map(stmt_expr) {
+                if is_drop_of(le, guard_name) {
+                    break;
+                }
+                let mut second: Option<(Lock, Span)> = None;
+                for_each_expr(cx, le, |inner: &Expr<'_>| {
+                    // A closure built here runs whenever its holder decides,
+                    // possibly after the guard is gone; what it locks is not
+                    // locked now.
+                    if matches!(inner.kind, ExprKind::Closure(..)) {
+                        return std::ops::ControlFlow::<(), Descend>::Continue(Descend::No);
                     }
+                    if let Some(l) = lock_acquisition(cx, inner)
+                        && l != first
+                    {
+                        second = Some((l, inner.span));
+                    }
+                    std::ops::ControlFlow::<(), Descend>::Continue(Descend::Yes)
+                });
+                if let Some((second, at)) = second {
+                    self.pairs.entry((first.clone(), second)).or_insert(at);
                 }
             }
-            std::ops::ControlFlow::<()>::Continue(())
-        });
+        }
     }
 
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
