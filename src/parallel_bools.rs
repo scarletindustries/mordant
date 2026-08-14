@@ -2,9 +2,10 @@ use std::collections::HashMap;
 
 use crate::adt_facts::{field_ty, private_local_struct, struct_field};
 use crate::baseline::emit;
+use crate::hir_shapes::assigned_field;
 use clippy_utils::get_enclosing_block;
 use rustc_hir::def_id::DefId;
-use rustc_hir::{Expr, ExprKind, HirId, UnOp};
+use rustc_hir::{Expr, ExprKind, HirId};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::Symbol;
@@ -52,14 +53,10 @@ fn relevant_struct<'tcx>(cx: &LateContext<'tcx>, ty: ty::Ty<'tcx>) -> Option<ty:
 
 impl<'tcx> LateLintPass<'tcx> for ParallelBools {
     fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
-        let (ExprKind::Assign(mut place, _, _) | ExprKind::AssignOp(_, mut place, _)) = expr.kind
-        else {
+        let (ExprKind::Assign(place, _, _) | ExprKind::AssignOp(_, place, _)) = expr.kind else {
             return;
         };
-        while let ExprKind::Unary(UnOp::Deref, inner) | ExprKind::DropTemps(inner) = place.kind {
-            place = inner;
-        }
-        let ExprKind::Field(base, ident) = place.kind else {
+        let Some((base, ident, _)) = assigned_field(place) else {
             return;
         };
         // The adjusted type: a write through a `Box`, a guard or any other

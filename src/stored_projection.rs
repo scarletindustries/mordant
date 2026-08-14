@@ -9,6 +9,7 @@ use rustc_span::Symbol;
 use crate::MordantConfig;
 use crate::adt_facts::{has_fixed_repr, has_positional_fields, struct_literal};
 use crate::baseline::emit;
+use crate::hir_shapes::assigned_adt_field;
 
 rustc_session::declare_lint! {
     /// Flags two fields of one type whose constant values agree one-for-one
@@ -164,21 +165,7 @@ impl StoredProjection {
     /// `s.f = …`, through any number of derefs and autoderefs: `f` of `s`'s
     /// struct is decided by more than its literals.
     fn note_assignment<'tcx>(&mut self, cx: &LateContext<'tcx>, place: &'tcx Expr<'tcx>) {
-        let mut place = place;
-        while let ExprKind::Unary(rustc_hir::UnOp::Deref, inner) | ExprKind::DropTemps(inner) =
-            place.kind
-        {
-            place = inner;
-        }
-        let ExprKind::Field(base, field) = place.kind else {
-            return;
-        };
-        let Some(adt) = cx
-            .typeck_results()
-            .expr_ty_adjusted(base)
-            .peel_refs()
-            .ty_adt_def()
-        else {
+        let Some((adt, field, _)) = assigned_adt_field(cx, place) else {
             return;
         };
         if !adt.is_struct() || !adt.did().is_local() {

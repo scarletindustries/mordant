@@ -2,11 +2,12 @@ use std::collections::HashMap;
 
 use crate::adt_facts::{field_ty, is_option_ty, private_local_struct};
 use crate::baseline::emit;
+use crate::hir_shapes::assigned_field;
 use rustc_hir::def_id::DefId;
-use rustc_hir::{Expr, ExprKind, StructTailExpr, UnOp};
+use rustc_hir::{Expr, ExprKind, StructTailExpr};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
-use rustc_span::{Ident, Symbol};
+use rustc_span::Symbol;
 
 use crate::MordantConfig;
 
@@ -69,19 +70,6 @@ fn relevant_adt<'tcx>(
     (opts.len() >= min_fields).then_some((adt, opts))
 }
 
-/// The `base.field` an assignment writes, through any number of derefs; the
-/// caller reads the ADJUSTED type of `base`, so a write through a `Box`, a
-/// guard or any other `Deref` container reaches the struct behind it.
-fn assigned_field<'h>(mut place: &'h Expr<'h>) -> Option<(&'h Expr<'h>, Ident)> {
-    while let ExprKind::Unary(UnOp::Deref, inner) | ExprKind::DropTemps(inner) = place.kind {
-        place = inner;
-    }
-    match place.kind {
-        ExprKind::Field(base, ident) => Some((base, ident)),
-        _ => None,
-    }
-}
-
 enum Init {
     Some,
     None,
@@ -130,7 +118,7 @@ impl<'tcx> LateLintPass<'tcx> for ExclusiveOptions {
             // A later `s.field = ...` write re-opens every combination; the
             // construction sites alone no longer prove anything.
             ExprKind::Assign(place, _, _) | ExprKind::AssignOp(_, place, _) => {
-                let Some((base, ident)) = assigned_field(place) else {
+                let Some((base, ident, _)) = assigned_field(place) else {
                     return;
                 };
                 let ty = cx.typeck_results().expr_ty_adjusted(base);

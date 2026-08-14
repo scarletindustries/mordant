@@ -3,13 +3,12 @@ use std::collections::HashMap;
 use crate::adt_facts::impl_self_adt;
 use crate::baseline::emit_with_note;
 use crate::ctor_flow::{self, FieldCheck};
+use crate::hir_shapes::assigned_adt_field;
 use clippy_utils::ty::ty_from_hir_ty;
 use rustc_abi::FieldIdx;
 use rustc_hir::def::{CtorKind, CtorOf, DefKind, Res};
 use rustc_hir::def_id::DefId;
-use rustc_hir::{
-    Expr, ExprKind, FnRetTy, HirId, ImplItem, ImplItemKind, ItemKind, StructTailExpr, UnOp,
-};
+use rustc_hir::{Expr, ExprKind, FnRetTy, HirId, ImplItem, ImplItemKind, ItemKind, StructTailExpr};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::{Span, Symbol, sym};
@@ -269,19 +268,7 @@ impl<'tcx> LateLintPass<'tcx> for BypassedValidator {
                 self.note_site(cx, expr, adt, SiteKind::Literal(literal));
             }
             ExprKind::Assign(place, ..) | ExprKind::AssignOp(_, place, _) => {
-                // `*s.f = ..` and `(*b).f = ..` both write `f`; the base's
-                // type after auto-deref says whose `f`, so a write through a
-                // `Box` or a guard counts.
-                let mut place = place;
-                while let ExprKind::Unary(UnOp::Deref, inner) | ExprKind::DropTemps(inner) =
-                    place.kind
-                {
-                    place = inner;
-                }
-                let ExprKind::Field(base, _) = place.kind else {
-                    return;
-                };
-                let Some(adt) = results.expr_ty_adjusted(base).peel_refs().ty_adt_def() else {
+                let Some((adt, _, place)) = assigned_adt_field(cx, place) else {
                     return;
                 };
                 let Some(field) = results.opt_field_index(place.hir_id) else {
