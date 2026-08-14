@@ -290,12 +290,10 @@ fn gather<'tcx>(
     let mut payload_alias: IndexVec<Local, Vec<Local>> = IndexVec::from_elem_n(Vec::new(), n);
     let mut mut_ref_to: HashMap<Local, Atom> = HashMap::new();
     let mut local_calls: HashMap<Local, Vec<LocalCall>> = HashMap::new();
-    // Failure exits (Err/None, non-resource) and `Self` payload roots, each
-    // pending on whether their local reaches the return.
-    let mut pending_failures: Vec<(Local, BasicBlock)> = Vec::new();
+    // Failure exits (Err/None with the error type) and `Self` payload roots,
+    // each pending on whether their local reaches the return.
+    let mut pending_failures: Vec<(Local, (BasicBlock, Option<Ty<'tcx>>))> = Vec::new();
     let mut pending_roots: Vec<(Local, Atom)> = Vec::new();
-    let is_resource =
-        |ty: Option<Ty<'tcx>>| ty.is_some_and(|t| is_resource_error(tcx, t, extra_resource_errors));
     let mut closures = Vec::new();
 
     for (bb, data) in body.basic_blocks.iter_enumerated() {
@@ -368,9 +366,8 @@ fn gather<'tcx>(
                             let first = ops.iter().next();
                             let name = tcx.adt_def(*did).variant(*vidx).name;
                             if name == sym::Err || name == sym::None {
-                                if !is_resource(first.map(|o| o.ty(&body.local_decls, tcx))) {
-                                    pending_failures.push((dest.local, bb));
-                                }
+                                let err = first.map(|o| o.ty(&body.local_decls, tcx));
+                                pending_failures.push((dest.local, (bb, err)));
                             } else if let Some(p) = first.and_then(Operand::place) {
                                 pending_roots.push((dest.local, place_info(p).atom));
                             }
@@ -464,9 +461,8 @@ fn gather<'tcx>(
                         .get(1)
                         .and_then(|g| g.as_type())
                         .or_else(|| args.first().map(|a| a.node.ty(&body.local_decls, tcx)));
-                    if !is_resource(residual.and_then(|r| result_err_ty(tcx, r))) {
-                        pending_failures.push((destination.local, bb));
-                    }
+                    let err = residual.and_then(|r| result_err_ty(tcx, r));
+                    pending_failures.push((destination.local, (bb, err)));
                 } else if tcx.is_lang_item(callee, LangItem::TryTraitBranch) {
                     if let Some(Some(r)) = arg_atoms.first()
                         && r.path.is_empty()
@@ -494,7 +490,11 @@ fn gather<'tcx>(
 
     let returned = closure_over(RETURN_PLACE, |l| alias[l].clone());
 
-    let mut failure_blocks = reaching(pending_failures, &returned);
+    let mut failure_blocks: Vec<BasicBlock> = reaching(pending_failures, &returned)
+        .into_iter()
+        .filter(|(_, err)| !err.is_some_and(|t| is_resource_error(tcx, t, extra_resource_errors)))
+        .map(|(bb, _)| bb)
+        .collect();
     let mut self_roots = reaching(pending_roots, &returned);
     // A body returning bare `Self` (a helper, a closure): the return place
     // itself is the self value.
