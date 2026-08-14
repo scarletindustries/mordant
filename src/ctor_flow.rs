@@ -45,8 +45,8 @@ use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_index::IndexVec;
 use rustc_lint::LateContext;
 use rustc_middle::mir::{
-    AggregateKind, BasicBlock, Body, BorrowKind, Local, Operand, Place, RETURN_PLACE, RawPtrKind,
-    Rvalue, StatementKind, TerminatorKind,
+    AggregateKind, BasicBlock, Body, BorrowKind, Local, Mutability, Operand, Place, RETURN_PLACE,
+    RawPtrKind, Rvalue, StatementKind, TerminatorKind,
 };
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_span::{Span, sym};
@@ -334,7 +334,9 @@ fn gather<'tcx>(
                 | Rvalue::Cast(_, op, _)
                 | Rvalue::UnaryOp(_, op)
                 | Rvalue::WrapUnsafeBinder(op, _) => reads_of_operand(op, false, &mut reads),
-                Rvalue::Ref(_, _, place) | Rvalue::RawPtr(_, place) | Rvalue::Reborrow(_, _, place) => {
+                Rvalue::Ref(_, _, place)
+                | Rvalue::RawPtr(_, place)
+                | Rvalue::Reborrow(_, _, place) => {
                     let is_mut = matches!(
                         rvalue,
                         Rvalue::Ref(_, BorrowKind::Mut { .. }, _)
