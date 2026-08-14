@@ -200,27 +200,11 @@ fn raw_successors(body: &Body<'_>, bb: BasicBlock) -> Vec<BasicBlock> {
     let Some(term) = &body.basic_blocks[bb].terminator else {
         return Vec::new();
     };
-    let mut v = match &term.kind {
-        TerminatorKind::Goto { target } => vec![*target],
-        TerminatorKind::SwitchInt { targets, .. } => targets.all_targets().to_vec(),
-        TerminatorKind::Drop { target, .. } | TerminatorKind::Assert { target, .. } => {
-            vec![*target]
-        }
-        TerminatorKind::Call { target, .. } => target.iter().copied().collect(),
-        TerminatorKind::Yield { resume, .. } => vec![*resume],
-        TerminatorKind::FalseEdge { real_target, .. }
-        | TerminatorKind::FalseUnwind { real_target, .. } => {
-            vec![*real_target]
-        }
-        TerminatorKind::InlineAsm { targets, .. } => targets.to_vec(),
-        TerminatorKind::Return
-        | TerminatorKind::Unreachable
-        | TerminatorKind::UnwindResume
-        | TerminatorKind::UnwindTerminate(_)
-        | TerminatorKind::CoroutineDrop
-        | TerminatorKind::TailCall { .. } => Vec::new(),
-    };
-    v.retain(|b| !body.basic_blocks[*b].is_cleanup);
+    // Unwind targets are always cleanup blocks, so this leaves the normal edges.
+    let mut v: Vec<_> = term
+        .successors()
+        .filter(|b| !body.basic_blocks[*b].is_cleanup)
+        .collect();
     v.sort();
     v.dedup();
     v
