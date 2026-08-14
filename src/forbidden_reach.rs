@@ -10,7 +10,7 @@ use rustc_span::def_id::LocalDefId;
 
 use crate::MordantConfig;
 use crate::baseline::emit;
-use crate::hir_shapes::{Callee, callee_of, def_path_names};
+use crate::hir_shapes::{callee_of, def_path_names};
 
 rustc_session::declare_lint! {
     /// Config-declared reachability bans: "from `scheduler::pick`, no call
@@ -87,8 +87,8 @@ impl<'tcx> LateLintPass<'tcx> for ForbiddenReach {
         let caller = def_id.to_def_id();
         let mut edges = Vec::new();
         for_each_expr(cx, body.value, |e: &Expr<'tcx>| {
-            if let Some(Callee::Path { def, .. } | Callee::Method { def, .. }) = callee_of(cx, e) {
-                edges.push((def, e.span));
+            if let Some(callee) = callee_of(cx, e) {
+                edges.push((callee.def(), e.span));
             }
             std::ops::ControlFlow::<()>::Continue(())
         });

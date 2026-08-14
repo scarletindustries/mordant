@@ -10,7 +10,7 @@ use rustc_span::{Span, sym};
 use crate::adt_facts::{matches_config_path, result_err_ty};
 use crate::baseline::{emit, emit_with_note};
 use crate::enum_facts::{arm_variant, ctor_literal_variant};
-use crate::hir_shapes::{Callee, callee_of};
+use crate::hir_shapes::callee_of;
 
 rustc_session::declare_lint! {
     /// Flags a call whose failure is replaced by a fixed value and never
@@ -149,9 +149,7 @@ fn fallible_call<'tcx>(cx: &LateContext<'tcx>, call: &Expr<'tcx>) -> Option<Fall
     } else {
         return None;
     };
-    let callee = match callee_of(cx, call)? {
-        Callee::Path { def, .. } | Callee::Method { def, .. } => def,
-    };
+    let callee = callee_of(cx, call)?.def();
     matches!(cx.tcx.def_kind(callee), DefKind::Fn | DefKind::AssocFn)
         .then_some(FallibleCall { callee, wrapper })
 }

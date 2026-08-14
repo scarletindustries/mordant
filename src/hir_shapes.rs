@@ -105,6 +105,14 @@ pub(crate) enum Callee<'h> {
     },
 }
 
+impl Callee<'_> {
+    pub(crate) fn def(&self) -> DefId {
+        match *self {
+            Callee::Path { def, .. } | Callee::Method { def, .. } => def,
+        }
+    }
+}
+
 /// Resolves a call or method call. `def` is unfiltered — constructors and
 /// foreign definitions come back too — because each caller wants a different
 /// subset. A call through anything but a path (a closure value, a field

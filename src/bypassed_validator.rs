@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use crate::adt_facts::impl_self_adt;
 use crate::baseline::emit_with_note;
 use crate::ctor_flow::{self, FieldCheck};
-use crate::hir_shapes::assigned_adt_field;
+use crate::hir_shapes::{assigned_adt_field, callee_of};
 use clippy_utils::ty::ty_from_hir_ty;
 use rustc_abi::FieldIdx;
-use rustc_hir::def::{CtorKind, CtorOf, DefKind, Res};
+use rustc_hir::def::{CtorKind, CtorOf, DefKind};
 use rustc_hir::def_id::DefId;
 use rustc_hir::{Expr, ExprKind, FnRetTy, HirId, ImplItem, ImplItemKind, ItemKind, StructTailExpr};
 use rustc_lint::{LateContext, LateLintPass};
@@ -150,33 +150,6 @@ fn is_types_own_code(cx: &LateContext<'_>, at: HirId, struct_did: DefId) -> bool
     false
 }
 
-/// What a call expression, path or method, invokes.
-fn callee(cx: &LateContext<'_>, expr: &Expr<'_>) -> Option<DefId> {
-    match expr.kind {
-        ExprKind::Call(f, _) => {
-            let ExprKind::Path(ref qpath) = f.kind else {
-                return None;
-            };
-            cx.qpath_res(qpath, f.hir_id).opt_def_id()
-        }
-        ExprKind::MethodCall(..) => cx.typeck_results().type_dependent_def_id(expr.hir_id),
-        _ => None,
-    }
-}
-
-fn is_tuple_ctor_call(cx: &LateContext<'_>, expr: &Expr<'_>) -> bool {
-    let ExprKind::Call(f, _) = expr.kind else {
-        return false;
-    };
-    let ExprKind::Path(ref qpath) = f.kind else {
-        return false;
-    };
-    matches!(
-        cx.qpath_res(qpath, f.hir_id),
-        Res::Def(DefKind::Ctor(CtorOf::Struct, CtorKind::Fn), _)
-    )
-}
-
 /// The name a finding gives a callee that produces a value out of nothing.
 fn conjurer(cx: &LateContext<'_>, callee: DefId) -> Option<&'static str> {
     let name = cx.tcx.get_diagnostic_name(callee)?;
@@ -280,12 +253,18 @@ impl<'tcx> LateLintPass<'tcx> for BypassedValidator {
                 let Some(adt) = results.expr_ty(expr).ty_adt_def() else {
                     return;
                 };
+                let Some(def) = callee_of(cx, expr).map(|c| c.def()) else {
+                    return;
+                };
                 // `S(x)` has no callee body: the call is the literal.
-                if is_tuple_ctor_call(cx, expr) {
+                if matches!(
+                    cx.tcx.def_kind(def),
+                    DefKind::Ctor(CtorOf::Struct, CtorKind::Fn)
+                ) {
                     self.note_site(cx, expr, adt, SiteKind::Literal(Literal::All));
                     return;
                 }
-                let Some(what) = callee(cx, expr).and_then(|c| conjurer(cx, c)) else {
+                let Some(what) = conjurer(cx, def) else {
                     return;
                 };
                 // `transmute::<S<'a>, S<'static>>(s)` re-types a value that
