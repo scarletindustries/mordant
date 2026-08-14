@@ -60,7 +60,7 @@ use rustc_span::symbol::kw;
 use rustc_span::{Span, Symbol};
 
 use crate::baseline::emit_with_note;
-use crate::mir_flow::{dominates, mir_for};
+use crate::mir_flow::mir_for;
 
 rustc_session::declare_lint! {
     /// Flags an integer the function received (a parameter other than
@@ -199,12 +199,8 @@ struct Analysis<'a, 'tcx> {
     taint: HashMap<Local, Vec<(Vec<Step>, Marks)>>,
 }
 
-fn is_prefix(short: &[Step], long: &[Step]) -> bool {
-    long.len() >= short.len() && short.iter().zip(long).all(|(a, b)| a == b)
-}
-
 fn overlap(a: &[Step], b: &[Step]) -> bool {
-    is_prefix(a, b) || is_prefix(b, a)
+    a.starts_with(b) || b.starts_with(a)
 }
 
 /// The field path of a place, and whether every projection was one the path
@@ -795,7 +791,7 @@ impl<'a, 'tcx> Analysis<'a, 'tcx> {
                 continue;
             }
             let (k, exact) = key_of(p);
-            if exact && is_prefix(&k.path, &key.path) && best.is_none_or(|(d, _)| k.path.len() > d)
+            if exact && key.path.starts_with(&k.path) && best.is_none_or(|(d, _)| k.path.len() > d)
             {
                 best = Some((k.path.len(), info.name));
             }
@@ -1003,7 +999,10 @@ impl<'tcx> LateLintPass<'tcx> for UncheckedInputLen {
                 };
                 // A sink is a call terminator and a check a switch terminator,
                 // so the two are never one block and plain dominance is exact.
-                if cs.iter().any(|(c, ..)| dominates(body, *c, sink.block)) {
+                if cs
+                    .iter()
+                    .any(|(c, ..)| dominators.dominates(*c, sink.block))
+                {
                     continue;
                 }
                 let Some(bound) = cs

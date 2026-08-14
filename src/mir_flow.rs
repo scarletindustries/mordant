@@ -1,7 +1,7 @@
 //! MIR machinery shared by the body-level analyses, with no opinion about
 //! what any of it means for a lint.
 //!
-//! It answers five questions about a body:
+//! It answers four questions about a body:
 //!
 //! * which MIR to read at all (`mir_for`: the pre-optimization body, so `?`
 //!   is still a `Try::branch` call and every aggregate is intact);
@@ -11,21 +11,17 @@
 //!   `post_dominators`, `control_deps`), over a CFG in which blocks that
 //!   cannot reach a `return` do not exist, so nothing is "decided" by an
 //!   `assert!`;
-//! * whether every path to a block passes through another (`dominates`).
-//!   This is a different relation from control dependence: a clamp's branch
-//!   dominates the use after it without deciding whether the use runs;
 //! * what a branch switches on (`switch_operand_atoms`).
 //!
 //! What the answers mean is the caller's business: `ctor_flow` combines them
 //! into "does a failure exit depend on a stored field", `unchecked_input_len`
-//! asks whether a comparison dominates a use, `variant_flow` uses only
-//! `mir_for` and traces returned variants its own way.
+//! and `variant_flow` use only `mir_for` and trace the body their own way.
 
 use std::collections::{HashSet, VecDeque};
 
 use rustc_hir::def_id::LocalDefId;
 use rustc_index::bit_set::DenseBitSet;
-use rustc_middle::mir::{BasicBlock, Body, Local, Operand, Place, ProjectionElem, TerminatorKind};
+use rustc_middle::mir::{BasicBlock, Body, Local, Place, ProjectionElem, TerminatorKind};
 use rustc_middle::ty::TyCtxt;
 
 // ── MIR access ───────────────────────────────────────────────────────────────
@@ -102,7 +98,7 @@ impl Atom {
     /// a decision on the whole of something only part of which is stored
     /// (`lexer.next()?` then `log: lexer.log`), is not evidence about the part.
     pub(crate) fn inspects(&self, stored: &Atom) -> bool {
-        self.local == stored.local && is_prefix(&stored.path, &self.path)
+        self.local == stored.local && self.path.starts_with(&stored.path)
     }
 }
 
@@ -172,17 +168,6 @@ pub(crate) fn place_info(place: Place<'_>) -> PlaceInfo {
         exactness,
         index_locals,
     }
-}
-
-pub(crate) fn operand_place<'tcx>(op: &Operand<'tcx>) -> Option<Place<'tcx>> {
-    match op {
-        Operand::Copy(p) | Operand::Move(p) => Some(*p),
-        Operand::Constant(_) | Operand::RuntimeChecks(_) => None,
-    }
-}
-
-pub(crate) fn is_prefix(a: &[u32], b: &[u32]) -> bool {
-    a.len() <= b.len() && a.iter().zip(b).all(|(x, y)| x == y)
 }
 
 // ── control dependence ───────────────────────────────────────────────────────
@@ -325,7 +310,8 @@ pub(crate) fn control_deps(cfg: &Cfg, pdom: &[Bits], target: BasicBlock) -> Vec<
 
 pub(crate) fn switch_operand_atoms(body: &Body<'_>, bb: BasicBlock) -> Vec<Atom> {
     match &body.basic_blocks[bb].terminator().kind {
-        TerminatorKind::SwitchInt { discr, .. } => operand_place(discr)
+        TerminatorKind::SwitchInt { discr, .. } => discr
+            .place()
             .map(|p| {
                 let info = place_info(p);
                 let mut v: Vec<Atom> = info.index_locals.into_iter().map(Atom::whole).collect();
@@ -335,13 +321,4 @@ pub(crate) fn switch_operand_atoms(body: &Body<'_>, bb: BasicBlock) -> Vec<Atom>
             .unwrap_or_default(),
         _ => Vec::new(),
     }
-}
-
-// ── dominance ────────────────────────────────────────────────────────────────
-
-/// Every path from the entry to `at` passes through `check` (rustc's forward
-/// dominators over the full CFG). Reflexive; false when `at` is unreachable.
-pub(crate) fn dominates(body: &Body<'_>, check: BasicBlock, at: BasicBlock) -> bool {
-    let d = body.basic_blocks.dominators();
-    d.is_reachable(at) && d.dominates(check, at)
 }

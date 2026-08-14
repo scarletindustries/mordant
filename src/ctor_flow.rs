@@ -53,8 +53,8 @@ use rustc_span::{Span, sym};
 
 use crate::adt_facts::{matches_config_path, result_err_ty};
 use crate::mir_flow::{
-    ANY_ELEM, Atom, Exactness, build_cfg, control_deps, direct_control_deps, is_prefix, mir_for,
-    operand_place, place_info, post_dominators, switch_operand_atoms,
+    ANY_ELEM, Atom, Exactness, build_cfg, control_deps, direct_control_deps, mir_for, place_info,
+    post_dominators, switch_operand_atoms,
 };
 
 /// Error types that report the environment refusing, not the value being
@@ -281,7 +281,7 @@ fn reads_of_place(place: Place<'_>, same: bool, out: &mut Vec<Read>) {
 }
 
 fn reads_of_operand(op: &Operand<'_>, same: bool, out: &mut Vec<Read>) {
-    if let Some(p) = operand_place(op) {
+    if let Some(p) = op.place() {
         reads_of_place(p, same, out);
     }
 }
@@ -319,7 +319,7 @@ fn gather<'tcx>(
             match rvalue {
                 Rvalue::Use(op, _) => {
                     if dest.projection.is_empty()
-                        && let Some(p) = operand_place(op)
+                        && let Some(p) = op.place()
                     {
                         let pinfo = place_info(p);
                         if p.projection.is_empty() {
@@ -362,7 +362,7 @@ fn gather<'tcx>(
                 Rvalue::Aggregate(kind, ops) => {
                     let kind = &**kind;
                     for (i, op) in ops.iter().enumerate() {
-                        if let Some(p) = operand_place(op) {
+                        if let Some(p) = op.place() {
                             let info = place_info(p);
                             reads.extend(info.index_locals.iter().map(|l| Read::Index(*l)));
                             match info.exactness {
@@ -387,7 +387,7 @@ fn gather<'tcx>(
                                 dest: dest.local,
                                 adt: *did,
                                 variant: *vidx,
-                                operand: first.and_then(operand_place).map(|p| place_info(p).atom),
+                                operand: first.and_then(Operand::place).map(|p| place_info(p).atom),
                                 operand_ty: first.map(|o| o.ty(&body.local_decls, tcx)),
                                 block: bb,
                             });
@@ -423,7 +423,7 @@ fn gather<'tcx>(
         {
             let arg_atoms: Vec<Option<Atom>> = args
                 .iter()
-                .map(|a| operand_place(&a.node).map(|p| place_info(p).atom))
+                .map(|a| a.node.place().map(|p| place_info(p).atom))
                 .collect();
             // A call handed a `&mut` is an operation on that argument (insert,
             // write, advance); its other arguments are the data operated
@@ -629,9 +629,9 @@ fn walk_slice<S>(
         }
         let s = enter(&at);
         for def in &defs[at.local] {
-            let (below, rem): (bool, &[u32]) = if is_prefix(&def.dest, &at.path) {
+            let (below, rem): (bool, &[u32]) = if at.path.starts_with(&def.dest) {
                 (true, &at.path[def.dest.len()..])
-            } else if is_prefix(&at.path, &def.dest) {
+            } else if def.dest.starts_with(&at.path) {
                 (false, &[])
             } else {
                 continue;
@@ -678,7 +678,7 @@ fn decides_on_resource<'tcx>(
     let TerminatorKind::SwitchInt { discr, .. } = &body.basic_blocks[bb].terminator().kind else {
         return false;
     };
-    let Some(p) = operand_place(discr) else {
+    let Some(p) = discr.place() else {
         return false;
     };
     // `_d = discriminant(_r); switchInt(move _d)`: look one def back.
