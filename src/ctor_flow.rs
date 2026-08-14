@@ -39,22 +39,22 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use rustc_abi::{FieldIdx, VariantIdx};
+use rustc_abi::FieldIdx;
 use rustc_hir::LangItem;
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_index::IndexVec;
 use rustc_lint::LateContext;
 use rustc_middle::mir::{
-    AggregateKind, BasicBlock, Body, BorrowKind, Local, Operand, Place, RETURN_PLACE, RawPtrKind,
-    Rvalue, StatementKind, TerminatorKind,
+    AggregateKind, BasicBlock, Body, BorrowKind, Local, Mutability, Operand, Place, RETURN_PLACE,
+    RawPtrKind, Rvalue, StatementKind, TerminatorKind,
 };
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_span::{Span, sym};
 
-use crate::adt_facts::result_err_ty;
+use crate::adt_facts::{matches_config_path, result_err_ty};
 use crate::mir_flow::{
-    ANY_ELEM, Atom, Exactness, build_cfg, control_deps, direct_control_deps, is_prefix, mir_for,
-    operand_place, place_info, post_dominators, switch_operand_atoms,
+    ANY_ELEM, Atom, Exactness, build_cfg, control_deps, direct_control_deps, mir_for, place_info,
+    post_dominators, switch_operand_atoms,
 };
 
 /// Error types that report the environment refusing, not the value being
@@ -198,17 +198,6 @@ struct Def {
 /// A call to a crate-local fn: callee and argument atoms by position.
 type LocalCall = (LocalDefId, Vec<Option<Atom>>);
 
-/// A `Result`/`Option` aggregate assigned to a whole local: which variant,
-/// its first operand, and that operand's type (the error, for `Err`).
-struct WrapperAggregate<'tcx> {
-    dest: Local,
-    adt: DefId,
-    variant: VariantIdx,
-    operand: Option<Atom>,
-    operand_ty: Option<Ty<'tcx>>,
-    block: BasicBlock,
-}
-
 struct Facts {
     defs: IndexVec<Local, Vec<Def>>,
     /// Whole-local moves (`_a = move _b`) and `Try::branch` look-through.
@@ -228,24 +217,11 @@ fn is_resource_error(tcx: TyCtxt<'_>, ty: Ty<'_>, extra: &[String]) -> bool {
     let ty::Adt(adt, _) = ty.peel_refs().kind() else {
         return false;
     };
-    let path = tcx.def_path_str(adt.did());
-    let name = tcx.item_name(adt.did());
-    let krate = tcx.crate_name(adt.did().krate);
-    RESOURCE_ERRORS
+    let entries = RESOURCE_ERRORS
         .iter()
         .copied()
-        .chain(extra.iter().map(String::as_str))
-        .any(|e| {
-            // Full def path, bare name, or `crate::Name` for a re-export whose
-            // def path runs through a private module (`bun_sys::error::Error`
-            // configured as `bun_sys::Error`).
-            path == e
-                || path.ends_with(&format!("::{e}"))
-                || match e.rsplit_once("::") {
-                    None => name.as_str() == e,
-                    Some((k, n)) => !k.contains("::") && krate.as_str() == k && name.as_str() == n,
-                }
-        })
+        .chain(extra.iter().map(String::as_str));
+    matches_config_path(tcx, adt.did(), entries)
 }
 
 /// Trait methods whose result is the receiver's value seen differently.
@@ -282,20 +258,20 @@ fn mentions_self(ty: Ty<'_>, self_did: DefId) -> bool {
         .any(|arg| arg.as_type().is_some_and(|t| is_self_ty(t, self_did)))
 }
 
-/// Reads of one operand/place in value position.
-fn reads_of_place(place: Place<'_>, same: bool, out: &mut Vec<Read>) {
+/// Reads of one operand/place in value position; `exact` tags the Exact case.
+fn reads_of_place(place: Place<'_>, exact: impl FnOnce(Atom) -> Read, out: &mut Vec<Read>) {
     let info = place_info(place);
     out.extend(info.index_locals.iter().map(|l| Read::Index(*l)));
-    match info.exactness {
-        Exactness::VariantPayload => out.push(Read::Payload(info.atom)),
-        Exactness::Exact if same => out.push(Read::Same(info.atom)),
-        Exactness::Exact | Exactness::Inexact => out.push(Read::Derived(info.atom)),
-    }
+    out.push(match info.exactness {
+        Exactness::VariantPayload => Read::Payload(info.atom),
+        Exactness::Exact => exact(info.atom),
+        Exactness::Inexact => Read::Derived(info.atom),
+    });
 }
 
-fn reads_of_operand(op: &Operand<'_>, same: bool, out: &mut Vec<Read>) {
-    if let Some(p) = operand_place(op) {
-        reads_of_place(p, same, out);
+fn reads_of_operand(op: &Operand<'_>, exact: impl FnOnce(Atom) -> Read, out: &mut Vec<Read>) {
+    if let Some(p) = op.place() {
+        reads_of_place(p, exact, out);
     }
 }
 
@@ -313,9 +289,11 @@ fn gather<'tcx>(
     let mut alias: IndexVec<Local, Vec<Local>> = IndexVec::from_elem_n(Vec::new(), n);
     let mut payload_alias: IndexVec<Local, Vec<Local>> = IndexVec::from_elem_n(Vec::new(), n);
     let mut mut_ref_to: HashMap<Local, Atom> = HashMap::new();
-    let mut wrappers: Vec<WrapperAggregate<'tcx>> = Vec::new();
     let mut local_calls: HashMap<Local, Vec<LocalCall>> = HashMap::new();
-    let mut residual_calls: Vec<(Local, Option<Ty<'tcx>>, BasicBlock)> = Vec::new();
+    // Failure exits (Err/None with the error type) and `Self` payload roots,
+    // each pending on whether their local reaches the return.
+    let mut pending_failures: Vec<(Local, (BasicBlock, Option<Ty<'tcx>>))> = Vec::new();
+    let mut pending_roots: Vec<(Local, Atom)> = Vec::new();
     let mut closures = Vec::new();
 
     for (bb, data) in body.basic_blocks.iter_enumerated() {
@@ -332,7 +310,7 @@ fn gather<'tcx>(
             match rvalue {
                 Rvalue::Use(op, _) => {
                     if dest.projection.is_empty()
-                        && let Some(p) = operand_place(op)
+                        && let Some(p) = op.place()
                     {
                         let pinfo = place_info(p);
                         if p.projection.is_empty() {
@@ -341,35 +319,33 @@ fn gather<'tcx>(
                             payload_alias[dest.local].push(p.local);
                         }
                     }
-                    reads_of_operand(op, true, &mut reads);
+                    reads_of_operand(op, Read::Same, &mut reads);
                 }
                 Rvalue::Repeat(op, _)
                 | Rvalue::Cast(_, op, _)
                 | Rvalue::UnaryOp(_, op)
-                | Rvalue::WrapUnsafeBinder(op, _) => reads_of_operand(op, false, &mut reads),
-                Rvalue::Ref(_, kind, place) => {
-                    if matches!(kind, BorrowKind::Mut { .. }) && dest.projection.is_empty() {
+                | Rvalue::WrapUnsafeBinder(op, _) => {
+                    reads_of_operand(op, Read::Derived, &mut reads)
+                }
+                Rvalue::Ref(_, _, place)
+                | Rvalue::RawPtr(_, place)
+                | Rvalue::Reborrow(_, _, place) => {
+                    let is_mut = matches!(
+                        rvalue,
+                        Rvalue::Ref(_, BorrowKind::Mut { .. }, _)
+                            | Rvalue::RawPtr(RawPtrKind::Mut, _)
+                            | Rvalue::Reborrow(_, Mutability::Mut, _)
+                    );
+                    if is_mut && dest.projection.is_empty() {
                         mut_ref_to.insert(dest.local, place_info(*place).atom);
                     }
-                    reads_of_place(*place, true, &mut reads);
+                    reads_of_place(*place, Read::Same, &mut reads);
                 }
-                Rvalue::RawPtr(kind, place) => {
-                    if matches!(kind, RawPtrKind::Mut) && dest.projection.is_empty() {
-                        mut_ref_to.insert(dest.local, place_info(*place).atom);
-                    }
-                    reads_of_place(*place, true, &mut reads);
-                }
-                Rvalue::Reborrow(_, m, place) => {
-                    if m.is_mut() && dest.projection.is_empty() {
-                        mut_ref_to.insert(dest.local, place_info(*place).atom);
-                    }
-                    reads_of_place(*place, true, &mut reads);
-                }
-                Rvalue::CopyForDeref(place) => reads_of_place(*place, true, &mut reads),
+                Rvalue::CopyForDeref(place) => reads_of_place(*place, Read::Same, &mut reads),
                 Rvalue::BinaryOp(_, ops) => {
                     let (a, b) = &**ops;
-                    reads_of_operand(a, false, &mut reads);
-                    reads_of_operand(b, false, &mut reads);
+                    reads_of_operand(a, Read::Derived, &mut reads);
+                    reads_of_operand(b, Read::Derived, &mut reads);
                 }
                 Rvalue::Discriminant(place) => {
                     let info = place_info(*place);
@@ -379,19 +355,7 @@ fn gather<'tcx>(
                 Rvalue::Aggregate(kind, ops) => {
                     let kind = &**kind;
                     for (i, op) in ops.iter().enumerate() {
-                        if let Some(p) = operand_place(op) {
-                            let info = place_info(p);
-                            reads.extend(info.index_locals.iter().map(|l| Read::Index(*l)));
-                            match info.exactness {
-                                Exactness::VariantPayload => {
-                                    reads.push(Read::Payload(info.atom));
-                                }
-                                Exactness::Exact => {
-                                    reads.push(Read::AggField(i as u32, info.atom));
-                                }
-                                Exactness::Inexact => reads.push(Read::Derived(info.atom)),
-                            }
-                        }
+                        reads_of_operand(op, |a| Read::AggField(i as u32, a), &mut reads);
                     }
                     match kind {
                         AggregateKind::Adt(did, vidx, _, _, None)
@@ -400,14 +364,13 @@ fn gather<'tcx>(
                                     || tcx.is_diagnostic_item(sym::Option, *did)) =>
                         {
                             let first = ops.iter().next();
-                            wrappers.push(WrapperAggregate {
-                                dest: dest.local,
-                                adt: *did,
-                                variant: *vidx,
-                                operand: first.and_then(operand_place).map(|p| place_info(p).atom),
-                                operand_ty: first.map(|o| o.ty(&body.local_decls, tcx)),
-                                block: bb,
-                            });
+                            let name = tcx.adt_def(*did).variant(*vidx).name;
+                            if name == sym::Err || name == sym::None {
+                                let err = first.map(|o| o.ty(&body.local_decls, tcx));
+                                pending_failures.push((dest.local, (bb, err)));
+                            } else if let Some(p) = first.and_then(Operand::place) {
+                                pending_roots.push((dest.local, place_info(p).atom));
+                            }
                         }
                         AggregateKind::Closure(cdid, args) => {
                             let out = args.as_closure().sig().output().skip_binder();
@@ -440,7 +403,7 @@ fn gather<'tcx>(
         {
             let arg_atoms: Vec<Option<Atom>> = args
                 .iter()
-                .map(|a| operand_place(&a.node).map(|p| place_info(p).atom))
+                .map(|a| a.node.place().map(|p| place_info(p).atom))
                 .collect();
             // A call handed a `&mut` is an operation on that argument (insert,
             // write, advance); its other arguments are the data operated
@@ -498,11 +461,8 @@ fn gather<'tcx>(
                         .get(1)
                         .and_then(|g| g.as_type())
                         .or_else(|| args.first().map(|a| a.node.ty(&body.local_decls, tcx)));
-                    residual_calls.push((
-                        destination.local,
-                        residual.and_then(|r| result_err_ty(tcx, r)),
-                        bb,
-                    ));
+                    let err = residual.and_then(|r| result_err_ty(tcx, r));
+                    pending_failures.push((destination.local, (bb, err)));
                 } else if tcx.is_lang_item(callee, LangItem::TryTraitBranch) {
                     if let Some(Some(r)) = arg_atoms.first()
                         && r.path.is_empty()
@@ -530,31 +490,12 @@ fn gather<'tcx>(
 
     let returned = closure_over(RETURN_PLACE, |l| alias[l].clone());
 
-    let mut failure_blocks = Vec::new();
-    let mut self_roots = Vec::new();
-    for w in &wrappers {
-        if !returned.contains(&w.dest) {
-            continue;
-        }
-        let name = tcx.adt_def(w.adt).variant(w.variant).name;
-        if name == sym::Err || name == sym::None {
-            let resource = name == sym::Err
-                && w.operand_ty
-                    .is_some_and(|t| is_resource_error(tcx, t, extra_resource_errors));
-            if !resource {
-                failure_blocks.push(w.block);
-            }
-        } else if let Some(a) = &w.operand {
-            self_roots.push(a.clone());
-        }
-    }
-    for (dest, err, bb) in &residual_calls {
-        if returned.contains(dest)
-            && !err.is_some_and(|t| is_resource_error(tcx, t, extra_resource_errors))
-        {
-            failure_blocks.push(*bb);
-        }
-    }
+    let mut failure_blocks: Vec<BasicBlock> = reaching(pending_failures, &returned)
+        .into_iter()
+        .filter(|(_, err)| !err.is_some_and(|t| is_resource_error(tcx, t, extra_resource_errors)))
+        .map(|(bb, _)| bb)
+        .collect();
+    let mut self_roots = reaching(pending_roots, &returned);
     // A body returning bare `Self` (a helper, a closure): the return place
     // itself is the self value.
     if self_did.is_some_and(|s| is_self_ty(body.local_decls[RETURN_PLACE].ty, s)) {
@@ -574,6 +515,12 @@ fn gather<'tcx>(
     }
 }
 
+/// The items whose local reaches the return.
+fn reaching<T>(pending: Vec<(Local, T)>, returned: &HashSet<Local>) -> Vec<T> {
+    let kept = pending.into_iter().filter(|(l, _)| returned.contains(l));
+    kept.map(|(_, t)| t).collect()
+}
+
 fn closure_over(start: Local, mut succ: impl FnMut(Local) -> Vec<Local>) -> HashSet<Local> {
     let mut seen = HashSet::new();
     let mut q = VecDeque::from([start]);
@@ -591,43 +538,21 @@ fn closure_over(start: Local, mut succ: impl FnMut(Local) -> Vec<Local>) -> Hash
 /// arithmetically combined) in a root. Returns the slice and the atoms whose
 /// variant payload was consumed on the way (produced, not inspected).
 fn storage_slice(defs: &IndexVec<Local, Vec<Def>>, roots: &[Atom]) -> (Vec<Atom>, Vec<Atom>) {
-    let mut seen: HashSet<Atom> = HashSet::new();
     let mut produced: Vec<Atom> = Vec::new();
-    let mut q: VecDeque<Atom> = roots.iter().cloned().collect();
-    while let Some(at) = q.pop_front() {
-        if !seen.insert(at.clone()) {
-            continue;
-        }
-        for def in &defs[at.local] {
-            let (below, rem): (bool, &[u32]) = if is_prefix(&def.dest, &at.path) {
-                (true, &at.path[def.dest.len()..])
-            } else if is_prefix(&at.path, &def.dest) {
-                (false, &[])
-            } else {
-                continue;
-            };
-            for r in &def.reads {
-                match r {
-                    Read::Same(a) => q.push_back(if below { a.extended(rem) } else { a.clone() }),
-                    Read::Derived(a) => q.push_back(a.clone()),
-                    Read::AggField(i, a) => {
-                        if !below || rem.is_empty() {
-                            q.push_back(a.clone());
-                        } else if rem[0] == *i {
-                            q.push_back(a.extended(&rem[1..]));
-                        }
-                    }
-                    Read::Payload(a) => produced.push(a.clone()),
-                    Read::Discr(_)
-                    | Read::Index(_)
-                    | Read::CallArg(_)
-                    | Read::CallArgMut
-                    | Read::ViaMut(_) => {}
-                }
+    let slice = walk_slice(
+        defs,
+        roots,
+        |_| (),
+        |(), r| match r {
+            Read::Derived(a) => Some(a.clone()),
+            Read::Payload(a) => {
+                produced.push(a.clone());
+                None
             }
-        }
-    }
-    (seen.into_iter().collect(), produced)
+            _ => None,
+        },
+    );
+    (slice, produced)
 }
 
 /// Decision slice from a branch operand. `opaque` holds atoms whose defining
@@ -636,42 +561,60 @@ fn storage_slice(defs: &IndexVec<Local, Vec<Def>>, roots: &[Atom]) -> (Vec<Atom>
 /// method failing on a stored value implicates that value, not everything
 /// its constructor was handed).
 fn decision_slice(defs: &IndexVec<Local, Vec<Def>>, roots: &[Atom], opaque: &[Atom]) -> Vec<Atom> {
+    walk_slice(
+        defs,
+        roots,
+        |at| !opaque.iter().any(|p| p.overlaps(at)),
+        |&enter_calls, r| match r {
+            Read::Derived(a) | Read::Payload(a) | Read::Discr(a) | Read::ViaMut(a) => {
+                Some(a.clone())
+            }
+            Read::Index(l) => Some(Atom::whole(*l)),
+            Read::CallArg(a) => enter_calls.then(|| a.clone()),
+            Read::Same(_) | Read::AggField(..) | Read::CallArgMut => None,
+        },
+    )
+}
+
+/// Worklist closure of `roots` over `defs`. `Same` and `AggField` compose
+/// paths here; any other read is followed to whatever atom `other` names,
+/// given the per-atom state `enter` computed once when the atom was dequeued.
+fn walk_slice<S>(
+    defs: &IndexVec<Local, Vec<Def>>,
+    roots: &[Atom],
+    mut enter: impl FnMut(&Atom) -> S,
+    mut other: impl FnMut(&S, &Read) -> Option<Atom>,
+) -> Vec<Atom> {
     let mut seen: HashSet<Atom> = HashSet::new();
     let mut q: VecDeque<Atom> = roots.iter().cloned().collect();
     while let Some(at) = q.pop_front() {
         if !seen.insert(at.clone()) {
             continue;
         }
-        let is_produced = opaque.iter().any(|p| p.overlaps(&at));
+        let s = enter(&at);
         for def in &defs[at.local] {
-            let (below, rem): (bool, &[u32]) = if is_prefix(&def.dest, &at.path) {
+            let (below, rem): (bool, &[u32]) = if at.path.starts_with(&def.dest) {
                 (true, &at.path[def.dest.len()..])
-            } else if is_prefix(&at.path, &def.dest) {
+            } else if def.dest.starts_with(&at.path) {
                 (false, &[])
             } else {
                 continue;
             };
             for r in &def.reads {
-                match r {
-                    Read::Same(a) => q.push_back(if below { a.extended(rem) } else { a.clone() }),
-                    Read::AggField(i, a) => {
-                        if !below || rem.is_empty() {
-                            q.push_back(a.clone());
-                        } else if rem[0] == *i {
-                            q.push_back(a.extended(&rem[1..]));
-                        }
+                q.extend(match r {
+                    Read::Same(a) => Some(if below { a.extended(rem) } else { a.clone() }),
+                    Read::AggField(i, a) if below && !rem.is_empty() => {
+                        (rem[0] == *i).then(|| a.extended(&rem[1..]))
                     }
-                    Read::Derived(a) | Read::Payload(a) | Read::Discr(a) | Read::ViaMut(a) => {
-                        q.push_back(a.clone())
-                    }
-                    Read::Index(l) => q.push_back(Atom::whole(*l)),
-                    Read::CallArg(a) => {
-                        if !is_produced {
-                            q.push_back(a.clone());
-                        }
-                    }
-                    Read::CallArgMut => {}
-                }
+                    Read::AggField(_, a) => Some(a.clone()),
+                    Read::Derived(_)
+                    | Read::Payload(_)
+                    | Read::Discr(_)
+                    | Read::Index(_)
+                    | Read::CallArg(_)
+                    | Read::CallArgMut
+                    | Read::ViaMut(_) => other(&s, r),
+                });
             }
         }
     }
@@ -705,7 +648,7 @@ fn decides_on_resource<'tcx>(
     let TerminatorKind::SwitchInt { discr, .. } = &body.basic_blocks[bb].terminator().kind else {
         return false;
     };
-    let Some(p) = operand_place(discr) else {
+    let Some(p) = discr.place() else {
         return false;
     };
     // `_d = discriminant(_r); switchInt(move _d)`: look one def back.
@@ -765,6 +708,15 @@ fn helper_summary<'tcx>(
     Some(out)
 }
 
+fn root_fields(roots: &mut HashMap<FieldIdx, Vec<Atom>>, base: &Atom, nfields: usize) {
+    for f in 0..nfields {
+        roots
+            .entry(FieldIdx::from_usize(f))
+            .or_default()
+            .push(base.extended(&[f as u32]));
+    }
+}
+
 /// field -> root atoms: `carrier.f` for every `Self`-typed local the returned
 /// value passes through, plus helper-call arguments the helper stores in `f`.
 fn field_roots<'tcx>(
@@ -787,25 +739,12 @@ fn field_roots<'tcx>(
             }));
         } else {
             // `Ok(pair.1)`-style: the self value is a sub-place; root there.
-            for f in 0..nfields {
-                roots
-                    .entry(FieldIdx::from_usize(f))
-                    .or_default()
-                    .push(r.extended(&[f as u32]));
-            }
+            root_fields(&mut roots, r, nfields);
         }
     }
     for &c in &carriers {
         if is_self_ty(body.local_decls[c].ty, self_did) {
-            for f in 0..nfields {
-                roots
-                    .entry(FieldIdx::from_usize(f))
-                    .or_default()
-                    .push(Atom {
-                        local: c,
-                        path: vec![f as u32],
-                    });
-            }
+            root_fields(&mut roots, &Atom::whole(c), nfields);
         }
         if let Some(calls) = facts.local_calls.get(&c) {
             for (callee, args) in calls {

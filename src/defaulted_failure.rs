@@ -7,10 +7,10 @@ use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::{Span, sym};
 
-use crate::adt_facts::result_err_ty;
+use crate::adt_facts::{matches_config_path, result_err_ty};
 use crate::baseline::{emit, emit_with_note};
 use crate::enum_facts::{arm_variant, ctor_literal_variant};
-use crate::hir_shapes::{Callee, callee_of};
+use crate::hir_shapes::{callee_of, peel_blocks_unsafe};
 
 rustc_session::declare_lint! {
     /// Flags a call whose failure is replaced by a fixed value and never
@@ -76,22 +76,8 @@ impl DefaultedFailure {
     }
 
     fn is_listed(&self, cx: &LateContext<'_>, callee: DefId) -> bool {
-        if self.listed.is_empty() {
-            return false;
-        }
-        let path = cx.tcx.def_path_str(callee);
-        let name = cx.tcx.item_name(callee);
-        let krate = cx.tcx.crate_name(callee.krate);
-        // Same spellings as `validator-resource-errors`: a full path, a bare
-        // name, or `crate::name`.
-        self.listed.iter().any(|e| {
-            path == *e
-                || path.ends_with(&format!("::{e}"))
-                || match e.rsplit_once("::") {
-                    None => name.as_str() == e,
-                    Some((k, n)) => !k.contains("::") && krate.as_str() == k && name.as_str() == n,
-                }
-        })
+        !self.listed.is_empty()
+            && matches_config_path(cx.tcx, callee, self.listed.iter().map(String::as_str))
     }
 
     /// `call` produces the `Result`/`Option` whose failure the caller
@@ -163,38 +149,19 @@ fn fallible_call<'tcx>(cx: &LateContext<'tcx>, call: &Expr<'tcx>) -> Option<Fall
     } else {
         return None;
     };
-    let callee = match callee_of(cx, call)? {
-        Callee::Path { def, .. } | Callee::Method { def, .. } => def,
-    };
+    let callee = callee_of(cx, call)?.def();
     matches!(cx.tcx.def_kind(callee), DefKind::Fn | DefKind::AssocFn)
         .then_some(FallibleCall { callee, wrapper })
 }
 
-fn peel<'h>(mut e: &'h Expr<'h>) -> &'h Expr<'h> {
-    loop {
-        match e.kind {
-            ExprKind::DropTemps(inner) => e = inner,
-            ExprKind::Block(
-                Block {
-                    stmts: [],
-                    expr: Some(tail),
-                    ..
-                },
-                None,
-            ) => e = tail,
-            _ => return e,
-        }
-    }
-}
-
 /// `recv`, or the `Result` under a value-position `.ok()` on it.
 fn through_ok<'h>(cx: &LateContext<'_>, recv: &'h Expr<'h>) -> &'h Expr<'h> {
-    let recv = peel(recv);
+    let recv = peel_blocks_unsafe(recv);
     if let ExprKind::MethodCall(seg, inner, [], _) = recv.kind
         && seg.ident.as_str() == "ok"
         && result_err_ty(cx.tcx, cx.typeck_results().expr_ty_adjusted(inner)).is_some()
     {
-        return peel(inner);
+        return peel_blocks_unsafe(inner);
     }
     recv
 }
@@ -203,8 +170,8 @@ fn through_ok<'h>(cx: &LateContext<'_>, recv: &'h Expr<'h>) -> &'h Expr<'h> {
 /// unit value, `T::default()` / `T::new()`, or those assembled into a tuple,
 /// array or struct. A fallback computed from the surroundings is a decision
 /// this lint cannot judge.
-fn is_fixed_value(cx: &LateContext<'_>, e: &Expr<'_>) -> bool {
-    let e = peel(e);
+fn is_fixed_value<'tcx>(cx: &LateContext<'tcx>, e: &'tcx Expr<'tcx>) -> bool {
+    let e = peel_blocks_unsafe(e);
     match e.kind {
         ExprKind::Lit(_) => true,
         ExprKind::Unary(UnOp::Neg, inner)
@@ -214,17 +181,14 @@ fn is_fixed_value(cx: &LateContext<'_>, e: &Expr<'_>) -> bool {
             items.iter().all(|i| is_fixed_value(cx, i))
         }
         ExprKind::Path(ref qpath) => is_constant_res(cx.qpath_res(qpath, e.hir_id)),
-        ExprKind::Call(callee, args) => {
-            let ExprKind::Path(qpath) = &callee.kind else {
-                return false;
-            };
-            match cx.qpath_res(qpath, callee.hir_id) {
-                Res::Def(DefKind::Fn | DefKind::AssocFn, def) => {
-                    args.is_empty() && is_nullary_ctor_name(cx, def)
+        ExprKind::Call(_, args) => {
+            callee_of(cx, e).is_some_and(|c| match cx.tcx.def_kind(c.def()) {
+                DefKind::Fn | DefKind::AssocFn => {
+                    args.is_empty() && is_nullary_ctor_name(cx, c.def())
                 }
-                Res::Def(DefKind::Ctor(..), _) => args.iter().all(|a| is_fixed_value(cx, a)),
+                DefKind::Ctor(..) => args.iter().all(|a| is_fixed_value(cx, a)),
                 _ => false,
-            }
+            })
         }
         ExprKind::Struct(_, fields, tail) => {
             fields.iter().all(|f| is_fixed_value(cx, f.expr))
@@ -275,7 +239,7 @@ fn fixed_fallback<'tcx>(
         ("unwrap_or_default", []) => Some(Fallback::Default),
         ("unwrap_or", [value]) => is_fixed_value(cx, value).then_some(Fallback::Value(value)),
         ("unwrap_or_else", [thunk]) => {
-            let thunk = peel(thunk);
+            let thunk = peel_blocks_unsafe(thunk);
             match thunk.kind {
                 ExprKind::Closure(c) => {
                     let value = cx.tcx.hir_body(c.body).value;
@@ -312,19 +276,19 @@ fn else_reports_success(cx: &LateContext<'_>, els: &Block<'_>) -> bool {
         ) => e,
         _ => return false,
     };
-    let ExprKind::Ret(value) = peel(only).kind else {
+    let ExprKind::Ret(value) = peel_blocks_unsafe(only).kind else {
         return false;
     };
     match value {
         None => true,
         Some(v) => {
-            let v = peel(v);
+            let v = peel_blocks_unsafe(v);
             match v.kind {
                 ExprKind::Tup([]) => true,
                 ExprKind::Call(_, [payload]) => {
                     ctor_literal_variant(cx, v)
                         .is_some_and(|variant| cx.tcx.item_name(variant) == sym::Ok)
-                        && matches!(peel(payload).kind, ExprKind::Tup([]))
+                        && matches!(peel_blocks_unsafe(payload).kind, ExprKind::Tup([]))
                 }
                 _ => false,
             }
@@ -338,26 +302,24 @@ fn else_reports_success(cx: &LateContext<'_>, els: &Block<'_>) -> bool {
 /// tell" into "no", which is the answer's own vocabulary rather than a value
 /// smuggled past a check. `unwrap_or(true)` is not this: it answers "yes"
 /// unasked.
-fn folds_to_no(cx: &LateContext<'_>, unwrapped: &Expr<'_>, fallback: &Fallback<'_>) -> bool {
+fn folds_to_no<'tcx>(
+    cx: &LateContext<'tcx>,
+    unwrapped: &Expr<'_>,
+    fallback: &Fallback<'tcx>,
+) -> bool {
     if !cx.typeck_results().expr_ty(unwrapped).is_bool() {
         return false;
     }
     let value = match fallback {
         Fallback::Default => return true,
-        Fallback::Value(value) => peel(value),
+        Fallback::Value(value) => peel_blocks_unsafe(value),
     };
     match value.kind {
         ExprKind::Lit(lit) => lit.node == rustc_ast::LitKind::Bool(false),
-        ExprKind::Call(callee, []) => {
-            let ExprKind::Path(qpath) = &callee.kind else {
-                return false;
-            };
-            matches!(
-                cx.qpath_res(qpath, callee.hir_id),
-                Res::Def(DefKind::Fn | DefKind::AssocFn, def)
-                    if cx.tcx.item_name(def).as_str() == "default"
-            )
-        }
+        ExprKind::Call(_, []) => callee_of(cx, value).is_some_and(|c| {
+            matches!(cx.tcx.def_kind(c.def()), DefKind::Fn | DefKind::AssocFn)
+                && cx.tcx.item_name(c.def()).as_str() == "default"
+        }),
         _ => false,
     }
 }
@@ -416,7 +378,7 @@ impl<'tcx> LateLintPass<'tcx> for DefaultedFailure {
         if span.from_expansion() {
             return;
         }
-        let init = peel(init);
+        let init = peel_blocks_unsafe(init);
         let call = through_ok(cx, init);
         let head_is_failure_of_call = arm_variant(cx, pat).is_some_and(|variant| {
             let head = cx.tcx.item_name(variant);

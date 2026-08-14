@@ -103,6 +103,31 @@ impl Deferred {
     }
 }
 
+struct Spin {
+    g: Mutex<u32>,
+    h: Mutex<u32>,
+}
+
+impl Spin {
+    fn gh(&self) -> u32 {
+        let gg = self.g.lock().unwrap();
+        let gh = self.h.lock().unwrap();
+        *gg + *gh
+    }
+
+    // Flagged together with `gh`: the reverse order sits directly in a
+    // `loop {}` body, which is a block of its own.
+    fn hg_in_loop(&self) -> u32 {
+        loop {
+            let gh = self.h.lock().unwrap();
+            let gg = self.g.lock().unwrap();
+            if *gg > 0 {
+                return *gg + *gh;
+            }
+        }
+    }
+}
+
 fn main() {
     let s = S {
         a: Mutex::new(1),
@@ -128,4 +153,9 @@ fn main() {
         f: Mutex::new(10),
     };
     let _ = d.ef() + d.fe_later();
+    let sp = Spin {
+        g: Mutex::new(11),
+        h: Mutex::new(12),
+    };
+    let _ = sp.gh() + sp.hg_in_loop();
 }

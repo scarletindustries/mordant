@@ -1,14 +1,16 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use rustc_hir::def::{CtorKind, CtorOf, DefKind, Res};
+use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::DefId;
 use rustc_hir::{Expr, ExprKind, StructTailExpr};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_span::Symbol;
 
 use crate::MordantConfig;
-use crate::adt_facts::{has_fixed_repr, has_positional_fields, struct_literal};
+use crate::adt_facts::{has_fixed_repr, has_positional_fields};
 use crate::baseline::emit;
+use crate::enum_facts::ctor_literal_variant;
+use crate::hir_shapes::{assigned_adt_field, peel_blocks_unsafe};
 
 rustc_session::declare_lint! {
     /// Flags two fields of one type whose constant values agree one-for-one
@@ -64,30 +66,11 @@ struct Site {
 /// A `Variant` records *which* variant and never its payload: `Some(n)` and
 /// `Some(m)` are the same fact here, which is what makes an `Option` beside an
 /// enum legible as one correspondence rather than as many.
-///
-/// A definition is held as its `(krate, index)` pair because `DefId` is not
-/// `Ord` and the comparisons below need a total order. `local` travels beside
-/// it rather than being read back off `krate == 0`, which is an encoding
-/// detail.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 enum Val {
-    Variant { at: (u32, u32), local: bool },
-    NamedConst { at: (u32, u32), local: bool },
+    Variant(DefId),
+    NamedConst(DefId),
     Lit(String),
-}
-
-fn as_variant(d: DefId) -> Val {
-    Val::Variant {
-        at: (d.krate.as_u32(), d.index.as_u32()),
-        local: d.is_local(),
-    }
-}
-
-fn as_named_const(d: DefId) -> Val {
-    Val::NamedConst {
-        at: (d.krate.as_u32(), d.index.as_u32()),
-        local: d.is_local(),
-    }
 }
 
 impl Val {
@@ -115,44 +98,31 @@ impl Val {
     /// names a closed set of states, a sibling restates one of them, and the
     /// repair is a method on the enum — `Ceiling::limit()`, or folding the
     /// field into the variant as `Wide { remaining }`.
-    const fn decides(&self) -> bool {
-        matches!(self, Val::Variant { local: true, .. })
+    fn decides(&self) -> bool {
+        matches!(self, Val::Variant(d) if d.is_local())
     }
 }
 
 /// Strip the wrappers that do not change which value an expression names.
 fn peel<'tcx>(e: &'tcx Expr<'tcx>) -> &'tcx Expr<'tcx> {
+    let e = peel_blocks_unsafe(e);
     match e.kind {
-        ExprKind::AddrOf(_, _, inner) | ExprKind::DropTemps(inner) => peel(inner),
-        ExprKind::Block(b, None) if b.stmts.is_empty() => b.expr.map_or(e, peel),
+        ExprKind::AddrOf(_, _, inner) => peel(inner),
         _ => e,
     }
 }
 
 fn classify<'tcx>(cx: &LateContext<'tcx>, e: &'tcx Expr<'tcx>) -> Option<Val> {
     let e = peel(e);
+    // `Some(x)`, `Wide(n)` — the variant is the fact, the payload is not.
+    if let Some(v) = ctor_literal_variant(cx, e) {
+        return Some(Val::Variant(v));
+    }
     match e.kind {
         ExprKind::Path(ref qpath) => match cx.qpath_res(qpath, e.hir_id) {
-            Res::Def(DefKind::Ctor(CtorOf::Variant, CtorKind::Const), did) => {
-                Some(as_variant(cx.tcx.parent(did)))
-            }
             Res::Def(DefKind::Const { .. } | DefKind::AssocConst { .. }, did) => {
-                Some(as_named_const(did))
+                Some(Val::NamedConst(did))
             }
-            _ => None,
-        },
-        // `Some(x)`, `Wide(n)` — the variant is the fact, the payload is not.
-        ExprKind::Call(f, _) => match f.kind {
-            ExprKind::Path(ref qpath) => match cx.qpath_res(qpath, f.hir_id) {
-                Res::Def(DefKind::Ctor(CtorOf::Variant, CtorKind::Fn), did) => {
-                    Some(as_variant(cx.tcx.parent(did)))
-                }
-                _ => None,
-            },
-            _ => None,
-        },
-        ExprKind::Struct(qpath, ..) => match cx.qpath_res(qpath, e.hir_id) {
-            Res::Def(DefKind::Variant, did) => Some(as_variant(did)),
             _ => None,
         },
         ExprKind::Lit(lit) => Some(Val::Lit(format!("{:?}", lit.node))),
@@ -164,21 +134,7 @@ impl StoredProjection {
     /// `s.f = …`, through any number of derefs and autoderefs: `f` of `s`'s
     /// struct is decided by more than its literals.
     fn note_assignment<'tcx>(&mut self, cx: &LateContext<'tcx>, place: &'tcx Expr<'tcx>) {
-        let mut place = place;
-        while let ExprKind::Unary(rustc_hir::UnOp::Deref, inner) | ExprKind::DropTemps(inner) =
-            place.kind
-        {
-            place = inner;
-        }
-        let ExprKind::Field(base, field) = place.kind else {
-            return;
-        };
-        let Some(adt) = cx
-            .typeck_results()
-            .expr_ty_adjusted(base)
-            .peel_refs()
-            .ty_adt_def()
-        else {
+        let Some((adt, field, _)) = assigned_adt_field(cx, place) else {
             return;
         };
         if !adt.is_struct() || !adt.did().is_local() {
@@ -197,29 +153,31 @@ impl<'tcx> LateLintPass<'tcx> for StoredProjection {
             self.note_assignment(cx, place);
             return;
         }
-        let Some(lit) = struct_literal(cx, expr) else {
-            return;
-        };
         // A `..base` literal overrides part of a value that already exists, so
         // the fields written are the ones deliberately being made to differ.
-        if !matches!(lit.tail, StructTailExpr::None) {
+        let ExprKind::Struct(qpath, fields, StructTailExpr::None) = expr.kind else {
+            return;
+        };
+        // Typeck rather than the path, so an alias or `Self` resolves.
+        let Some(adt) = cx.typeck_results().expr_ty(expr).ty_adt_def() else {
+            return;
+        };
+        if !adt.did().is_local() {
             return;
         }
-        if !lit.adt.did().is_local() {
-            return;
-        }
+        let variant = adt.variant_of_res(cx.qpath_res(qpath, expr.hir_id));
         // A wire record legitimately restates what a sibling implies.
-        if has_fixed_repr(lit.adt) || has_positional_fields(lit.variant) {
+        if has_fixed_repr(adt) || has_positional_fields(variant) {
             return;
         }
         let mut vals = BTreeMap::new();
-        for f in lit.fields {
+        for f in fields {
             if let Some(v) = classify(cx, f.expr) {
                 vals.insert(f.ident.name, v);
             }
         }
         self.seen
-            .entry(lit.variant.def_id)
+            .entry(variant.def_id)
             .or_default()
             .push(Site { fields: vals });
     }
@@ -255,8 +213,8 @@ impl<'tcx> LateLintPass<'tcx> for StoredProjection {
                     if !(va.iter().all(|v| v.decides()) || vb.iter().all(|v| v.decides())) {
                         continue;
                     }
-                    let da: BTreeSet<&&Val> = va.iter().collect();
-                    let db: BTreeSet<&&Val> = vb.iter().collect();
+                    let da: HashSet<&&Val> = va.iter().collect();
+                    let db: HashSet<&&Val> = vb.iter().collect();
                     // One distinct value on either side is a constant, not a
                     // correspondence.
                     if da.len() < 2 || db.len() < 2 {
@@ -289,8 +247,8 @@ impl<'tcx> LateLintPass<'tcx> for StoredProjection {
 /// Do `a` and `b` agree one-for-one — each value of one always beside the same
 /// value of the other, in both directions?
 fn bijective(a: &[&Val], b: &[&Val]) -> bool {
-    let mut fwd: BTreeMap<&Val, &Val> = BTreeMap::new();
-    let mut rev: BTreeMap<&Val, &Val> = BTreeMap::new();
+    let mut fwd: HashMap<&Val, &Val> = HashMap::new();
+    let mut rev: HashMap<&Val, &Val> = HashMap::new();
     for (x, y) in a.iter().zip(b.iter()) {
         if *fwd.entry(x).or_insert(y) != *y {
             return false;
@@ -304,10 +262,19 @@ fn bijective(a: &[&Val], b: &[&Val]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use rustc_hir::def_id::{CrateNum, DefId, DefIndex};
+
     use super::{Val, bijective};
 
     fn lit(s: &str) -> Val {
         Val::Lit(s.to_string())
+    }
+
+    fn def(krate: u32, index: u32) -> DefId {
+        DefId {
+            krate: CrateNum::from_u32(krate),
+            index: DefIndex::from_u32(index),
+        }
     }
 
     #[test]
@@ -345,30 +312,18 @@ mod tests {
     /// positive this lint was measured emitting before `decides` narrowed.
     #[test]
     fn a_named_constant_decides_nothing() {
-        let c = Val::NamedConst {
-            at: (0, 7),
-            local: true,
-        };
-        assert!(!c.decides());
+        assert!(!Val::NamedConst(def(0, 7)).decides());
     }
 
     /// A foreign variant is `Some`/`None`, which is `exclusive_options`' shape
     /// rather than this one.
     #[test]
     fn a_foreign_variant_decides_nothing() {
-        let v = Val::Variant {
-            at: (2, 7),
-            local: false,
-        };
-        assert!(!v.decides());
+        assert!(!Val::Variant(def(2, 7)).decides());
     }
 
     #[test]
     fn a_local_enum_variant_decides() {
-        let v = Val::Variant {
-            at: (0, 7),
-            local: true,
-        };
-        assert!(v.decides());
+        assert!(Val::Variant(def(0, 7)).decides());
     }
 }

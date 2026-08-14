@@ -1,19 +1,22 @@
-use clippy_utils::visitors::{for_each_expr, for_each_expr_without_closures};
-use rustc_hir::def::Res;
+use clippy_utils::res::MaybeResPath;
+use clippy_utils::visitors::{for_each_expr, for_each_expr_without_closures, is_local_used};
 use rustc_hir::def_id::DefId;
 use rustc_hir::intravisit::{Visitor, walk_expr};
 use rustc_hir::{
     BinOpKind, Block, Expr, ExprKind, HirId, ImplicitSelfKind, MatchSource, Mutability, PatKind,
-    QPath, Stmt, StmtKind, UnOp,
+    Stmt, StmtKind, UnOp,
 };
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::Span;
-use rustc_span::symbol::{Symbol, kw, sym};
+use rustc_span::symbol::{Symbol, sym};
 
 use crate::MordantConfig;
 use crate::adt_facts::impl_self_adt;
 use crate::baseline::emit_with_note;
+use crate::hir_shapes::{
+    def_path_names, dotted, field_chain, is_self_path, stmt_expr, strip_generic_segments,
+};
 
 rustc_session::declare_lint! {
     /// A fact read off a field of `self` (`let n = self.items.len()`, `let p =
@@ -58,18 +61,12 @@ rustc_session::declare_lint! {
 }
 
 pub struct StaleAcrossReentry {
-    callees: Vec<String>,
+    pub config: &'static MordantConfig,
 }
 
 rustc_session::impl_lint_pass!(StaleAcrossReentry => [STALE_ACROSS_REENTRY]);
 
 impl StaleAcrossReentry {
-    pub fn new(config: &MordantConfig) -> Self {
-        Self {
-            callees: config.stale_across_reentry_callees.clone(),
-        }
-    }
-
     /// Whether the call to `def` with `args` is one the config names, under
     /// any spelling of either the item typeck resolved or the impl item the
     /// receiver type sends it to.
@@ -79,14 +76,15 @@ impl StaleAcrossReentry {
         def: DefId,
         args: ty::GenericArgsRef<'tcx>,
     ) -> bool {
-        if self.callees.is_empty() {
+        let callees = &self.config.stale_across_reentry_callees;
+        if callees.is_empty() {
             return false;
         }
         std::iter::once(def)
             .chain(impl_item_of(cx, def, args))
             .flat_map(|def| callee_names(cx, def))
-            .any(|(name, with_crate)| {
-                self.callees
+            .any(|[name, with_crate]| {
+                callees
                     .iter()
                     .any(|p| matches_pattern(&name, p) || matches_pattern(&with_crate, p))
             })
@@ -119,29 +117,26 @@ fn impl_item_of<'tcx>(
 /// (`Vm::run_callback`) and trait items (`Runner::run_job`); an impl's item
 /// renders as `<Worker as Runner>::run_job`, which no `Type::method` pattern
 /// matches, so it is spelled `Worker::run_job` and `Runner::run_job` instead.
-fn callee_names(cx: &LateContext<'_>, def: DefId) -> Vec<(String, String)> {
-    let path_of = |did: DefId| strip_generic_segments(&cx.tcx.def_path_str(did));
-    let mut names = vec![path_of(def)];
+fn callee_names(cx: &LateContext<'_>, def: DefId) -> Vec<[String; 2]> {
+    let mut names = vec![def_path_names(cx, def)];
     if let Some(impl_did) = cx.tcx.impl_of_assoc(def)
         && let Some(trait_ref) = cx.tcx.impl_opt_trait_ref(impl_did)
     {
-        let item = cx.tcx.item_name(def);
-        if let Some(adt) = impl_self_adt(cx, impl_did) {
-            names.push(format!("{}::{item}", path_of(adt.did())));
-        }
-        names.push(format!(
-            "{}::{item}",
-            path_of(trait_ref.skip_binder().def_id)
-        ));
-    }
-    let krate = cx.tcx.crate_name(def.krate);
-    names
-        .into_iter()
-        .map(|name| {
+        let (krate, item) = (cx.tcx.crate_name(def.krate), cx.tcx.item_name(def));
+        let owners = impl_self_adt(cx, impl_did)
+            .map(|adt| adt.did())
+            .into_iter()
+            .chain([trait_ref.skip_binder().def_id]);
+        names.extend(owners.map(|owner| {
+            let name = format!(
+                "{}::{item}",
+                strip_generic_segments(&cx.tcx.def_path_str(owner))
+            );
             let with_crate = format!("{krate}::{name}");
-            (name, with_crate)
-        })
-        .collect()
+            [name, with_crate]
+        }));
+    }
+    names
 }
 
 /// Segment-wise suffix match: `run_callback` and `Vm::run_callback` both
@@ -158,26 +153,6 @@ fn matches_pattern(name: &str, pattern: &str) -> bool {
         None => have_last == want_last,
     };
     last_matches && want.all(|w| have.next() == Some(w))
-}
-
-/// `Vec::<T>::push` -> `Vec::push`, so patterns are written the way the
-/// source spells the call.
-fn strip_generic_segments(path: &str) -> String {
-    let mut out = String::with_capacity(path.len());
-    let mut depth = 0usize;
-    let mut chars = path.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '<' => depth += 1,
-            '>' => depth = depth.saturating_sub(1),
-            _ if depth > 0 => {}
-            ':' if chars.peek() == Some(&':') && out.ends_with("::") => {
-                chars.next();
-            }
-            _ => out.push(c),
-        }
-    }
-    out
 }
 
 /// What kind of fact a binding holds about its place, which decides what
@@ -267,35 +242,8 @@ const ADAPTERS: &[&str] = &[
 /// `self.a.b` as `[a, b]`; anything not rooted at `self` through fields
 /// alone has no identity a re-entrant callee shares with this function.
 fn self_place(e: &Expr<'_>) -> Option<Vec<Symbol>> {
-    fn go(e: &Expr<'_>, out: &mut Vec<Symbol>) -> bool {
-        match &e.kind {
-            ExprKind::Field(base, ident) => {
-                if !go(base, out) {
-                    return false;
-                }
-                out.push(ident.name);
-                true
-            }
-            ExprKind::Path(QPath::Resolved(None, p)) => {
-                p.segments.len() == 1 && p.segments[0].ident.name == kw::SelfLower
-            }
-            ExprKind::AddrOf(_, _, inner)
-            | ExprKind::Unary(UnOp::Deref, inner)
-            | ExprKind::DropTemps(inner) => go(inner, out),
-            _ => false,
-        }
-    }
-    let mut out = Vec::new();
-    (go(e, &mut out) && !out.is_empty()).then_some(out)
-}
-
-fn render(place: &[Symbol]) -> String {
-    let mut s = String::from("self");
-    for f in place {
-        s.push('.');
-        s.push_str(f.as_str());
-    }
-    s
+    let (root, fields) = field_chain(e);
+    (is_self_path(root) && !fields.is_empty()).then_some(fields)
 }
 
 /// What the fact's field is, which decides who could change it underneath
@@ -484,37 +432,8 @@ fn hands_out<'tcx>(cx: &LateContext<'tcx>, arg: &'tcx Expr<'tcx>, t: &Tracked) -
                 e = inner;
             }
             ExprKind::Unary(UnOp::Deref, inner) | ExprKind::DropTemps(inner) => e = inner,
-            ExprKind::Path(QPath::Resolved(None, p)) => {
-                return p.segments.len() == 1
-                    && p.segments[0].ident.name == kw::SelfLower
-                    && counts(shared);
-            }
-            _ => return false,
+            _ => return is_self_path(e) && counts(shared),
         }
-    }
-}
-
-fn is_binding(e: &Expr<'_>, binding: HirId) -> bool {
-    matches!(&e.kind, ExprKind::Path(QPath::Resolved(None, p)) if p.res == Res::Local(binding))
-}
-
-fn mentions<'tcx>(cx: &LateContext<'tcx>, e: &'tcx Expr<'tcx>, binding: HirId) -> bool {
-    for_each_expr(cx, e, |inner: &Expr<'tcx>| {
-        if is_binding(inner, binding) {
-            std::ops::ControlFlow::Break(())
-        } else {
-            std::ops::ControlFlow::Continue(())
-        }
-    })
-    .is_some()
-}
-
-/// The statement's expression, for `let` its initializer.
-fn stmt_expr<'tcx>(stmt: &'tcx Stmt<'tcx>) -> Option<&'tcx Expr<'tcx>> {
-    match stmt.kind {
-        StmtKind::Expr(e) | StmtKind::Semi(e) => Some(e),
-        StmtKind::Let(l) => l.init,
-        StmtKind::Item(_) => None,
     }
 }
 
@@ -687,7 +606,7 @@ fn refreshes<'tcx>(
                 self_place(recv).is_some_and(|p| p == t.place)
             }
             ExprKind::Assign(lhs, _, _) | ExprKind::AssignOp(_, lhs, _) => {
-                is_binding(lhs, t.binding)
+                lhs.res_local_id() == Some(t.binding)
                     || self_place(lhs).is_some_and(|p| t.place.starts_with(&p))
             }
             _ => false,
@@ -711,7 +630,10 @@ struct Reuse<'a, 'tcx> {
 
 impl<'a, 'tcx> Reuse<'a, 'tcx> {
     fn depends(&self, args: &'tcx [Expr<'tcx>]) -> bool {
-        self.gated > 0 || args.iter().any(|a| mentions(self.cx, a, self.t.binding))
+        self.gated > 0
+            || args
+                .iter()
+                .any(|a| is_local_used(self.cx, a, self.t.binding))
     }
 
     fn access(&self, e: &'tcx Expr<'tcx>) -> bool {
@@ -750,7 +672,7 @@ impl<'tcx> Visitor<'tcx> for Reuse<'_, 'tcx> {
             return;
         }
         if self.t.fact == Fact::Pointer {
-            if is_binding(e, self.t.binding) {
+            if e.res_local_id() == Some(self.t.binding) {
                 self.found = Some(e.span);
             } else {
                 walk_expr(self, e);
@@ -765,7 +687,7 @@ impl<'tcx> Visitor<'tcx> for Reuse<'_, 'tcx> {
         // (`if self.items[n] > 0`, `match self.items.remove(n)`); if it does
         // not, the branches under it are gated on the number.
         match &e.kind {
-            ExprKind::If(cond, then, els) if mentions(self.cx, cond, self.t.binding) => {
+            ExprKind::If(cond, then, els) if is_local_used(self.cx, *cond, self.t.binding) => {
                 self.visit_expr(cond);
                 self.gated += 1;
                 self.visit_expr(then);
@@ -774,7 +696,7 @@ impl<'tcx> Visitor<'tcx> for Reuse<'_, 'tcx> {
                 }
                 self.gated -= 1;
             }
-            ExprKind::Match(scrut, arms, _) if mentions(self.cx, scrut, self.t.binding) => {
+            ExprKind::Match(scrut, arms, _) if is_local_used(self.cx, *scrut, self.t.binding) => {
                 self.visit_expr(scrut);
                 self.gated += 1;
                 for arm in *arms {
@@ -826,7 +748,7 @@ impl<'tcx> LateLintPass<'tcx> for StaleAcrossReentry {
                             break;
                         }
                         if let Some(at) = reuse_in(cx, e, &t) {
-                            let place = render(&t.place);
+                            let place = dotted(String::from("self"), &t.place);
                             let name = t.name;
                             let msg = match t.fact {
                                 Fact::Count | Fact::Flag => format!(

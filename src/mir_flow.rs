@@ -1,7 +1,7 @@
 //! MIR machinery shared by the body-level analyses, with no opinion about
 //! what any of it means for a lint.
 //!
-//! It answers five questions about a body:
+//! It answers four questions about a body:
 //!
 //! * which MIR to read at all (`mir_for`: the pre-optimization body, so `?`
 //!   is still a `Try::branch` call and every aggregate is intact);
@@ -11,20 +11,20 @@
 //!   `post_dominators`, `control_deps`), over a CFG in which blocks that
 //!   cannot reach a `return` do not exist, so nothing is "decided" by an
 //!   `assert!`;
-//! * whether every path to a block passes through another (`dominates`).
-//!   This is a different relation from control dependence: a clamp's branch
-//!   dominates the use after it without deciding whether the use runs;
 //! * what a branch switches on (`switch_operand_atoms`).
 //!
 //! What the answers mean is the caller's business: `ctor_flow` combines them
 //! into "does a failure exit depend on a stored field", `unchecked_input_len`
-//! asks whether a comparison dominates a use, `variant_flow` uses only
-//! `mir_for` and traces returned variants its own way.
+//! and `variant_flow` use only `mir_for` and trace the body their own way.
 
 use std::collections::{HashSet, VecDeque};
 
 use rustc_hir::def_id::LocalDefId;
-use rustc_middle::mir::{BasicBlock, Body, Local, Operand, Place, ProjectionElem, TerminatorKind};
+use rustc_index::IndexVec;
+use rustc_index::bit_set::DenseBitSet;
+use rustc_middle::mir::{
+    BasicBlock, BasicBlockData, Body, Local, Place, ProjectionElem, TerminatorKind,
+};
 use rustc_middle::ty::TyCtxt;
 
 // ── MIR access ───────────────────────────────────────────────────────────────
@@ -101,7 +101,7 @@ impl Atom {
     /// a decision on the whole of something only part of which is stored
     /// (`lexer.next()?` then `log: lexer.log`), is not evidence about the part.
     pub(crate) fn inspects(&self, stored: &Atom) -> bool {
-        self.local == stored.local && is_prefix(&stored.path, &self.path)
+        self.local == stored.local && self.path.starts_with(&stored.path)
     }
 }
 
@@ -173,17 +173,6 @@ pub(crate) fn place_info(place: Place<'_>) -> PlaceInfo {
     }
 }
 
-pub(crate) fn operand_place<'tcx>(op: &Operand<'tcx>) -> Option<Place<'tcx>> {
-    match op {
-        Operand::Copy(p) | Operand::Move(p) => Some(*p),
-        Operand::Constant(_) | Operand::RuntimeChecks(_) => None,
-    }
-}
-
-pub(crate) fn is_prefix(a: &[u32], b: &[u32]) -> bool {
-    a.len() <= b.len() && a.iter().zip(b).all(|(x, y)| x == y)
-}
-
 // ── control dependence ───────────────────────────────────────────────────────
 
 /// The body's CFG over normal (non-unwind) edges, with every block that
@@ -191,63 +180,39 @@ pub(crate) fn is_prefix(a: &[u32], b: &[u32]) -> bool {
 /// "does not happen" here, otherwise everything after `assert!(x)` would be
 /// control-dependent on `x`.
 pub(crate) struct Cfg {
-    succs: Vec<Vec<usize>>,
-    /// Index of the virtual exit node.
-    exit: usize,
+    succs: IndexVec<BasicBlock, Vec<BasicBlock>>,
+    /// The virtual exit node, one past the last block.
+    exit: BasicBlock,
 }
 
-fn raw_successors(body: &Body<'_>, bb: BasicBlock) -> Vec<BasicBlock> {
-    let Some(term) = &body.basic_blocks[bb].terminator else {
+/// Normal (non-unwind) successors of a non-cleanup block; none otherwise.
+fn raw_successors(body: &Body<'_>, data: &BasicBlockData<'_>) -> Vec<BasicBlock> {
+    let Some(term) = data.terminator.as_ref().filter(|_| !data.is_cleanup) else {
         return Vec::new();
     };
-    let mut v = match &term.kind {
-        TerminatorKind::Goto { target } => vec![*target],
-        TerminatorKind::SwitchInt { targets, .. } => targets.all_targets().to_vec(),
-        TerminatorKind::Drop { target, .. } | TerminatorKind::Assert { target, .. } => {
-            vec![*target]
-        }
-        TerminatorKind::Call { target, .. } => target.iter().copied().collect(),
-        TerminatorKind::Yield { resume, .. } => vec![*resume],
-        TerminatorKind::FalseEdge { real_target, .. }
-        | TerminatorKind::FalseUnwind { real_target, .. } => {
-            vec![*real_target]
-        }
-        TerminatorKind::InlineAsm { targets, .. } => targets.to_vec(),
-        TerminatorKind::Return
-        | TerminatorKind::Unreachable
-        | TerminatorKind::UnwindResume
-        | TerminatorKind::UnwindTerminate(_)
-        | TerminatorKind::CoroutineDrop
-        | TerminatorKind::TailCall { .. } => Vec::new(),
-    };
-    v.retain(|b| !body.basic_blocks[*b].is_cleanup);
+    // Unwind targets are always cleanup blocks, so this leaves the normal edges.
+    let mut v: Vec<_> = term
+        .successors()
+        .filter(|b| !body.basic_blocks[*b].is_cleanup)
+        .collect();
     v.sort();
     v.dedup();
     v
 }
 
 pub(crate) fn build_cfg(body: &Body<'_>) -> Cfg {
-    let n = body.basic_blocks.len();
-    let raw: Vec<Vec<usize>> = (0..n)
-        .map(|i| {
-            let bb = BasicBlock::from_usize(i);
-            if body.basic_blocks[bb].is_cleanup {
-                Vec::new()
-            } else {
-                raw_successors(body, bb)
-                    .into_iter()
-                    .map(|b| b.as_usize())
-                    .collect()
-            }
-        })
+    let exit = BasicBlock::from_usize(body.basic_blocks.len());
+    let raw: IndexVec<BasicBlock, Vec<BasicBlock>> = body
+        .basic_blocks
+        .iter()
+        .map(|data| raw_successors(body, data))
         .collect();
-    let mut can_return: Vec<bool> = (0..n)
-        .map(|i| {
+    let mut can_return: IndexVec<BasicBlock, bool> = body
+        .basic_blocks
+        .iter()
+        .map(|data| {
             matches!(
-                body.basic_blocks[BasicBlock::from_usize(i)]
-                    .terminator
-                    .as_ref()
-                    .map(|t| &t.kind),
+                data.terminator.as_ref().map(|t| &t.kind),
                 Some(TerminatorKind::Return | TerminatorKind::TailCall { .. })
             )
         })
@@ -255,63 +220,42 @@ pub(crate) fn build_cfg(body: &Body<'_>) -> Cfg {
     let mut changed = true;
     while changed {
         changed = false;
-        for b in 0..n {
+        for b in raw.indices() {
             if !can_return[b] && raw[b].iter().any(|s| can_return[*s]) {
                 can_return[b] = true;
                 changed = true;
             }
         }
     }
-    let succs = (0..n)
-        .map(|b| {
-            let live: Vec<usize> = raw[b].iter().copied().filter(|s| can_return[*s]).collect();
-            if live.is_empty() { vec![n] } else { live }
+    let succs = raw
+        .iter()
+        .map(|r| {
+            let live: Vec<BasicBlock> = r.iter().copied().filter(|s| can_return[*s]).collect();
+            if live.is_empty() { vec![exit] } else { live }
         })
         .collect();
-    Cfg { succs, exit: n }
+    Cfg { succs, exit }
 }
 
-pub(crate) struct Bits(Vec<u64>);
-impl Bits {
-    fn full(n: usize) -> Self {
-        let mut v = vec![!0u64; n.div_ceil(64)];
-        if !n.is_multiple_of(64) {
-            *v.last_mut().unwrap() = (1u64 << (n % 64)) - 1;
-        }
-        Bits(v)
-    }
-    fn empty(n: usize) -> Self {
-        Bits(vec![0; n.div_ceil(64)])
-    }
-    fn set(&mut self, i: usize) {
-        self.0[i / 64] |= 1 << (i % 64);
-    }
-    fn has(&self, i: usize) -> bool {
-        self.0[i / 64] & (1 << (i % 64)) != 0
-    }
-    fn and_assign(&mut self, o: &Bits) {
-        for (a, b) in self.0.iter_mut().zip(&o.0) {
-            *a &= *b;
-        }
-    }
-}
-
+type Bits = DenseBitSet<BasicBlock>;
 /// Post-dominator sets over blocks plus the virtual exit.
-pub(crate) fn post_dominators(cfg: &Cfg) -> Vec<Bits> {
-    let n = cfg.exit;
-    let mut pdom: Vec<Bits> = (0..=n).map(|_| Bits::full(n + 1)).collect();
-    pdom[n] = Bits::empty(n + 1);
-    pdom[n].set(n);
+pub(crate) type Pdoms = IndexVec<BasicBlock, Bits>;
+
+pub(crate) fn post_dominators(cfg: &Cfg) -> Pdoms {
+    let size = cfg.exit.as_usize() + 1;
+    let mut pdom = IndexVec::from_elem_n(Bits::new_filled(size), size);
+    pdom[cfg.exit] = Bits::new_empty(size);
+    pdom[cfg.exit].insert(cfg.exit);
     let mut changed = true;
     while changed {
         changed = false;
-        for b in 0..n {
-            let mut acc = Bits::full(n + 1);
-            for &s in &cfg.succs[b] {
-                acc.and_assign(&pdom[s]);
+        for (b, succs) in cfg.succs.iter_enumerated() {
+            let mut acc = Bits::new_filled(size);
+            for &s in succs {
+                acc.intersect(&pdom[s]);
             }
-            acc.set(b);
-            if acc.0 != pdom[b].0 {
+            acc.insert(b);
+            if acc != pdom[b] {
                 pdom[b] = acc;
                 changed = true;
             }
@@ -320,38 +264,33 @@ pub(crate) fn post_dominators(cfg: &Cfg) -> Vec<Bits> {
     pdom
 }
 
-/// Branches (`t` not post-dominating them, but post-dominating one of their
-/// successors) whose outcome decides whether `t` runs, in block order.
-fn direct_deps(cfg: &Cfg, pdom: &[Bits], t: usize) -> Vec<usize> {
-    (0..cfg.exit)
-        .filter(|a| {
-            let strictly = pdom[*a].has(t) && *a != t;
-            cfg.succs[*a].len() >= 2 && !strictly && cfg.succs[*a].iter().any(|s| pdom[*s].has(t))
+/// Branch blocks that `t` is directly control-dependent on, in block order:
+/// `t` does not post-dominate them but does post-dominate one of their
+/// successors, so their outcome sends control to `t` or away from it. A
+/// branch that only decides whether one of those is reached (an early
+/// `return Ok` guard in front of it) is not among them; `control_deps` has
+/// those too.
+pub(crate) fn direct_control_deps(cfg: &Cfg, pdom: &Pdoms, t: BasicBlock) -> Vec<BasicBlock> {
+    cfg.succs
+        .iter_enumerated()
+        .filter(|(a, succs)| {
+            let strictly = pdom[*a].contains(t) && *a != t;
+            succs.len() >= 2 && !strictly && succs.iter().any(|s| pdom[*s].contains(t))
         })
-        .collect()
-}
-
-/// Branch blocks that `target` is directly control-dependent on: the ones
-/// whose outcome sends control to `target` or away from it. A branch that
-/// only decides whether one of those is reached (an early `return Ok` guard
-/// in front of it) is not among them; `control_deps` has those too.
-pub(crate) fn direct_control_deps(cfg: &Cfg, pdom: &[Bits], target: BasicBlock) -> Vec<BasicBlock> {
-    direct_deps(cfg, pdom, target.as_usize())
-        .into_iter()
-        .map(BasicBlock::from_usize)
+        .map(|(a, _)| a)
         .collect()
 }
 
 /// Branch blocks that `target` is transitively control-dependent on,
 /// innermost first.
-pub(crate) fn control_deps(cfg: &Cfg, pdom: &[Bits], target: BasicBlock) -> Vec<BasicBlock> {
+pub(crate) fn control_deps(cfg: &Cfg, pdom: &Pdoms, target: BasicBlock) -> Vec<BasicBlock> {
     let mut seen = HashSet::new();
-    let mut q = VecDeque::from([target.as_usize()]);
+    let mut q = VecDeque::from([target]);
     let mut deps = Vec::new();
     while let Some(t) = q.pop_front() {
-        for a in direct_deps(cfg, pdom, t) {
+        for a in direct_control_deps(cfg, pdom, t) {
             if seen.insert(a) {
-                deps.push(BasicBlock::from_usize(a));
+                deps.push(a);
                 q.push_back(a);
             }
         }
@@ -361,7 +300,8 @@ pub(crate) fn control_deps(cfg: &Cfg, pdom: &[Bits], target: BasicBlock) -> Vec<
 
 pub(crate) fn switch_operand_atoms(body: &Body<'_>, bb: BasicBlock) -> Vec<Atom> {
     match &body.basic_blocks[bb].terminator().kind {
-        TerminatorKind::SwitchInt { discr, .. } => operand_place(discr)
+        TerminatorKind::SwitchInt { discr, .. } => discr
+            .place()
             .map(|p| {
                 let info = place_info(p);
                 let mut v: Vec<Atom> = info.index_locals.into_iter().map(Atom::whole).collect();
@@ -371,13 +311,4 @@ pub(crate) fn switch_operand_atoms(body: &Body<'_>, bb: BasicBlock) -> Vec<Atom>
             .unwrap_or_default(),
         _ => Vec::new(),
     }
-}
-
-// ── dominance ────────────────────────────────────────────────────────────────
-
-/// Every path from the entry to `at` passes through `check` (rustc's forward
-/// dominators over the full CFG). Reflexive; false when `at` is unreachable.
-pub(crate) fn dominates(body: &Body<'_>, check: BasicBlock, at: BasicBlock) -> bool {
-    let d = body.basic_blocks.dominators();
-    d.is_reachable(at) && d.dominates(check, at)
 }

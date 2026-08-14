@@ -1,9 +1,9 @@
+use clippy_utils::res::MaybeResPath;
 use clippy_utils::source::snippet_opt;
 use rustc_ast::LitKind;
 use rustc_errors::Applicability;
-use rustc_hir::def::Res;
 use rustc_hir::def_id::DefId;
-use rustc_hir::{Arm, Expr, ExprKind, HirId, MatchSource, Pat, PatKind, QPath, StmtKind, UnOp};
+use rustc_hir::{Arm, Expr, ExprKind, HirId, MatchSource, Pat, PatKind, StmtKind};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::Span;
@@ -11,6 +11,7 @@ use rustc_span::Span;
 use crate::MordantConfig;
 use crate::baseline::emit_hir_then;
 use crate::enum_facts::{pat_head_qpath, variant_of_res};
+use crate::hir_shapes::{callee_of, peel_blocks_unsafe};
 
 rustc_session::declare_lint! {
     /// Flags `_` (or a catch-all binding) matching over a small crate-local
@@ -29,20 +30,12 @@ rustc_session::declare_lint! {
 }
 
 pub struct WildcardLocalEnum {
-    max_variants: usize,
+    pub config: &'static MordantConfig,
 }
 
 rustc_session::impl_lint_pass!(WildcardLocalEnum => [WILDCARD_LOCAL_ENUM]);
 
-impl WildcardLocalEnum {
-    pub fn new(config: &MordantConfig) -> Self {
-        Self {
-            max_variants: config.wildcard_local_enum_max_variants,
-        }
-    }
-}
-
-fn is_negative_extractor(cx: &LateContext<'_>, body: &Expr<'_>) -> bool {
+fn is_negative_extractor<'tcx>(cx: &LateContext<'tcx>, body: &Expr<'tcx>) -> bool {
     match body.kind {
         // `""` and `b""` are the empty-slice answer spelled as a literal.
         ExprKind::Lit(lit) => match lit.node {
@@ -57,18 +50,12 @@ fn is_negative_extractor(cx: &LateContext<'_>, body: &Expr<'_>) -> bool {
         ExprKind::Array(elems) => elems.is_empty(),
         // `Vec::new()` / `String::new()`: an empty collection, constructed
         // fresh, is an answer with no content, not behavior.
-        ExprKind::Call(callee, []) => {
-            if let ExprKind::Path(qpath) = &callee.kind
-                && let Some(def) = cx.qpath_res(qpath, callee.hir_id).opt_def_id()
-            {
-                let path = cx.tcx.def_path_str(def);
-                path.ends_with("Vec::<T>::new")
-                    || path.ends_with("Vec::new")
-                    || path.ends_with("String::new")
-            } else {
-                false
-            }
-        }
+        ExprKind::Call(_, []) => callee_of(cx, body).is_some_and(|c| {
+            let path = cx.tcx.def_path_str(c.def());
+            path.ends_with("Vec::<T>::new")
+                || path.ends_with("Vec::new")
+                || path.ends_with("String::new")
+        }),
         // `return None` / `return false`: the early-exit spelling of the same
         // empty answers.
         ExprKind::Ret(Some(inner)) => is_negative_extractor(cx, inner),
@@ -92,24 +79,11 @@ fn is_negative_extractor(cx: &LateContext<'_>, body: &Expr<'_>) -> bool {
 /// A binding arm whose whole body is another `match` on the binding passes
 /// the dispatch on; the inner match is where the variants are or are not
 /// listed, and this lint judges it on its own.
-fn redispatches(body: &Expr<'_>, binding: HirId) -> bool {
-    let mut body = body;
-    while let ExprKind::Block(block, None) = body.kind
-        && block.stmts.is_empty()
-        && let Some(tail) = block.expr
-    {
-        body = tail;
-    }
-    let ExprKind::Match(mut scrut, _, MatchSource::Normal) = body.kind else {
+fn redispatches(cx: &LateContext<'_>, body: &Expr<'_>, binding: HirId) -> bool {
+    let ExprKind::Match(scrut, _, MatchSource::Normal) = peel_blocks_unsafe(body).kind else {
         return false;
     };
-    while let ExprKind::AddrOf(_, _, inner) | ExprKind::Unary(UnOp::Deref, inner) = scrut.kind {
-        scrut = inner;
-    }
-    matches!(
-        scrut.kind,
-        ExprKind::Path(QPath::Resolved(None, path)) if path.res == Res::Local(binding)
-    )
+    clippy_utils::peel_ref_operators(cx, scrut).res_local_id() == Some(binding)
 }
 
 /// Every variant the non-catch-all arms cover, or None when an arm's shape is
@@ -198,7 +172,7 @@ impl<'tcx> LateLintPass<'tcx> for WildcardLocalEnum {
         // every match the lint sees, and it silenced the lint on exactly the
         // enums annotated *because* the author expects new variants.
         let n = adt.variants().len();
-        if n > self.max_variants {
+        if n > self.config.wildcard_local_enum_max_variants {
             return;
         }
         for arm in arms {
@@ -216,7 +190,7 @@ impl<'tcx> LateLintPass<'tcx> for WildcardLocalEnum {
             if is_negative_extractor(cx, arm.body) {
                 continue;
             }
-            if binding.is_some_and(|b| redispatches(arm.body, b)) {
+            if binding.is_some_and(|b| redispatches(cx, arm.body, b)) {
                 continue;
             }
             // The fix replaces the catch-all with the uncovered variants,

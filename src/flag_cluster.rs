@@ -24,18 +24,10 @@ rustc_session::declare_lint! {
 }
 
 pub struct FlagCluster {
-    min_bools: usize,
+    pub config: &'static MordantConfig,
 }
 
 rustc_session::impl_lint_pass!(FlagCluster => [FLAG_CLUSTER]);
-
-impl FlagCluster {
-    pub fn new(config: &MordantConfig) -> Self {
-        Self {
-            min_bools: config.flag_cluster_min_bools,
-        }
-    }
-}
 
 impl<'tcx> LateLintPass<'tcx> for FlagCluster {
     fn check_item(&mut self, cx: &LateContext<'tcx>, item: &'tcx Item<'tcx>) {
@@ -57,7 +49,7 @@ impl<'tcx> LateLintPass<'tcx> for FlagCluster {
             .filter(|f| field_ty(cx, f).is_bool())
             .map(|f| f.name)
             .collect();
-        if bools.len() < self.min_bools {
+        if bools.len() < self.config.flag_cluster_min_bools {
             return;
         }
         let names: Vec<String> = bools.iter().map(|s| format!("`{s}`")).collect();

@@ -20,18 +20,12 @@ rustc_session::declare_lint! {
 }
 
 pub struct StringlyError {
-    include_box_dyn: bool,
+    pub config: &'static MordantConfig,
 }
 
 rustc_session::impl_lint_pass!(StringlyError => [STRINGLY_ERROR]);
 
 impl StringlyError {
-    pub fn new(config: &MordantConfig) -> Self {
-        Self {
-            include_box_dyn: config.stringly_error_include_box_dyn,
-        }
-    }
-
     fn check_sig<'tcx>(&self, cx: &LateContext<'tcx>, def_id: LocalDefId, decl: &FnDecl<'tcx>) {
         if !cx.effective_visibilities.is_exported(def_id) {
             return;
@@ -62,7 +56,9 @@ impl StringlyError {
                 } else if cx.tcx.is_diagnostic_item(sym::Cow, adt.did()) && args.type_at(1).is_str()
                 {
                     Some("Cow<str>")
-                } else if self.include_box_dyn && adt.is_box() && is_dyn_error(cx, args.type_at(0))
+                } else if self.config.stringly_error_include_box_dyn
+                    && adt.is_box()
+                    && is_dyn_error(cx, args.type_at(0))
                 {
                     Some("Box<dyn Error>")
                 } else {

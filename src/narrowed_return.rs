@@ -41,12 +41,6 @@ pub struct NarrowedReturn {
 
 rustc_session::impl_lint_pass!(NarrowedReturn => [NARROWED_RETURN]);
 
-impl NarrowedReturn {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 impl<'tcx> LateLintPass<'tcx> for NarrowedReturn {
     fn check_fn(
         &mut self,

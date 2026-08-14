@@ -28,12 +28,6 @@ pub struct StaleSafetyComment {
 
 rustc_session::impl_lint_pass!(StaleSafetyComment => [STALE_SAFETY_COMMENT]);
 
-impl StaleSafetyComment {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 /// The `//` run directly above `span`, when it mentions SAFETY.
 fn safety_comment_above(
     cx: &LateContext<'_>,

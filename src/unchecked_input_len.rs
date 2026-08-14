@@ -60,7 +60,7 @@ use rustc_span::symbol::kw;
 use rustc_span::{Span, Symbol};
 
 use crate::baseline::emit_with_note;
-use crate::mir_flow::{dominates, mir_for};
+use crate::mir_flow::mir_for;
 
 rustc_session::declare_lint! {
     /// Flags an integer the function received (a parameter other than
@@ -199,46 +199,27 @@ struct Analysis<'a, 'tcx> {
     taint: HashMap<Local, Vec<(Vec<Step>, Marks)>>,
 }
 
-fn is_prefix(short: &[Step], long: &[Step]) -> bool {
-    long.len() >= short.len() && short.iter().zip(long).all(|(a, b)| a == b)
-}
-
 fn overlap(a: &[Step], b: &[Step]) -> bool {
-    is_prefix(a, b) || is_prefix(b, a)
+    a.starts_with(b) || b.starts_with(a)
 }
 
 /// The field path of a place, and whether every projection was one the path
 /// represents. An index or subslice ends the path inexactly: what was read is
 /// some part of the prefix.
 fn key_of(place: Place<'_>) -> (Key, bool) {
-    let mut path = Vec::new();
+    let mut key = Key {
+        local: place.local,
+        path: Vec::new(),
+    };
     for elem in place.projection.iter() {
         match elem {
             ProjectionElem::Deref => {}
-            ProjectionElem::Field(f, _) => path.push(Step::Field(f.as_u32())),
-            ProjectionElem::Downcast(_, v) => path.push(Step::Variant(v.as_u32())),
-            ProjectionElem::Index(_)
-            | ProjectionElem::ConstantIndex { .. }
-            | ProjectionElem::Subslice { .. }
-            | ProjectionElem::OpaqueCast(_)
-            | ProjectionElem::UnwrapUnsafeBinder(_) => {
-                return (
-                    Key {
-                        local: place.local,
-                        path,
-                    },
-                    false,
-                );
-            }
+            ProjectionElem::Field(f, _) => key.path.push(Step::Field(f.as_u32())),
+            ProjectionElem::Downcast(_, v) => key.path.push(Step::Variant(v.as_u32())),
+            _ => return (key, false),
         }
     }
-    (
-        Key {
-            local: place.local,
-            path,
-        },
-        true,
-    )
+    (key, true)
 }
 
 fn mutably_lent<'tcx>(rvalue: &Rvalue<'tcx>) -> Option<Place<'tcx>> {
@@ -251,37 +232,36 @@ fn mutably_lent<'tcx>(rvalue: &Rvalue<'tcx>) -> Option<Place<'tcx>> {
 
 impl<'a, 'tcx> Analysis<'a, 'tcx> {
     fn new(tcx: TyCtxt<'tcx>, body: &'a Body<'tcx>, range_patterns: Vec<Span>) -> Self {
-        // Every write to a local's own storage (the whole of it or a field),
-        // including lending it out mutably; a write through it (`(*q).len =
+        // Every place the body writes or lends out mutably.
+        let mut targets: Vec<Place<'tcx>> = Vec::new();
+        for data in body.basic_blocks.iter() {
+            for stmt in &data.statements {
+                match &stmt.kind {
+                    StatementKind::Assign(a) => {
+                        let (dest, rvalue) = &**a;
+                        targets.push(*dest);
+                        targets.extend(mutably_lent(rvalue));
+                    }
+                    StatementKind::SetDiscriminant { place, .. } => targets.push(**place),
+                    _ => {}
+                }
+            }
+            match &data.terminator().kind {
+                TerminatorKind::Call { destination, .. } => targets.push(*destination),
+                TerminatorKind::Yield { resume_arg, .. } => targets.push(*resume_arg),
+                _ => {}
+            }
+        }
+        // Writes to a local's own storage; a write through it (`(*q).len =
         // ..`) is a write to what it points at, which `collect_kills` charges
         // to the resolved place. Arguments carry one implicit write.
         let mut writes: IndexVec<Local, u32> = IndexVec::from_elem_n(0, body.local_decls.len());
         for l in body.args_iter() {
             writes[l] += 1;
         }
-        let mut written = |p: Place<'tcx>| {
+        for p in &targets {
             if !p.is_indirect() {
                 writes[p.local] += 1;
-            }
-        };
-        for data in body.basic_blocks.iter() {
-            for stmt in &data.statements {
-                match &stmt.kind {
-                    StatementKind::Assign(a) => {
-                        let (dest, rvalue) = &**a;
-                        written(*dest);
-                        if let Some(p) = mutably_lent(rvalue) {
-                            written(p);
-                        }
-                    }
-                    StatementKind::SetDiscriminant { place, .. } => written(**place),
-                    _ => {}
-                }
-            }
-            match &data.terminator().kind {
-                TerminatorKind::Call { destination, .. } => written(*destination),
-                TerminatorKind::Yield { resume_arg, .. } => written(*resume_arg),
-                _ => {}
             }
         }
 
@@ -327,40 +307,22 @@ impl<'a, 'tcx> Analysis<'a, 'tcx> {
             seed_ids: HashMap::new(),
             taint: HashMap::new(),
         };
-        this.collect_kills();
+        this.collect_kills(targets);
         this
     }
 
     /// Writes and mutable borrows whose target, once aliases are resolved,
     /// lies under a parameter; plus the receiver itself.
-    fn collect_kills(&mut self) {
-        let mut targets: Vec<Place<'tcx>> = Vec::new();
-        for info in &self.body.var_debug_info {
-            if info.name == kw::SelfLower
-                && let VarDebugInfoContents::Place(p) = info.value
-            {
-                targets.push(p);
-            }
-        }
-        for data in self.body.basic_blocks.iter() {
-            for stmt in &data.statements {
-                match &stmt.kind {
-                    StatementKind::Assign(a) => {
-                        let (dest, rvalue) = &**a;
-                        targets.push(*dest);
-                        targets.extend(mutably_lent(rvalue));
-                    }
-                    StatementKind::SetDiscriminant { place, .. } => targets.push(**place),
-                    _ => {}
-                }
-            }
-            match &data.terminator().kind {
-                TerminatorKind::Call { destination, .. } => targets.push(*destination),
-                TerminatorKind::Yield { resume_arg, .. } => targets.push(*resume_arg),
-                _ => {}
-            }
-        }
-        for target in targets {
+    fn collect_kills(&mut self, targets: Vec<Place<'tcx>>) {
+        let receiver = self
+            .body
+            .var_debug_info
+            .iter()
+            .filter_map(|info| match info.value {
+                VarDebugInfoContents::Place(p) if info.name == kw::SelfLower => Some(p),
+                _ => None,
+            });
+        for target in receiver.chain(targets) {
             // A bare write to an alias local is the alias's own definition,
             // not a write to what it reads.
             if target.projection.is_empty() && self.aliases.contains_key(&target.local) {
@@ -814,7 +776,7 @@ impl<'a, 'tcx> Analysis<'a, 'tcx> {
                 continue;
             }
             let (k, exact) = key_of(p);
-            if exact && is_prefix(&k.path, &key.path) && best.is_none_or(|(d, _)| k.path.len() > d)
+            if exact && key.path.starts_with(&k.path) && best.is_none_or(|(d, _)| k.path.len() > d)
             {
                 best = Some((k.path.len(), info.name));
             }
@@ -1022,7 +984,10 @@ impl<'tcx> LateLintPass<'tcx> for UncheckedInputLen {
                 };
                 // A sink is a call terminator and a check a switch terminator,
                 // so the two are never one block and plain dominance is exact.
-                if cs.iter().any(|(c, ..)| dominates(body, *c, sink.block)) {
+                if cs
+                    .iter()
+                    .any(|(c, ..)| dominators.dominates(*c, sink.block))
+                {
                     continue;
                 }
                 let Some(bound) = cs

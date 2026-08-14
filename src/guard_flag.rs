@@ -2,10 +2,10 @@ use std::collections::{HashMap, HashSet};
 
 use crate::adt_facts::{field_ty, struct_field};
 use crate::baseline::emit;
-use crate::hir_shapes::{ends_in_return, peel_not, self_field};
+use crate::hir_shapes::{assigned_adt_field, ends_in_return, peel_not, self_field};
 use rustc_hir::def_id::DefId;
 use rustc_hir::intravisit::FnKind;
-use rustc_hir::{Body, Expr, ExprKind, FnDecl, Mutability, Stmt, StmtKind, UnOp};
+use rustc_hir::{Body, Expr, ExprKind, FnDecl, Mutability, Stmt, StmtKind};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::def_id::LocalDefId;
@@ -37,12 +37,6 @@ pub struct GuardFlag {
 
 rustc_session::impl_lint_pass!(GuardFlag => [GUARD_FLAG]);
 
-impl GuardFlag {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 /// `self.field` where `self` is the literal receiver.
 fn self_bool_field<'tcx>(
     cx: &LateContext<'tcx>,
@@ -62,18 +56,7 @@ fn self_bool_field<'tcx>(
 /// The struct field a written place denotes, for any receiver: `x.flag`,
 /// `(*this).flag`, `self.inner.flag`.
 fn written_field<'tcx>(cx: &LateContext<'tcx>, place: &'tcx Expr<'tcx>) -> Option<(DefId, Symbol)> {
-    let mut place = place;
-    while let ExprKind::Unary(UnOp::Deref, inner) | ExprKind::DropTemps(inner) = place.kind {
-        place = inner;
-    }
-    let ExprKind::Field(base, ident) = place.kind else {
-        return None;
-    };
-    let adt = cx
-        .typeck_results()
-        .expr_ty_adjusted(base)
-        .peel_refs()
-        .ty_adt_def()?;
+    let (adt, ident, _) = assigned_adt_field(cx, place)?;
     (adt.is_struct() && adt.did().is_local()).then(|| (adt.did(), ident.name))
 }
 

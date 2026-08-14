@@ -1,11 +1,11 @@
 use clippy_utils::visitors::for_each_expr;
-use rustc_hir::{Block, Expr, ExprKind, Pat, QPath, StmtKind, UnOp};
+use rustc_hir::{Block, Expr, ExprKind, Pat, QPath, StmtKind};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::sym;
-use rustc_span::symbol::kw;
 
 use crate::baseline::emit;
+use crate::hir_shapes::{dotted, field_chain, stmt_expr};
 
 rustc_session::declare_lint! {
     /// Flags `map.get(&k).unwrap()` when the presence it bets on was proved a
@@ -28,20 +28,15 @@ rustc_session::declare_lint_pass!(InsertThenUnwrap => [INSERT_THEN_UNWRAP]);
 /// (which name the same value); `-k` and `!k` are different values from `k`.
 /// Anything else is `None`, and untrackable means unprovable means silent.
 fn identity(e: &Expr<'_>) -> Option<String> {
-    match &e.kind {
-        ExprKind::Field(base, ident) => Some(format!("{}.{}", identity(base)?, ident.name)),
+    let (root, fields) = field_chain(e);
+    let head = match &root.kind {
         ExprKind::Path(QPath::Resolved(None, p)) if p.segments.len() == 1 => {
-            let seg = p.segments[0].ident;
-            if seg.name == kw::SelfLower {
-                Some("self".to_string())
-            } else {
-                Some(seg.name.to_string())
-            }
+            p.segments[0].ident.name.to_string()
         }
-        ExprKind::Lit(lit) => Some(format!("lit:{:?}", lit.node)),
-        ExprKind::AddrOf(_, _, inner) | ExprKind::Unary(UnOp::Deref, inner) => identity(inner),
-        _ => None,
-    }
+        ExprKind::Lit(lit) => format!("lit:{:?}", lit.node),
+        _ => return None,
+    };
+    Some(dotted(head, &fields))
 }
 
 /// The local an identity is rooted at: `k` for `k` and `k.id`, `None` for
@@ -141,13 +136,7 @@ impl<'tcx> LateLintPass<'tcx> for InsertThenUnwrap {
                 .filter_map(|id| root_local(id))
                 .collect();
             for later in &block.stmts[i + 1..] {
-                let (le, pat) = match later.kind {
-                    StmtKind::Expr(le) | StmtKind::Semi(le) => (Some(le), None),
-                    // The initializer still sees the names as the insert did;
-                    // the pattern takes effect for the statements after it.
-                    StmtKind::Let(l) => (l.init, Some(l.pat)),
-                    StmtKind::Item(_) => (None, None),
-                };
+                let le = stmt_expr(later);
                 // The lookup must be the statement's own top-level shape (or
                 // the let initializer); a lookup buried under other calls is
                 // checked as a disturbance instead.
@@ -168,7 +157,11 @@ impl<'tcx> LateLintPass<'tcx> for InsertThenUnwrap {
                     );
                     return;
                 }
-                if pat.is_some_and(|p| rebinds(p, &roots)) {
+                // The initializer still saw the names as the insert did; the
+                // pattern takes effect for the statements after it.
+                if let StmtKind::Let(l) = later.kind
+                    && rebinds(l.pat, &roots)
+                {
                     break;
                 }
                 if le.is_some_and(|le| may_disturb(cx, le)) {

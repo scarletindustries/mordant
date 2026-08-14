@@ -2,15 +2,13 @@ use std::collections::HashMap;
 
 use clippy_utils::visitors::{Descend, for_each_expr};
 use rustc_hir::def_id::DefId;
-use rustc_hir::intravisit::FnKind;
-use rustc_hir::{Body, Expr, ExprKind, FnDecl, PatKind, QPath, Stmt, StmtKind};
+use rustc_hir::{Block, Expr, ExprKind, PatKind, QPath, Stmt, StmtKind};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::Span;
-use rustc_span::def_id::LocalDefId;
 
 use crate::baseline::emit;
-use crate::hir_shapes::is_self_path;
+use crate::hir_shapes::{dotted, field_chain, is_self_path, stmt_expr};
 
 rustc_session::declare_lint! {
     /// Flags two lock acquisitions the crate performs in both orders: one
@@ -48,12 +46,6 @@ pub struct LockOrder {
 
 rustc_session::impl_lint_pass!(LockOrder => [LOCK_ORDER]);
 
-impl LockOrder {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 /// `self.a.b.lock()` (or `.read()` / `.write()`) on a `Mutex`/`RwLock`
 /// receiver: the lock's identity is the field path and the type of `self`.
 fn lock_acquisition(cx: &LateContext<'_>, e: &Expr<'_>) -> Option<Lock> {
@@ -87,19 +79,8 @@ fn lock_acquisition(cx: &LateContext<'_>, e: &Expr<'_>) -> Option<Lock> {
 /// anything that is not a plain field chain off `self`, since only those
 /// have a stable identity.
 fn field_path<'h>(e: &'h Expr<'h>) -> Option<(&'h Expr<'h>, String)> {
-    match &e.kind {
-        ExprKind::Field(base, ident) => {
-            let (root, prefix) = field_path(base)?;
-            if prefix.is_empty() {
-                Some((root, ident.name.to_string()))
-            } else {
-                Some((root, format!("{prefix}.{}", ident.name)))
-            }
-        }
-        ExprKind::Path(_) if is_self_path(e) => Some((e, String::new())),
-        ExprKind::AddrOf(_, _, inner) | ExprKind::Unary(_, inner) => field_path(inner),
-        _ => None,
-    }
+    let (root, fields) = field_chain(e);
+    is_self_path(root).then(|| (root, dotted(String::new(), &fields)))
 }
 
 /// The lock acquired by this statement's `let` initializer, with the bound
@@ -139,66 +120,44 @@ fn is_drop_of(e: &Expr<'_>, name: rustc_span::Symbol) -> bool {
 }
 
 impl<'tcx> LateLintPass<'tcx> for LockOrder {
-    fn check_fn(
-        &mut self,
-        cx: &LateContext<'tcx>,
-        kind: FnKind<'tcx>,
-        _decl: &'tcx FnDecl<'tcx>,
-        body: &'tcx Body<'tcx>,
-        _span: Span,
-        _def_id: LocalDefId,
-    ) {
-        if matches!(kind, FnKind::Closure) {
-            return;
-        }
-        // Walk every block: a `let guard = <lock>` makes later statements of
-        // the same block "while holding", until a `drop(guard)`.
-        for_each_expr(cx, body.value, |e: &Expr<'tcx>| {
-            if let ExprKind::Block(block, _) = e.kind {
-                for (i, stmt) in block.stmts.iter().enumerate() {
-                    let Some((first, guard_name)) = stmt_lock_binding(cx, stmt) else {
-                        continue;
-                    };
-                    'later: for later in &block.stmts[i + 1..] {
-                        let exprs: Vec<&Expr<'_>> = match later.kind {
-                            StmtKind::Expr(le) | StmtKind::Semi(le) => vec![le],
-                            StmtKind::Let(l) => l.init.into_iter().collect(),
-                            StmtKind::Item(_) => vec![],
-                        };
-                        for le in exprs {
-                            if is_drop_of(le, guard_name) {
-                                break 'later;
-                            }
-                            let mut second: Option<(Lock, Span)> = None;
-                            for_each_expr(cx, le, |inner: &Expr<'_>| {
-                                // A closure built here runs whenever its
-                                // holder decides, possibly after the guard is
-                                // gone; what it locks is not locked now.
-                                if matches!(inner.kind, ExprKind::Closure(..)) {
-                                    return std::ops::ControlFlow::<(), Descend>::Continue(
-                                        Descend::No,
-                                    );
-                                }
-                                if let Some(l) = lock_acquisition(cx, inner)
-                                    && l != first
-                                {
-                                    second = Some((l, inner.span));
-                                }
-                                std::ops::ControlFlow::<(), Descend>::Continue(Descend::Yes)
-                            });
-                            if let Some((second, at)) = second {
-                                self.pairs.entry((first.clone(), second)).or_insert(at);
-                            }
-                        }
+    // A `let guard = <lock>` makes later statements of the same block "while
+    // holding", until a `drop(guard)`. Every HIR block is a scope of its own
+    // here, bare `loop {}` bodies and const/static initializers included, not
+    // only blocks that appear as an `ExprKind::Block` inside a fn body.
+    fn check_block(&mut self, cx: &LateContext<'tcx>, block: &'tcx Block<'tcx>) {
+        for (i, stmt) in block.stmts.iter().enumerate() {
+            let Some((first, guard_name)) = stmt_lock_binding(cx, stmt) else {
+                continue;
+            };
+            for le in block.stmts[i + 1..].iter().filter_map(stmt_expr) {
+                if is_drop_of(le, guard_name) {
+                    break;
+                }
+                let mut second: Option<(Lock, Span)> = None;
+                for_each_expr(cx, le, |inner: &Expr<'_>| {
+                    // A closure built here runs whenever its holder decides,
+                    // possibly after the guard is gone; what it locks is not
+                    // locked now.
+                    if matches!(inner.kind, ExprKind::Closure(..)) {
+                        return std::ops::ControlFlow::<(), Descend>::Continue(Descend::No);
                     }
+                    if let Some(l) = lock_acquisition(cx, inner)
+                        && l != first
+                    {
+                        second = Some((l, inner.span));
+                    }
+                    std::ops::ControlFlow::<(), Descend>::Continue(Descend::Yes)
+                });
+                if let Some((second, at)) = second {
+                    self.pairs.entry((first.clone(), second)).or_insert(at);
                 }
             }
-            std::ops::ControlFlow::<()>::Continue(())
-        });
+        }
     }
 
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
         let sm = cx.tcx.sess.source_map();
+        let mut findings: Vec<(Span, String)> = Vec::new();
         for ((a, b), span) in &self.pairs {
             // Report each conflicting pair once, from the lexically smaller
             // side, so the two orders produce one finding, not two.
@@ -207,17 +166,25 @@ impl<'tcx> LateLintPass<'tcx> for LockOrder {
             }
             if let Some(rev_span) = self.pairs.get(&(b.clone(), a.clone())) {
                 let (a, b) = (&a.path, &b.path);
-                emit(
-                    cx,
-                    LOCK_ORDER,
+                findings.push((
                     *span,
                     format!(
                         "`{a}` is locked before `{b}` here, but `{b}` before `{a}` at {}",
                         sm.span_to_diagnostic_string(*rev_span),
                     ),
-                    "both orders existing is the shape of a deadlock; pick one order and hold to it everywhere",
-                );
+                ));
             }
+        }
+        // `pairs` is a HashMap; report in source order.
+        findings.sort_by_key(|(span, _)| span.lo());
+        for (span, msg) in findings {
+            emit(
+                cx,
+                LOCK_ORDER,
+                span,
+                msg,
+                "both orders existing is the shape of a deadlock; pick one order and hold to it everywhere",
+            );
         }
     }
 }
