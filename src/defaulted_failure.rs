@@ -170,7 +170,7 @@ fn through_ok<'h>(cx: &LateContext<'_>, recv: &'h Expr<'h>) -> &'h Expr<'h> {
 /// unit value, `T::default()` / `T::new()`, or those assembled into a tuple,
 /// array or struct. A fallback computed from the surroundings is a decision
 /// this lint cannot judge.
-fn is_fixed_value(cx: &LateContext<'_>, e: &Expr<'_>) -> bool {
+fn is_fixed_value<'tcx>(cx: &LateContext<'tcx>, e: &'tcx Expr<'tcx>) -> bool {
     let e = peel_blocks_unsafe(e);
     match e.kind {
         ExprKind::Lit(_) => true,
@@ -181,17 +181,14 @@ fn is_fixed_value(cx: &LateContext<'_>, e: &Expr<'_>) -> bool {
             items.iter().all(|i| is_fixed_value(cx, i))
         }
         ExprKind::Path(ref qpath) => is_constant_res(cx.qpath_res(qpath, e.hir_id)),
-        ExprKind::Call(callee, args) => {
-            let ExprKind::Path(qpath) = &callee.kind else {
-                return false;
-            };
-            match cx.qpath_res(qpath, callee.hir_id) {
-                Res::Def(DefKind::Fn | DefKind::AssocFn, def) => {
-                    args.is_empty() && is_nullary_ctor_name(cx, def)
+        ExprKind::Call(_, args) => {
+            callee_of(cx, e).is_some_and(|c| match cx.tcx.def_kind(c.def()) {
+                DefKind::Fn | DefKind::AssocFn => {
+                    args.is_empty() && is_nullary_ctor_name(cx, c.def())
                 }
-                Res::Def(DefKind::Ctor(..), _) => args.iter().all(|a| is_fixed_value(cx, a)),
+                DefKind::Ctor(..) => args.iter().all(|a| is_fixed_value(cx, a)),
                 _ => false,
-            }
+            })
         }
         ExprKind::Struct(_, fields, tail) => {
             fields.iter().all(|f| is_fixed_value(cx, f.expr))
@@ -305,7 +302,11 @@ fn else_reports_success(cx: &LateContext<'_>, els: &Block<'_>) -> bool {
 /// tell" into "no", which is the answer's own vocabulary rather than a value
 /// smuggled past a check. `unwrap_or(true)` is not this: it answers "yes"
 /// unasked.
-fn folds_to_no(cx: &LateContext<'_>, unwrapped: &Expr<'_>, fallback: &Fallback<'_>) -> bool {
+fn folds_to_no<'tcx>(
+    cx: &LateContext<'tcx>,
+    unwrapped: &Expr<'_>,
+    fallback: &Fallback<'tcx>,
+) -> bool {
     if !cx.typeck_results().expr_ty(unwrapped).is_bool() {
         return false;
     }
@@ -315,16 +316,10 @@ fn folds_to_no(cx: &LateContext<'_>, unwrapped: &Expr<'_>, fallback: &Fallback<'
     };
     match value.kind {
         ExprKind::Lit(lit) => lit.node == rustc_ast::LitKind::Bool(false),
-        ExprKind::Call(callee, []) => {
-            let ExprKind::Path(qpath) = &callee.kind else {
-                return false;
-            };
-            matches!(
-                cx.qpath_res(qpath, callee.hir_id),
-                Res::Def(DefKind::Fn | DefKind::AssocFn, def)
-                    if cx.tcx.item_name(def).as_str() == "default"
-            )
-        }
+        ExprKind::Call(_, []) => callee_of(cx, value).is_some_and(|c| {
+            matches!(cx.tcx.def_kind(c.def()), DefKind::Fn | DefKind::AssocFn)
+                && cx.tcx.item_name(c.def()).as_str() == "default"
+        }),
         _ => false,
     }
 }

@@ -11,7 +11,7 @@ use rustc_span::Span;
 use crate::MordantConfig;
 use crate::baseline::emit_hir_then;
 use crate::enum_facts::{pat_head_qpath, variant_of_res};
-use crate::hir_shapes::peel_blocks_unsafe;
+use crate::hir_shapes::{callee_of, peel_blocks_unsafe};
 
 rustc_session::declare_lint! {
     /// Flags `_` (or a catch-all binding) matching over a small crate-local

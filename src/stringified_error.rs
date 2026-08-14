@@ -1,5 +1,6 @@
 use crate::adt_facts::result_err_ty;
 use crate::baseline::emit;
+use crate::hir_shapes::callee_of;
 use rustc_hir::{Expr, ExprKind};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
@@ -69,7 +70,7 @@ impl<'tcx> LateLintPass<'tcx> for StringifiedError {
 
 /// The closure body is exactly `param.to_string()`, `String::from(param)`, or a
 /// `format!` invocation — a stringification and nothing else.
-fn closure_body_stringifies(cx: &LateContext<'_>, body: &Expr<'_>) -> bool {
+fn closure_body_stringifies<'tcx>(cx: &LateContext<'tcx>, body: &Expr<'tcx>) -> bool {
     // A `format!` body expands to a call, so the macro check runs first.
     let from_format = clippy_utils::macros::macro_backtrace(body.span)
         .next()
@@ -81,16 +82,9 @@ fn closure_body_stringifies(cx: &LateContext<'_>, body: &Expr<'_>) -> bool {
         ExprKind::MethodCall(seg, recv, [], _) => {
             seg.ident.as_str() == "to_string" && is_param(recv)
         }
-        ExprKind::Call(callee, [inner]) => {
-            let ExprKind::Path(qpath) = &callee.kind else {
-                return false;
-            };
-            let res = cx.typeck_results().qpath_res(qpath, callee.hir_id);
-            let Some(def_id) = res.opt_def_id() else {
-                return false;
-            };
-            cx.tcx.def_path_str(def_id) == "std::string::String::from" && is_param(inner)
-        }
+        ExprKind::Call(_, [inner]) => callee_of(cx, body).is_some_and(|c| {
+            cx.tcx.def_path_str(c.def()) == "std::string::String::from" && is_param(inner)
+        }),
         _ => false,
     }
 }
