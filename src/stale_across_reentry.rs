@@ -9,12 +9,14 @@ use rustc_hir::{
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::Span;
-use rustc_span::symbol::{Symbol, kw, sym};
+use rustc_span::symbol::{Symbol, sym};
 
 use crate::MordantConfig;
 use crate::adt_facts::impl_self_adt;
 use crate::baseline::emit_with_note;
-use crate::hir_shapes::{def_path_names, stmt_expr, strip_generic_segments};
+use crate::hir_shapes::{
+    def_path_names, dotted, field_chain, is_self_path, stmt_expr, strip_generic_segments,
+};
 
 rustc_session::declare_lint! {
     /// A fact read off a field of `self` (`let n = self.items.len()`, `let p =
@@ -245,35 +247,8 @@ const ADAPTERS: &[&str] = &[
 /// `self.a.b` as `[a, b]`; anything not rooted at `self` through fields
 /// alone has no identity a re-entrant callee shares with this function.
 fn self_place(e: &Expr<'_>) -> Option<Vec<Symbol>> {
-    fn go(e: &Expr<'_>, out: &mut Vec<Symbol>) -> bool {
-        match &e.kind {
-            ExprKind::Field(base, ident) => {
-                if !go(base, out) {
-                    return false;
-                }
-                out.push(ident.name);
-                true
-            }
-            ExprKind::Path(QPath::Resolved(None, p)) => {
-                p.segments.len() == 1 && p.segments[0].ident.name == kw::SelfLower
-            }
-            ExprKind::AddrOf(_, _, inner)
-            | ExprKind::Unary(UnOp::Deref, inner)
-            | ExprKind::DropTemps(inner) => go(inner, out),
-            _ => false,
-        }
-    }
-    let mut out = Vec::new();
-    (go(e, &mut out) && !out.is_empty()).then_some(out)
-}
-
-fn render(place: &[Symbol]) -> String {
-    let mut s = String::from("self");
-    for f in place {
-        s.push('.');
-        s.push_str(f.as_str());
-    }
-    s
+    let (root, fields) = field_chain(e);
+    (is_self_path(root) && !fields.is_empty()).then_some(fields)
 }
 
 /// What the fact's field is, which decides who could change it underneath
@@ -462,12 +437,7 @@ fn hands_out<'tcx>(cx: &LateContext<'tcx>, arg: &'tcx Expr<'tcx>, t: &Tracked) -
                 e = inner;
             }
             ExprKind::Unary(UnOp::Deref, inner) | ExprKind::DropTemps(inner) => e = inner,
-            ExprKind::Path(QPath::Resolved(None, p)) => {
-                return p.segments.len() == 1
-                    && p.segments[0].ident.name == kw::SelfLower
-                    && counts(shared);
-            }
-            _ => return false,
+            _ => return is_self_path(e) && counts(shared),
         }
     }
 }
@@ -795,7 +765,7 @@ impl<'tcx> LateLintPass<'tcx> for StaleAcrossReentry {
                             break;
                         }
                         if let Some(at) = reuse_in(cx, e, &t) {
-                            let place = render(&t.place);
+                            let place = dotted(String::from("self"), &t.place);
                             let name = t.name;
                             let msg = match t.fact {
                                 Fact::Count | Fact::Flag => format!(

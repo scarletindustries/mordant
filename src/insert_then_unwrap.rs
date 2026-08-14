@@ -1,12 +1,11 @@
 use clippy_utils::visitors::for_each_expr;
-use rustc_hir::{Block, Expr, ExprKind, Pat, QPath, StmtKind, UnOp};
+use rustc_hir::{Block, Expr, ExprKind, Pat, QPath, StmtKind};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::sym;
-use rustc_span::symbol::kw;
 
 use crate::baseline::emit;
-use crate::hir_shapes::stmt_expr;
+use crate::hir_shapes::{dotted, field_chain, stmt_expr};
 
 rustc_session::declare_lint! {
     /// Flags `map.get(&k).unwrap()` when the presence it bets on was proved a
@@ -29,20 +28,15 @@ rustc_session::declare_lint_pass!(InsertThenUnwrap => [INSERT_THEN_UNWRAP]);
 /// (which name the same value); `-k` and `!k` are different values from `k`.
 /// Anything else is `None`, and untrackable means unprovable means silent.
 fn identity(e: &Expr<'_>) -> Option<String> {
-    match &e.kind {
-        ExprKind::Field(base, ident) => Some(format!("{}.{}", identity(base)?, ident.name)),
+    let (root, fields) = field_chain(e);
+    let head = match &root.kind {
         ExprKind::Path(QPath::Resolved(None, p)) if p.segments.len() == 1 => {
-            let seg = p.segments[0].ident;
-            if seg.name == kw::SelfLower {
-                Some("self".to_string())
-            } else {
-                Some(seg.name.to_string())
-            }
+            p.segments[0].ident.name.to_string()
         }
-        ExprKind::Lit(lit) => Some(format!("lit:{:?}", lit.node)),
-        ExprKind::AddrOf(_, _, inner) | ExprKind::Unary(UnOp::Deref, inner) => identity(inner),
-        _ => None,
-    }
+        ExprKind::Lit(lit) => format!("lit:{:?}", lit.node),
+        _ => return None,
+    };
+    Some(dotted(head, &fields))
 }
 
 /// The local an identity is rooted at: `k` for `k` and `k.id`, `None` for

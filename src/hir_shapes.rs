@@ -8,8 +8,8 @@ use rustc_hir::def_id::DefId;
 use rustc_hir::{Expr, ExprKind, QPath, Stmt, StmtKind, UnOp};
 use rustc_lint::LateContext;
 use rustc_middle::ty::AdtDef;
-use rustc_span::Ident;
 use rustc_span::symbol::kw;
+use rustc_span::{Ident, Symbol};
 
 /// The bare `self` path.
 pub(crate) fn is_self_path(e: &Expr<'_>) -> bool {
@@ -38,6 +38,38 @@ pub(crate) fn assigned_field<'h>(
         ExprKind::Field(base, ident) => Some((base, ident, place)),
         _ => None,
     }
+}
+
+/// `root.a.b` as `root` and `[a, b]`, read through `&`, `*` and HIR
+/// temporaries at any level, which all name the same place.
+pub(crate) fn field_chain<'h>(mut e: &'h Expr<'h>) -> (&'h Expr<'h>, Vec<Symbol>) {
+    let mut fields = Vec::new();
+    loop {
+        match e.kind {
+            ExprKind::Field(inner, ident) => {
+                fields.push(ident.name);
+                e = inner;
+            }
+            ExprKind::AddrOf(_, _, inner)
+            | ExprKind::Unary(UnOp::Deref, inner)
+            | ExprKind::DropTemps(inner) => e = inner,
+            _ => {
+                fields.reverse();
+                return (e, fields);
+            }
+        }
+    }
+}
+
+/// `head.a.b`; from an empty `head`, `a.b`.
+pub(crate) fn dotted(mut head: String, fields: &[Symbol]) -> String {
+    for f in fields {
+        if !head.is_empty() {
+            head.push('.');
+        }
+        head.push_str(f.as_str());
+    }
+    head
 }
 
 /// `assigned_field` with `base` resolved to the ADT behind its ADJUSTED

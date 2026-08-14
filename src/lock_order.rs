@@ -10,7 +10,7 @@ use rustc_span::Span;
 use rustc_span::def_id::LocalDefId;
 
 use crate::baseline::emit;
-use crate::hir_shapes::{is_self_path, stmt_expr};
+use crate::hir_shapes::{dotted, field_chain, is_self_path, stmt_expr};
 
 rustc_session::declare_lint! {
     /// Flags two lock acquisitions the crate performs in both orders: one
@@ -87,19 +87,8 @@ fn lock_acquisition(cx: &LateContext<'_>, e: &Expr<'_>) -> Option<Lock> {
 /// anything that is not a plain field chain off `self`, since only those
 /// have a stable identity.
 fn field_path<'h>(e: &'h Expr<'h>) -> Option<(&'h Expr<'h>, String)> {
-    match &e.kind {
-        ExprKind::Field(base, ident) => {
-            let (root, prefix) = field_path(base)?;
-            if prefix.is_empty() {
-                Some((root, ident.name.to_string()))
-            } else {
-                Some((root, format!("{prefix}.{}", ident.name)))
-            }
-        }
-        ExprKind::Path(_) if is_self_path(e) => Some((e, String::new())),
-        ExprKind::AddrOf(_, _, inner) | ExprKind::Unary(_, inner) => field_path(inner),
-        _ => None,
-    }
+    let (root, fields) = field_chain(e);
+    is_self_path(root).then(|| (root, dotted(String::new(), &fields)))
 }
 
 /// The lock acquired by this statement's `let` initializer, with the bound
