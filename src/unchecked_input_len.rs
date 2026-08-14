@@ -251,37 +251,36 @@ fn mutably_lent<'tcx>(rvalue: &Rvalue<'tcx>) -> Option<Place<'tcx>> {
 
 impl<'a, 'tcx> Analysis<'a, 'tcx> {
     fn new(tcx: TyCtxt<'tcx>, body: &'a Body<'tcx>, range_patterns: Vec<Span>) -> Self {
-        // Every write to a local's own storage (the whole of it or a field),
-        // including lending it out mutably; a write through it (`(*q).len =
+        // Every place the body writes or lends out mutably.
+        let mut targets: Vec<Place<'tcx>> = Vec::new();
+        for data in body.basic_blocks.iter() {
+            for stmt in &data.statements {
+                match &stmt.kind {
+                    StatementKind::Assign(a) => {
+                        let (dest, rvalue) = &**a;
+                        targets.push(*dest);
+                        targets.extend(mutably_lent(rvalue));
+                    }
+                    StatementKind::SetDiscriminant { place, .. } => targets.push(**place),
+                    _ => {}
+                }
+            }
+            match &data.terminator().kind {
+                TerminatorKind::Call { destination, .. } => targets.push(*destination),
+                TerminatorKind::Yield { resume_arg, .. } => targets.push(*resume_arg),
+                _ => {}
+            }
+        }
+        // Writes to a local's own storage; a write through it (`(*q).len =
         // ..`) is a write to what it points at, which `collect_kills` charges
         // to the resolved place. Arguments carry one implicit write.
         let mut writes: IndexVec<Local, u32> = IndexVec::from_elem_n(0, body.local_decls.len());
         for l in body.args_iter() {
             writes[l] += 1;
         }
-        let mut written = |p: Place<'tcx>| {
+        for p in &targets {
             if !p.is_indirect() {
                 writes[p.local] += 1;
-            }
-        };
-        for data in body.basic_blocks.iter() {
-            for stmt in &data.statements {
-                match &stmt.kind {
-                    StatementKind::Assign(a) => {
-                        let (dest, rvalue) = &**a;
-                        written(*dest);
-                        if let Some(p) = mutably_lent(rvalue) {
-                            written(p);
-                        }
-                    }
-                    StatementKind::SetDiscriminant { place, .. } => written(**place),
-                    _ => {}
-                }
-            }
-            match &data.terminator().kind {
-                TerminatorKind::Call { destination, .. } => written(*destination),
-                TerminatorKind::Yield { resume_arg, .. } => written(*resume_arg),
-                _ => {}
             }
         }
 
@@ -327,40 +326,22 @@ impl<'a, 'tcx> Analysis<'a, 'tcx> {
             seed_ids: HashMap::new(),
             taint: HashMap::new(),
         };
-        this.collect_kills();
+        this.collect_kills(targets);
         this
     }
 
     /// Writes and mutable borrows whose target, once aliases are resolved,
     /// lies under a parameter; plus the receiver itself.
-    fn collect_kills(&mut self) {
-        let mut targets: Vec<Place<'tcx>> = Vec::new();
-        for info in &self.body.var_debug_info {
-            if info.name == kw::SelfLower
-                && let VarDebugInfoContents::Place(p) = info.value
-            {
-                targets.push(p);
-            }
-        }
-        for data in self.body.basic_blocks.iter() {
-            for stmt in &data.statements {
-                match &stmt.kind {
-                    StatementKind::Assign(a) => {
-                        let (dest, rvalue) = &**a;
-                        targets.push(*dest);
-                        targets.extend(mutably_lent(rvalue));
-                    }
-                    StatementKind::SetDiscriminant { place, .. } => targets.push(**place),
-                    _ => {}
-                }
-            }
-            match &data.terminator().kind {
-                TerminatorKind::Call { destination, .. } => targets.push(*destination),
-                TerminatorKind::Yield { resume_arg, .. } => targets.push(*resume_arg),
-                _ => {}
-            }
-        }
-        for target in targets {
+    fn collect_kills(&mut self, targets: Vec<Place<'tcx>>) {
+        let receiver = self
+            .body
+            .var_debug_info
+            .iter()
+            .filter_map(|info| match info.value {
+                VarDebugInfoContents::Place(p) if info.name == kw::SelfLower => Some(p),
+                _ => None,
+            });
+        for target in receiver.chain(targets) {
             // A bare write to an alias local is the alias's own definition,
             // not a write to what it reads.
             if target.projection.is_empty() && self.aliases.contains_key(&target.local) {
