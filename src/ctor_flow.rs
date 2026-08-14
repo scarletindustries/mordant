@@ -39,7 +39,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use rustc_abi::{FieldIdx, VariantIdx};
+use rustc_abi::FieldIdx;
 use rustc_hir::LangItem;
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_index::IndexVec;
@@ -198,17 +198,6 @@ struct Def {
 /// A call to a crate-local fn: callee and argument atoms by position.
 type LocalCall = (LocalDefId, Vec<Option<Atom>>);
 
-/// A `Result`/`Option` aggregate assigned to a whole local: which variant,
-/// its first operand, and that operand's type (the error, for `Err`).
-struct WrapperAggregate<'tcx> {
-    dest: Local,
-    adt: DefId,
-    variant: VariantIdx,
-    operand: Option<Atom>,
-    operand_ty: Option<Ty<'tcx>>,
-    block: BasicBlock,
-}
-
 struct Facts {
     defs: IndexVec<Local, Vec<Def>>,
     /// Whole-local moves (`_a = move _b`) and `Try::branch` look-through.
@@ -300,9 +289,13 @@ fn gather<'tcx>(
     let mut alias: IndexVec<Local, Vec<Local>> = IndexVec::from_elem_n(Vec::new(), n);
     let mut payload_alias: IndexVec<Local, Vec<Local>> = IndexVec::from_elem_n(Vec::new(), n);
     let mut mut_ref_to: HashMap<Local, Atom> = HashMap::new();
-    let mut wrappers: Vec<WrapperAggregate<'tcx>> = Vec::new();
     let mut local_calls: HashMap<Local, Vec<LocalCall>> = HashMap::new();
-    let mut residual_calls: Vec<(Local, Option<Ty<'tcx>>, BasicBlock)> = Vec::new();
+    // Failure exits (Err/None, non-resource) and `Self` payload roots, each
+    // pending on whether their local reaches the return.
+    let mut pending_failures: Vec<(Local, BasicBlock)> = Vec::new();
+    let mut pending_roots: Vec<(Local, Atom)> = Vec::new();
+    let is_resource =
+        |ty: Option<Ty<'tcx>>| ty.is_some_and(|t| is_resource_error(tcx, t, extra_resource_errors));
     let mut closures = Vec::new();
 
     for (bb, data) in body.basic_blocks.iter_enumerated() {
@@ -373,14 +366,14 @@ fn gather<'tcx>(
                                     || tcx.is_diagnostic_item(sym::Option, *did)) =>
                         {
                             let first = ops.iter().next();
-                            wrappers.push(WrapperAggregate {
-                                dest: dest.local,
-                                adt: *did,
-                                variant: *vidx,
-                                operand: first.and_then(Operand::place).map(|p| place_info(p).atom),
-                                operand_ty: first.map(|o| o.ty(&body.local_decls, tcx)),
-                                block: bb,
-                            });
+                            let name = tcx.adt_def(*did).variant(*vidx).name;
+                            if name == sym::Err || name == sym::None {
+                                if !is_resource(first.map(|o| o.ty(&body.local_decls, tcx))) {
+                                    pending_failures.push((dest.local, bb));
+                                }
+                            } else if let Some(p) = first.and_then(Operand::place) {
+                                pending_roots.push((dest.local, place_info(p).atom));
+                            }
                         }
                         AggregateKind::Closure(cdid, args) => {
                             let out = args.as_closure().sig().output().skip_binder();
@@ -471,11 +464,9 @@ fn gather<'tcx>(
                         .get(1)
                         .and_then(|g| g.as_type())
                         .or_else(|| args.first().map(|a| a.node.ty(&body.local_decls, tcx)));
-                    residual_calls.push((
-                        destination.local,
-                        residual.and_then(|r| result_err_ty(tcx, r)),
-                        bb,
-                    ));
+                    if !is_resource(residual.and_then(|r| result_err_ty(tcx, r))) {
+                        pending_failures.push((destination.local, bb));
+                    }
                 } else if tcx.is_lang_item(callee, LangItem::TryTraitBranch) {
                     if let Some(Some(r)) = arg_atoms.first()
                         && r.path.is_empty()
@@ -503,31 +494,8 @@ fn gather<'tcx>(
 
     let returned = closure_over(RETURN_PLACE, |l| alias[l].clone());
 
-    let mut failure_blocks = Vec::new();
-    let mut self_roots = Vec::new();
-    for w in &wrappers {
-        if !returned.contains(&w.dest) {
-            continue;
-        }
-        let name = tcx.adt_def(w.adt).variant(w.variant).name;
-        if name == sym::Err || name == sym::None {
-            let resource = name == sym::Err
-                && w.operand_ty
-                    .is_some_and(|t| is_resource_error(tcx, t, extra_resource_errors));
-            if !resource {
-                failure_blocks.push(w.block);
-            }
-        } else if let Some(a) = &w.operand {
-            self_roots.push(a.clone());
-        }
-    }
-    for (dest, err, bb) in &residual_calls {
-        if returned.contains(dest)
-            && !err.is_some_and(|t| is_resource_error(tcx, t, extra_resource_errors))
-        {
-            failure_blocks.push(*bb);
-        }
-    }
+    let mut failure_blocks = reaching(pending_failures, &returned);
+    let mut self_roots = reaching(pending_roots, &returned);
     // A body returning bare `Self` (a helper, a closure): the return place
     // itself is the self value.
     if self_did.is_some_and(|s| is_self_ty(body.local_decls[RETURN_PLACE].ty, s)) {
@@ -545,6 +513,12 @@ fn gather<'tcx>(
         failure_blocks,
         closures,
     }
+}
+
+/// The items whose local reaches the return.
+fn reaching<T>(pending: Vec<(Local, T)>, returned: &HashSet<Local>) -> Vec<T> {
+    let kept = pending.into_iter().filter(|(l, _)| returned.contains(l));
+    kept.map(|(_, t)| t).collect()
 }
 
 fn closure_over(start: Local, mut succ: impl FnMut(Local) -> Vec<Local>) -> HashSet<Local> {
