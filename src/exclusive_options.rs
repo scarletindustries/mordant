@@ -70,22 +70,6 @@ fn relevant_adt<'tcx>(
     (opts.len() >= min_fields).then_some((adt, opts))
 }
 
-enum Init {
-    Some,
-    None,
-    Unknown,
-}
-
-fn option_init(cx: &LateContext<'_>, expr: &Expr<'_>) -> Init {
-    if clippy_utils::as_some_expr(cx, expr).is_some() {
-        Init::Some
-    } else if clippy_utils::is_none_expr(cx, expr) {
-        Init::None
-    } else {
-        Init::Unknown
-    }
-}
-
 impl<'tcx> LateLintPass<'tcx> for ExclusiveOptions {
     fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         match expr.kind {
@@ -104,13 +88,11 @@ impl<'tcx> LateLintPass<'tcx> for ExclusiveOptions {
                     if !opts.contains(&field.ident.name) {
                         continue;
                     }
-                    match option_init(cx, field.expr) {
-                        Init::Some => somes.push(field.ident.name),
-                        Init::None => {}
-                        Init::Unknown => {
-                            facts.unprovable = true;
-                            return;
-                        }
+                    if clippy_utils::as_some_expr(cx, field.expr).is_some() {
+                        somes.push(field.ident.name);
+                    } else if !clippy_utils::is_none_expr(cx, field.expr) {
+                        facts.unprovable = true;
+                        return;
                     }
                 }
                 facts.sites.push(somes);
