@@ -14,7 +14,7 @@ use rustc_span::symbol::{Symbol, kw, sym};
 use crate::MordantConfig;
 use crate::adt_facts::impl_self_adt;
 use crate::baseline::emit_with_note;
-use crate::hir_shapes::{def_path_names, strip_generic_segments};
+use crate::hir_shapes::{def_path_names, stmt_expr, strip_generic_segments};
 
 rustc_session::declare_lint! {
     /// A fact read off a field of `self` (`let n = self.items.len()`, `let p =
@@ -485,15 +485,6 @@ fn mentions<'tcx>(cx: &LateContext<'tcx>, e: &'tcx Expr<'tcx>, binding: HirId) -
         }
     })
     .is_some()
-}
-
-/// The statement's expression, for `let` its initializer.
-fn stmt_expr<'tcx>(stmt: &'tcx Stmt<'tcx>) -> Option<&'tcx Expr<'tcx>> {
-    match stmt.kind {
-        StmtKind::Expr(e) | StmtKind::Semi(e) => Some(e),
-        StmtKind::Let(l) => l.init,
-        StmtKind::Item(_) => None,
-    }
 }
 
 /// How an expression gives control away.

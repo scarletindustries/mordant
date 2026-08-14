@@ -11,7 +11,9 @@ use rustc_span::{Span, Symbol};
 
 use crate::adt_facts::impl_self_adt;
 use crate::baseline::emit;
-use crate::hir_shapes::{Callee, callee_of, ends_in_return, is_self_path, peel_not, self_field};
+use crate::hir_shapes::{
+    Callee, callee_of, ends_in_return, is_self_path, peel_not, self_field, stmt_expr,
+};
 
 rustc_session::declare_lint! {
     /// Flags a guarded call whose guard cannot be sound: `self.can_x()` gates
@@ -250,23 +252,11 @@ impl<'tcx> LateLintPass<'tcx> for AsymmetricGuard {
                 continue;
             }
             if negated && ends_in_return(then) {
-                for later in &block.stmts[i + 1..] {
-                    match later.kind {
-                        StmtKind::Expr(le) | StmtKind::Semi(le) => {
-                            self.collect_actions(cx, le, guard, adt);
-                        }
-                        // The real-world shape binds the result:
-                        // `let connections = self.detach_fds(&victim);`.
-                        StmtKind::Let(l) => {
-                            if let Some(init) = l.init {
-                                self.collect_actions(cx, init, guard, adt);
-                            }
-                        }
-                        StmtKind::Item(_) => {}
-                    }
-                }
-                if let Some(tail) = block.expr {
-                    self.collect_actions(cx, tail, guard, adt);
+                // `let` initializers count: the real-world shape binds the
+                // result, `let connections = self.detach_fds(&victim);`.
+                let later = block.stmts[i + 1..].iter().filter_map(stmt_expr);
+                for e in later.chain(block.expr) {
+                    self.collect_actions(cx, e, guard, adt);
                 }
             } else if !negated {
                 // `if self.can_x() { self.y() }` — the then-branch is gated.

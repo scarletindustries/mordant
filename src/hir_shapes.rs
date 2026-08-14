@@ -74,6 +74,15 @@ pub(crate) fn peel_not<'h>(mut e: &'h Expr<'h>) -> (&'h Expr<'h>, bool) {
     }
 }
 
+/// The statement's expression, for `let` its initializer.
+pub(crate) fn stmt_expr<'tcx>(stmt: &'tcx Stmt<'tcx>) -> Option<&'tcx Expr<'tcx>> {
+    match stmt.kind {
+        StmtKind::Expr(e) | StmtKind::Semi(e) => Some(e),
+        StmtKind::Let(l) => l.init,
+        StmtKind::Item(_) => None,
+    }
+}
+
 /// The expression's final action is a `return`.
 pub(crate) fn ends_in_return(e: &Expr<'_>) -> bool {
     match e.kind {

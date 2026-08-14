@@ -10,7 +10,7 @@ use rustc_span::Span;
 use rustc_span::def_id::LocalDefId;
 
 use crate::baseline::emit;
-use crate::hir_shapes::is_self_path;
+use crate::hir_shapes::{is_self_path, stmt_expr};
 
 rustc_session::declare_lint! {
     /// Flags two lock acquisitions the crate performs in both orders: one
@@ -159,36 +159,27 @@ impl<'tcx> LateLintPass<'tcx> for LockOrder {
                     let Some((first, guard_name)) = stmt_lock_binding(cx, stmt) else {
                         continue;
                     };
-                    'later: for later in &block.stmts[i + 1..] {
-                        let exprs: Vec<&Expr<'_>> = match later.kind {
-                            StmtKind::Expr(le) | StmtKind::Semi(le) => vec![le],
-                            StmtKind::Let(l) => l.init.into_iter().collect(),
-                            StmtKind::Item(_) => vec![],
-                        };
-                        for le in exprs {
-                            if is_drop_of(le, guard_name) {
-                                break 'later;
+                    for le in block.stmts[i + 1..].iter().filter_map(stmt_expr) {
+                        if is_drop_of(le, guard_name) {
+                            break;
+                        }
+                        let mut second: Option<(Lock, Span)> = None;
+                        for_each_expr(cx, le, |inner: &Expr<'_>| {
+                            // A closure built here runs whenever its holder
+                            // decides, possibly after the guard is gone; what
+                            // it locks is not locked now.
+                            if matches!(inner.kind, ExprKind::Closure(..)) {
+                                return std::ops::ControlFlow::<(), Descend>::Continue(Descend::No);
                             }
-                            let mut second: Option<(Lock, Span)> = None;
-                            for_each_expr(cx, le, |inner: &Expr<'_>| {
-                                // A closure built here runs whenever its
-                                // holder decides, possibly after the guard is
-                                // gone; what it locks is not locked now.
-                                if matches!(inner.kind, ExprKind::Closure(..)) {
-                                    return std::ops::ControlFlow::<(), Descend>::Continue(
-                                        Descend::No,
-                                    );
-                                }
-                                if let Some(l) = lock_acquisition(cx, inner)
-                                    && l != first
-                                {
-                                    second = Some((l, inner.span));
-                                }
-                                std::ops::ControlFlow::<(), Descend>::Continue(Descend::Yes)
-                            });
-                            if let Some((second, at)) = second {
-                                self.pairs.entry((first.clone(), second)).or_insert(at);
+                            if let Some(l) = lock_acquisition(cx, inner)
+                                && l != first
+                            {
+                                second = Some((l, inner.span));
                             }
+                            std::ops::ControlFlow::<(), Descend>::Continue(Descend::Yes)
+                        });
+                        if let Some((second, at)) = second {
+                            self.pairs.entry((first.clone(), second)).or_insert(at);
                         }
                     }
                 }
