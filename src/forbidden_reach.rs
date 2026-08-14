@@ -38,6 +38,7 @@ rustc_session::declare_lint! {
 /// never = ["core::panicking", "std::vec::Vec::push"]
 /// ```
 #[derive(Clone, Default, serde::Deserialize)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 #[serde(rename_all = "kebab-case", default)]
 pub struct ReachRule {
     pub from: String,

@@ -61,6 +61,7 @@ mod wildcard_local_enum;
 /// it may set — so grouping them into sub-structs would rename user-visible
 /// keys to satisfy a lint about internal invariants.
 #[derive(serde::Deserialize)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 #[serde(rename_all = "kebab-case", default)]
 #[cfg_attr(dylint_lib = "mordant", allow(flag_cluster))]
 pub struct MordantConfig {
@@ -309,29 +310,7 @@ fn config_default_thresholds_match_docs() {
 #[test]
 fn config_omitted_toml_keys_use_the_same_thresholds() {
     let parsed: MordantConfig = toml::from_str("").expect("empty document is an empty table");
-    let d = MordantConfig::default();
-    assert_eq!(
-        parsed.exclusive_options_min_fields,
-        d.exclusive_options_min_fields
-    );
-    assert_eq!(
-        parsed.wildcard_local_enum_max_variants,
-        d.wildcard_local_enum_max_variants
-    );
-    assert_eq!(parsed.flag_cluster_min_bools, d.flag_cluster_min_bools);
-    assert_eq!(
-        parsed.stored_projection_min_sites,
-        d.stored_projection_min_sites
-    );
-    assert_eq!(parsed.flag_cluster_enabled, d.flag_cluster_enabled);
-    assert_eq!(
-        parsed.stale_safety_comment_enabled,
-        d.stale_safety_comment_enabled
-    );
-    assert_eq!(
-        parsed.unchecked_input_len_enabled,
-        d.unchecked_input_len_enabled
-    );
+    assert_eq!(parsed, MordantConfig::default());
 }
 
 #[test]
