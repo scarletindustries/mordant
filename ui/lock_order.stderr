@@ -7,5 +7,13 @@ LL |         let gb = self.b.lock().unwrap();
    = help: both orders existing is the shape of a deadlock; pick one order and hold to it everywhere
    = note: `#[warn(lock_order)]` on by default
 
-warning: 1 warning emitted
+warning: `g` is locked before `h` here, but `h` before `g` at $DIR/lock_order.rs:123:22: 123:35
+  --> $DIR/lock_order.rs:114:18
+   |
+LL |         let gh = self.h.lock().unwrap();
+   |                  ^^^^^^^^^^^^^
+   |
+   = help: both orders existing is the shape of a deadlock; pick one order and hold to it everywhere
+
+warning: 2 warnings emitted
 

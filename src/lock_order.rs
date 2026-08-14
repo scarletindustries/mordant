@@ -121,7 +121,9 @@ fn is_drop_of(e: &Expr<'_>, name: rustc_span::Symbol) -> bool {
 
 impl<'tcx> LateLintPass<'tcx> for LockOrder {
     // A `let guard = <lock>` makes later statements of the same block "while
-    // holding", until a `drop(guard)`.
+    // holding", until a `drop(guard)`. Every HIR block is a scope of its own
+    // here, bare `loop {}` bodies and const/static initializers included, not
+    // only blocks that appear as an `ExprKind::Block` inside a fn body.
     fn check_block(&mut self, cx: &LateContext<'tcx>, block: &'tcx Block<'tcx>) {
         for (i, stmt) in block.stmts.iter().enumerate() {
             let Some((first, guard_name)) = stmt_lock_binding(cx, stmt) else {
@@ -155,6 +157,7 @@ impl<'tcx> LateLintPass<'tcx> for LockOrder {
 
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
         let sm = cx.tcx.sess.source_map();
+        let mut findings: Vec<(Span, String)> = Vec::new();
         for ((a, b), span) in &self.pairs {
             // Report each conflicting pair once, from the lexically smaller
             // side, so the two orders produce one finding, not two.
@@ -163,17 +166,25 @@ impl<'tcx> LateLintPass<'tcx> for LockOrder {
             }
             if let Some(rev_span) = self.pairs.get(&(b.clone(), a.clone())) {
                 let (a, b) = (&a.path, &b.path);
-                emit(
-                    cx,
-                    LOCK_ORDER,
+                findings.push((
                     *span,
                     format!(
                         "`{a}` is locked before `{b}` here, but `{b}` before `{a}` at {}",
                         sm.span_to_diagnostic_string(*rev_span),
                     ),
-                    "both orders existing is the shape of a deadlock; pick one order and hold to it everywhere",
-                );
+                ));
             }
+        }
+        // `pairs` is a HashMap; report in source order.
+        findings.sort_by_key(|(span, _)| span.lo());
+        for (span, msg) in findings {
+            emit(
+                cx,
+                LOCK_ORDER,
+                span,
+                msg,
+                "both orders existing is the shape of a deadlock; pick one order and hold to it everywhere",
+            );
         }
     }
 }
