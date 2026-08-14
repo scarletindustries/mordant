@@ -24,6 +24,7 @@
 use std::collections::{HashSet, VecDeque};
 
 use rustc_hir::def_id::LocalDefId;
+use rustc_index::bit_set::DenseBitSet;
 use rustc_middle::mir::{BasicBlock, Body, Local, Operand, Place, ProjectionElem, TerminatorKind};
 use rustc_middle::ty::TyCtxt;
 
@@ -255,47 +256,24 @@ pub(crate) fn build_cfg(body: &Body<'_>) -> Cfg {
     Cfg { succs, exit: n }
 }
 
-pub(crate) struct Bits(Vec<u64>);
-impl Bits {
-    fn full(n: usize) -> Self {
-        let mut v = vec![!0u64; n.div_ceil(64)];
-        if !n.is_multiple_of(64) {
-            *v.last_mut().unwrap() = (1u64 << (n % 64)) - 1;
-        }
-        Bits(v)
-    }
-    fn empty(n: usize) -> Self {
-        Bits(vec![0; n.div_ceil(64)])
-    }
-    fn set(&mut self, i: usize) {
-        self.0[i / 64] |= 1 << (i % 64);
-    }
-    fn has(&self, i: usize) -> bool {
-        self.0[i / 64] & (1 << (i % 64)) != 0
-    }
-    fn and_assign(&mut self, o: &Bits) {
-        for (a, b) in self.0.iter_mut().zip(&o.0) {
-            *a &= *b;
-        }
-    }
-}
+pub(crate) type Bits = DenseBitSet<usize>;
 
 /// Post-dominator sets over blocks plus the virtual exit.
 pub(crate) fn post_dominators(cfg: &Cfg) -> Vec<Bits> {
     let n = cfg.exit;
-    let mut pdom: Vec<Bits> = (0..=n).map(|_| Bits::full(n + 1)).collect();
-    pdom[n] = Bits::empty(n + 1);
-    pdom[n].set(n);
+    let mut pdom: Vec<Bits> = (0..=n).map(|_| Bits::new_filled(n + 1)).collect();
+    pdom[n] = Bits::new_empty(n + 1);
+    pdom[n].insert(n);
     let mut changed = true;
     while changed {
         changed = false;
         for b in 0..n {
-            let mut acc = Bits::full(n + 1);
+            let mut acc = Bits::new_filled(n + 1);
             for &s in &cfg.succs[b] {
-                acc.and_assign(&pdom[s]);
+                acc.intersect(&pdom[s]);
             }
-            acc.set(b);
-            if acc.0 != pdom[b].0 {
+            acc.insert(b);
+            if acc != pdom[b] {
                 pdom[b] = acc;
                 changed = true;
             }
@@ -309,8 +287,10 @@ pub(crate) fn post_dominators(cfg: &Cfg) -> Vec<Bits> {
 fn direct_deps(cfg: &Cfg, pdom: &[Bits], t: usize) -> Vec<usize> {
     (0..cfg.exit)
         .filter(|a| {
-            let strictly = pdom[*a].has(t) && *a != t;
-            cfg.succs[*a].len() >= 2 && !strictly && cfg.succs[*a].iter().any(|s| pdom[*s].has(t))
+            let strictly = pdom[*a].contains(t) && *a != t;
+            cfg.succs[*a].len() >= 2
+                && !strictly
+                && cfg.succs[*a].iter().any(|s| pdom[*s].contains(t))
         })
         .collect()
 }
