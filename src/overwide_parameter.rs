@@ -157,20 +157,10 @@ impl<'tcx> LateLintPass<'tcx> for OverwideParameter {
                 let ExprKind::Path(qpath) = &expr.kind else {
                     return;
                 };
-                let is_direct_callee =
-                    cx.tcx
-                        .hir_parent_iter(expr.hir_id)
-                        .next()
-                        .is_some_and(|(_, node)| {
-                            matches!(
-                                node,
-                                rustc_hir::Node::Expr(Expr {
-                                    kind: ExprKind::Call(callee, _),
-                                    ..
-                                }) if callee.hir_id == expr.hir_id
-                            )
-                        });
-                if is_direct_callee {
+                if matches!(
+                    clippy_utils::get_parent_expr(cx, expr),
+                    Some(Expr { kind: ExprKind::Call(callee, _), .. }) if callee.hir_id == expr.hir_id
+                ) {
                     return;
                 }
                 if let Res::Def(DefKind::Fn | DefKind::AssocFn, def) =

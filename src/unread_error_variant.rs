@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use rustc_hir::def_id::DefId;
-use rustc_hir::{BinOpKind, Expr, ExprKind, Pat, UnOp};
+use rustc_hir::{BinOpKind, Expr, ExprKind, Pat};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 
@@ -71,17 +71,6 @@ fn constructed_variant(cx: &LateContext<'_>, expr: &Expr<'_>) -> Option<(DefId, 
     Some((private_enum_of(cx, variant)?, variant))
 }
 
-fn peel_operand<'tcx>(mut e: &'tcx Expr<'tcx>) -> &'tcx Expr<'tcx> {
-    loop {
-        match e.kind {
-            ExprKind::AddrOf(_, _, inner)
-            | ExprKind::Unary(UnOp::Deref, inner)
-            | ExprKind::DropTemps(inner) => e = inner,
-            _ => return e,
-        }
-    }
-}
-
 impl<'tcx> LateLintPass<'tcx> for UnreadErrorVariant {
     fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         match expr.kind {
@@ -91,7 +80,8 @@ impl<'tcx> LateLintPass<'tcx> for UnreadErrorVariant {
             // would.
             ExprKind::Binary(op, lhs, rhs) if matches!(op.node, BinOpKind::Eq | BinOpKind::Ne) => {
                 for side in [lhs, rhs] {
-                    if let Some((enum_did, variant)) = constructed_variant(cx, peel_operand(side))
+                    if let Some((enum_did, variant)) =
+                        constructed_variant(cx, clippy_utils::peel_ref_operators(cx, side))
                         && !inside_own_trait_impl(cx, expr.hir_id, enum_did)
                     {
                         self.enums

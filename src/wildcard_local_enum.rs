@@ -3,7 +3,7 @@ use clippy_utils::source::snippet_opt;
 use rustc_ast::LitKind;
 use rustc_errors::Applicability;
 use rustc_hir::def_id::DefId;
-use rustc_hir::{Arm, Expr, ExprKind, HirId, MatchSource, Pat, PatKind, StmtKind, UnOp};
+use rustc_hir::{Arm, Expr, ExprKind, HirId, MatchSource, Pat, PatKind, StmtKind};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::Span;
@@ -79,14 +79,11 @@ fn is_negative_extractor<'tcx>(cx: &LateContext<'tcx>, body: &Expr<'tcx>) -> boo
 /// A binding arm whose whole body is another `match` on the binding passes
 /// the dispatch on; the inner match is where the variants are or are not
 /// listed, and this lint judges it on its own.
-fn redispatches(body: &Expr<'_>, binding: HirId) -> bool {
-    let ExprKind::Match(mut scrut, _, MatchSource::Normal) = peel_blocks_unsafe(body).kind else {
+fn redispatches(cx: &LateContext<'_>, body: &Expr<'_>, binding: HirId) -> bool {
+    let ExprKind::Match(scrut, _, MatchSource::Normal) = peel_blocks_unsafe(body).kind else {
         return false;
     };
-    while let ExprKind::AddrOf(_, _, inner) | ExprKind::Unary(UnOp::Deref, inner) = scrut.kind {
-        scrut = inner;
-    }
-    scrut.res_local_id() == Some(binding)
+    clippy_utils::peel_ref_operators(cx, scrut).res_local_id() == Some(binding)
 }
 
 /// Every variant the non-catch-all arms cover, or None when an arm's shape is
@@ -193,7 +190,7 @@ impl<'tcx> LateLintPass<'tcx> for WildcardLocalEnum {
             if is_negative_extractor(cx, arm.body) {
                 continue;
             }
-            if binding.is_some_and(|b| redispatches(arm.body, b)) {
+            if binding.is_some_and(|b| redispatches(cx, arm.body, b)) {
                 continue;
             }
             // The fix replaces the catch-all with the uncovered variants,
