@@ -10,6 +10,12 @@ rustc_session::declare_lint! {
     /// this crate or a crate it links. A safety justification that names a
     /// guard which a refactor has since removed is documentation asserting an
     /// invariant nothing provides.
+    ///
+    /// Runs only with `stale-safety-comment-enabled = true` in `dylint.toml`.
+    /// The crate cannot see names defined in C++, in scripts, or in crates
+    /// that depend on it, and once a codebase's genuinely stale comments have
+    /// been fixed those are most of what remains, so it is a survey to run
+    /// once, not a gate to keep on.
     pub STALE_SAFETY_COMMENT,
     Warn,
     "SAFETY comment names an identifier that no longer exists"

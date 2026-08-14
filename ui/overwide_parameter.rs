@@ -39,10 +39,47 @@ fn pick(n: u32) -> Shape {
     if n > 2 { Shape::Circle(n) } else { Shape::Square(n) }
 }
 
+impl Shape {
+    // Fine: `pick(1).sides()` sends whatever `pick` returned to `self`, so
+    // the one path-style call passing Circle proves nothing about Line.
+    fn sides(self) -> u32 {
+        match self {
+            Shape::Circle(_) => 0,
+            Shape::Square(_) => 4,
+            Shape::Line => unreachable!("lines have no sides"),
+        }
+    }
+
+    // Flagged: every receiver is a literal, and none of them is Line.
+    fn corners(self) -> u32 {
+        match self {
+            Shape::Circle(_) => 0,
+            Shape::Square(_) => 4,
+            Shape::Line => unreachable!("lines have no corners"),
+        }
+    }
+}
+
+// Fine: `Shape::Circle` in the first argument position is a constructor
+// passed as a function, not a value of `Shape`, so it names no variant; the
+// second argument is what `build` matches on, and a call passes `Line`.
+fn build(make: fn(u32) -> Shape, seed: Shape) -> Shape {
+    match seed {
+        Shape::Circle(n) | Shape::Square(n) => make(n),
+        Shape::Line => panic!("nothing to build from"),
+    }
+}
+
 fn main() {
     let _ = area(Shape::Circle(2));
     let _ = area(Shape::Square(3));
     let _ = perimeter(Shape::Circle(2));
     let _ = perimeter(Shape::Line);
     let _ = diameter(pick(4));
+    let _ = Shape::sides(Shape::Circle(1));
+    let _ = pick(1).sides();
+    let _ = Shape::Circle(1).corners();
+    let _ = Shape::Square(2).corners();
+    let _ = build(Shape::Circle, Shape::Square(1));
+    let _ = build(Shape::Square, Shape::Line);
 }

@@ -24,6 +24,11 @@ impl Conn {
     fn reset(&mut self) {
         self.sent = 0;
     }
+
+    // The transition that makes `ready` a state and not a setting.
+    fn connect(&mut self) {
+        self.ready = true;
+    }
 }
 
 struct Once {
@@ -40,11 +45,35 @@ impl Once {
     }
 }
 
+struct Printer {
+    minify: bool,
+    out: String,
+}
+
+impl Printer {
+    // Fine: `minify` is set once, in the literal, and never written again;
+    // bailing on it is a mode, not an order of operations.
+    fn newline(&mut self) {
+        if self.minify {
+            return;
+        }
+        self.out.push('\n');
+    }
+
+    fn space(&mut self) {
+        if self.minify {
+            return;
+        }
+        self.out.push(' ');
+    }
+}
+
 fn main() {
     let mut c = Conn {
         ready: true,
         sent: 0,
     };
+    c.connect();
     c.send();
     c.flush();
     c.reset();
@@ -54,4 +83,11 @@ fn main() {
         fired: 0,
     };
     o.fire();
+
+    let mut p = Printer {
+        minify: true,
+        out: String::new(),
+    };
+    p.newline();
+    p.space();
 }

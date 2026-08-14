@@ -15,28 +15,34 @@ extern crate rustc_span;
 
 dylint_linting::dylint_library!();
 
+mod adt_facts;
 mod asymmetric_guard;
 mod baseline;
 mod bypassed_validator;
 mod claims;
 mod ctor_flow;
+mod defaulted_failure;
 mod discarded_error;
 mod enum_facts;
 mod exclusive_options;
 mod flag_cluster;
 mod forbidden_reach;
 mod guard_flag;
+mod hir_shapes;
 mod insert_then_unwrap;
 mod lock_order;
+mod mir_flow;
 mod narrowed_return;
 mod nonidentity_key;
 mod overwide_parameter;
 mod parallel_bools;
+mod stale_across_reentry;
 mod stale_panic_message;
 mod stale_safety_comment;
 mod stored_projection;
 mod stringified_error;
 mod stringly_error;
+mod unchecked_input_len;
 mod unit_mismatch;
 mod unread_error_variant;
 mod unread_none;
@@ -47,14 +53,14 @@ mod wildcard_local_enum;
 ///
 /// `flag_cluster` is allowed on this one struct, and it is the lawful-lattice
 /// case the lint's own help describes rather than an exemption from it. The
-/// bools are opt-ins belonging to *different* lints: all four combinations are
+/// bools are opt-ins belonging to *different* lints: every combination is
 /// reachable from a `dylint.toml` and each means what it says, so there is no
 /// invariant between them for a type to carry. The field set is also this
 /// pack's public interface — every field is a TOML key, and Scarlet's `xtask`
 /// gate reads these field names out of the pinned source to decide which keys
 /// it may set — so grouping them into sub-structs would rename user-visible
 /// keys to satisfy a lint about internal invariants.
-#[derive(Clone, serde::Deserialize)]
+#[derive(serde::Deserialize)]
 #[serde(rename_all = "kebab-case", default)]
 #[cfg_attr(dylint_lib = "mordant", allow(flag_cluster))]
 pub struct MordantConfig {
@@ -99,6 +105,40 @@ pub struct MordantConfig {
     /// Reachability bans: from each matching root, no call path may reach a
     /// banned definition. Findings carry the witness path.
     pub forbidden_reach: Vec<forbidden_reach::ReachRule>,
+    /// This project's own re-entry points, for `stale_across_reentry`, on top
+    /// of the built-in closure / fn-pointer / `dyn` / `.await` set: paths
+    /// matched by `::`-segment suffix (`Vm::run_callback`, `run_callback`;
+    /// a method of a trait impl matches under its type or its trait,
+    /// `Worker::run_job` or `Runner::run_job`), with a trailing `*` on the
+    /// last segment matching by prefix (`dispatch*`).
+    pub stale_across_reentry_callees: Vec<String>,
+    /// Callees `defaulted_failure` takes as rejecting their argument without
+    /// reading their body: parsers in other crates, or local ones whose
+    /// failure is built by combinators. Spelled like
+    /// `validator-resource-errors` (a full path, `crate::name`, or a bare
+    /// name). Empty by default; the lint then reports only callees whose
+    /// body it can see the check in.
+    pub defaulted_failure_callees: Vec<String>,
+    /// Opt-in: run `flag_cluster`. Off by default because most structs it
+    /// names are option bags; the state machines among them are found by
+    /// running it once, not by gating on it.
+    pub flag_cluster_enabled: bool,
+    /// Opt-in: run `stale_safety_comment`. Off by default because a name a
+    /// crate cannot see is usually defined in C++, a script, or a downstream
+    /// crate; the stale ones are found by running it once.
+    pub stale_safety_comment_enabled: bool,
+    /// Error types whose failure `defaulted_failure` does not count, on top
+    /// of `validator-resource-errors`: errors that are already recorded
+    /// somewhere else by the time they are returned (a "JS exception is
+    /// pending" marker, a diagnostic already pushed to a log), so defaulting
+    /// them hides nothing. Same spellings as `validator-resource-errors`.
+    pub defaulted_failure_ignored_errors: Vec<String>,
+    /// Opt-in: run `unchecked_input_len`. Off by default because most of
+    /// what it names on a codebase whose callers vouch for their lengths is a
+    /// value the function also uses as some other value's limit (TRIAGE.md),
+    /// which nothing inside the function tells from a missed check; run it
+    /// once over parsing code and read the list.
+    pub unchecked_input_len_enabled: bool,
 }
 
 fn default_min_fields() -> usize {
@@ -137,6 +177,12 @@ impl Default for MordantConfig {
             stored_projection_min_sites: default_min_sites(),
             baseline: None,
             forbidden_reach: Vec::new(),
+            stale_across_reentry_callees: Vec::new(),
+            defaulted_failure_callees: Vec::new(),
+            flag_cluster_enabled: false,
+            stale_safety_comment_enabled: false,
+            defaulted_failure_ignored_errors: Vec::new(),
+            unchecked_input_len_enabled: false,
         }
     }
 }
@@ -146,9 +192,9 @@ impl Default for MordantConfig {
 pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint::LintStore) {
     dylint_linting::init_config(sess);
     let config: MordantConfig = dylint_linting::config_or_default(env!("CARGO_PKG_NAME"));
+    let config: &'static MordantConfig = Box::leak(Box::new(config));
     baseline::setup(&config.baseline);
     lint_store.register_lints(&[
-        baseline::MORDANT_BASELINE,
         stringly_error::STRINGLY_ERROR,
         nonidentity_key::NONIDENTITY_KEY,
         stringified_error::STRINGIFIED_ERROR,
@@ -156,7 +202,6 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
         parallel_bools::PARALLEL_BOOLS,
         flag_cluster::FLAG_CLUSTER,
         bypassed_validator::BYPASSED_VALIDATOR,
-        bypassed_validator::PUB_INVARIANT_FIELDS,
         unread_error_variant::UNREAD_ERROR_VARIANT,
         asymmetric_guard::ASYMMETRIC_GUARD,
         stale_safety_comment::STALE_SAFETY_COMMENT,
@@ -172,41 +217,51 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
         wildcard_local_enum::WILDCARD_LOCAL_ENUM,
         discarded_error::DISCARDED_ERROR,
         stored_projection::STORED_PROJECTION,
+        stale_across_reentry::STALE_ACROSS_REENTRY,
+        defaulted_failure::DEFAULTED_FAILURE,
+        unchecked_input_len::UNCHECKED_INPUT_LEN,
     ]);
-    let c1 = config.clone();
-    let c2 = config.clone();
-    let c3 = config.clone();
-    lint_store.register_late_pass(move |_| Box::new(stringly_error::StringlyError::new(&c1)));
-    lint_store.register_late_pass(move |_| Box::new(nonidentity_key::NonidentityKey::new(&c2)));
+    lint_store.register_late_pass(move |_| Box::new(stringly_error::StringlyError::new(config)));
+    lint_store.register_late_pass(move |_| Box::new(nonidentity_key::NonidentityKey::new(config)));
     lint_store.register_late_pass(|_| Box::new(stringified_error::StringifiedError));
-    lint_store.register_late_pass(move |_| Box::new(exclusive_options::ExclusiveOptions::new(&c3)));
-    lint_store.register_late_pass(|_| Box::new(parallel_bools::ParallelBools::new()));
-    let c6 = config.clone();
-    // Cloned here rather than beside its registration below: `config` itself is
-    // moved into the `wildcard_local_enum` closure before that point.
-    let c7 = config.clone();
-    lint_store.register_late_pass(move |_| Box::new(flag_cluster::FlagCluster::new(&c6)));
-    let c5 = config.clone();
     lint_store
-        .register_late_pass(move |_| Box::new(bypassed_validator::BypassedValidator::new(&c5)));
+        .register_late_pass(move |_| Box::new(exclusive_options::ExclusiveOptions::new(config)));
+    lint_store.register_late_pass(|_| Box::new(parallel_bools::ParallelBools::new()));
+    // The opt-in lints stay registered above so `allow(..)` / `-A` of them
+    // still resolve; only their passes are skipped.
+    if config.flag_cluster_enabled {
+        lint_store.register_late_pass(move |_| Box::new(flag_cluster::FlagCluster::new(config)));
+    }
+    lint_store
+        .register_late_pass(move |_| Box::new(bypassed_validator::BypassedValidator::new(config)));
     lint_store.register_late_pass(|_| Box::new(unread_error_variant::UnreadErrorVariant::new()));
     lint_store.register_late_pass(|_| Box::new(asymmetric_guard::AsymmetricGuard::new()));
-    lint_store.register_late_pass(|_| Box::new(stale_safety_comment::StaleSafetyComment::new()));
+    if config.stale_safety_comment_enabled {
+        lint_store
+            .register_late_pass(|_| Box::new(stale_safety_comment::StaleSafetyComment::new()));
+    }
     lint_store.register_late_pass(|_| Box::new(unit_mismatch::UnitMismatch));
     lint_store.register_late_pass(|_| Box::new(stale_panic_message::StalePanicMessage::new()));
     lint_store.register_late_pass(|_| Box::new(lock_order::LockOrder::new()));
-    let c4 = config.clone();
-    lint_store.register_late_pass(move |_| Box::new(forbidden_reach::ForbiddenReach::new(&c4)));
+    lint_store.register_late_pass(move |_| Box::new(forbidden_reach::ForbiddenReach::new(config)));
     lint_store.register_late_pass(|_| Box::new(guard_flag::GuardFlag::new()));
     lint_store.register_late_pass(|_| Box::new(unread_none::UnreadNone::new()));
     lint_store.register_late_pass(|_| Box::new(insert_then_unwrap::InsertThenUnwrap));
     lint_store.register_late_pass(|_| Box::new(overwide_parameter::OverwideParameter::new()));
     lint_store.register_late_pass(|_| Box::new(narrowed_return::NarrowedReturn::new()));
-    lint_store.register_late_pass(move |_| {
-        Box::new(wildcard_local_enum::WildcardLocalEnum::new(&config))
-    });
+    lint_store
+        .register_late_pass(move |_| Box::new(wildcard_local_enum::WildcardLocalEnum::new(config)));
     lint_store.register_late_pass(|_| Box::new(discarded_error::DiscardedError));
-    lint_store.register_late_pass(move |_| Box::new(stored_projection::StoredProjection::new(&c7)));
+    lint_store
+        .register_late_pass(move |_| Box::new(stored_projection::StoredProjection::new(config)));
+    lint_store.register_late_pass(move |_| {
+        Box::new(stale_across_reentry::StaleAcrossReentry::new(config))
+    });
+    lint_store
+        .register_late_pass(move |_| Box::new(defaulted_failure::DefaultedFailure::new(config)));
+    if config.unchecked_input_len_enabled {
+        lint_store.register_late_pass(|_| Box::new(unchecked_input_len::UncheckedInputLen));
+    }
     // Last, so its check_crate_post flushes after every lint has recorded.
     lint_store.register_late_pass(|_| Box::new(baseline::BaselineWriter));
 }
@@ -222,6 +277,12 @@ fn ui() {
             nonidentity-key-methods = ["Value::to_raw"]
             nonidentity-key-composite = true
             nonidentity-key-fixes = ["FileId"]
+            stale-across-reentry-callees = ["Vm::run_callback", "dispatch*", "Worker::run_job", "Runner::schedule"]
+            defaulted-failure-callees = ["from_str_radix", "listed_by_config"]
+            defaulted-failure-ignored-errors = ["Pending"]
+            flag-cluster-enabled = true
+            stale-safety-comment-enabled = true
+            unchecked-input-len-enabled = true
 
             [[mordant.forbidden-reach]]
             from = "hot_path"
@@ -239,6 +300,15 @@ fn ui() {
         .run();
 }
 
+/// The `ui` fixtures for the opt-in lints run with their keys on; these
+/// re-run the same shapes with the keys absent and expect nothing.
+#[test]
+fn ui_opt_in_lints_are_off_without_their_key() {
+    dylint_testing::ui::Test::src_base(env!("CARGO_PKG_NAME"), "ui_off")
+        .dylint_toml("[mordant]\n")
+        .run();
+}
+
 /// `config_or_default` returns `Default` when the linted workspace has no
 /// `dylint.toml`. A derived `Default` yields 0 for every `usize`, which
 /// turns `wildcard_local_enum` off (`n > 0` for every enum) and makes
@@ -250,6 +320,9 @@ fn config_default_thresholds_match_docs() {
     assert_eq!(c.wildcard_local_enum_max_variants, 12);
     assert_eq!(c.flag_cluster_min_bools, 3);
     assert_eq!(c.stored_projection_min_sites, 2);
+    assert!(!c.flag_cluster_enabled);
+    assert!(!c.stale_safety_comment_enabled);
+    assert!(!c.unchecked_input_len_enabled);
 }
 
 /// An empty table (file present, keys omitted) must not drift from
@@ -271,6 +344,15 @@ fn config_omitted_toml_keys_use_the_same_thresholds() {
     assert_eq!(
         parsed.stored_projection_min_sites,
         d.stored_projection_min_sites
+    );
+    assert_eq!(parsed.flag_cluster_enabled, d.flag_cluster_enabled);
+    assert_eq!(
+        parsed.stale_safety_comment_enabled,
+        d.stale_safety_comment_enabled
+    );
+    assert_eq!(
+        parsed.unchecked_input_len_enabled,
+        d.unchecked_input_len_enabled
     );
 }
 

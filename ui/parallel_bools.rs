@@ -36,6 +36,50 @@ impl Independent {
     }
 }
 
+// Fine: the lone write to `open` goes through a Box, and is still a write.
+struct Boxed {
+    open: bool,
+    ready: bool,
+}
+
+impl Boxed {
+    fn up(&mut self) {
+        self.open = true;
+        self.ready = true;
+    }
+
+    fn down(&mut self) {
+        self.open = false;
+        self.ready = false;
+    }
+}
+
+fn close_boxed(b: &mut Box<Boxed>) {
+    b.open = false;
+}
+
+// Fine: the lone write to `dirty` is a compound assignment.
+struct Ored {
+    dirty: bool,
+    seen: bool,
+}
+
+impl Ored {
+    fn reset(&mut self) {
+        self.dirty = false;
+        self.seen = false;
+    }
+
+    fn mark(&mut self) {
+        self.dirty = true;
+        self.seen = true;
+    }
+
+    fn touch(&mut self, changed: bool) {
+        self.dirty |= changed;
+    }
+}
+
 fn main() {
     let mut t = Task {
         running: false,
@@ -49,4 +93,20 @@ fn main() {
     let mut i = Independent { a: false, b: false };
     i.set_a();
     i.set_both();
+
+    let mut b = Box::new(Boxed {
+        open: false,
+        ready: false,
+    });
+    b.up();
+    b.down();
+    close_boxed(&mut b);
+
+    let mut o = Ored {
+        dirty: false,
+        seen: false,
+    };
+    o.reset();
+    o.mark();
+    o.touch(true);
 }

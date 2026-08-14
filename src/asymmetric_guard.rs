@@ -3,14 +3,15 @@ use std::collections::{HashMap, HashSet};
 use clippy_utils::visitors::{Descend, for_each_expr};
 use rustc_hir::def_id::DefId;
 use rustc_hir::intravisit::FnKind;
-use rustc_hir::{Block, Body, Expr, ExprKind, FnDecl, QPath, Stmt, StmtKind, UnOp};
+use rustc_hir::{Block, Body, Expr, ExprKind, FnDecl, HirId, StmtKind};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::def_id::LocalDefId;
-use rustc_span::symbol::kw;
 use rustc_span::{Span, Symbol};
 
+use crate::adt_facts::impl_self_adt;
 use crate::baseline::emit;
+use crate::hir_shapes::{Callee, callee_of, ends_in_return, is_self_path, peel_not, self_field};
 
 rustc_session::declare_lint! {
     /// Flags a guarded call whose guard cannot be sound: `self.can_x()` gates
@@ -23,7 +24,14 @@ rustc_session::declare_lint! {
     /// Only calls at the guard's own level count as its actions. A call
     /// nested under a further `if`, `match` or loop is gated by that
     /// condition; typically it is a state transition of its own that happens
-    /// to sit in a method the guard opened.
+    /// to sit in a method the guard opened. The exception is a further guard:
+    /// a call approved by `can_x()` and then `can_y()` is judged against what
+    /// the two read together, and is reported once, naming both.
+    ///
+    /// A guard is followed through the fields it reads and the same-type
+    /// methods it calls. One that hands `self` to anything else (a free
+    /// function, a trait method) reads who knows what, and gates nothing as
+    /// far as this lint is concerned: silence, not a guess.
     pub ASYMMETRIC_GUARD,
     Warn,
     "guarded call touches state its guard never reads"
@@ -35,10 +43,15 @@ struct MethodFacts {
     touched: HashSet<Symbol>,
     /// Same-type inherent methods called on `self`.
     calls: HashSet<DefId>,
+    /// `self` handed whole to something the two sets above do not follow (a
+    /// free function, a trait method, a closure): what gets read behind it
+    /// is unknown, so this method's coverage is not computable.
+    escapes: bool,
 }
 
+/// One guarded call site and every guard that approved it.
 struct Gate {
-    guard: DefId,
+    guards: Vec<DefId>,
     action: DefId,
     span: Span,
 }
@@ -46,7 +59,10 @@ struct Gate {
 #[derive(Default)]
 pub struct AsymmetricGuard {
     facts: HashMap<DefId, MethodFacts>,
+    /// In the order the sites were first seen, so findings come out in
+    /// source order; `site_index` folds a second guard into the same entry.
     gates: Vec<Gate>,
+    site_index: HashMap<Span, usize>,
 }
 
 rustc_session::impl_lint_pass!(AsymmetricGuard => [ASYMMETRIC_GUARD]);
@@ -57,21 +73,18 @@ impl AsymmetricGuard {
     }
 }
 
-fn is_self_path(e: &Expr<'_>) -> bool {
-    matches!(&e.kind, ExprKind::Path(QPath::Resolved(None, p))
-        if p.segments.len() == 1 && p.segments[0].ident.name == kw::SelfLower)
-}
-
 /// The inherent method a `self.m(..)` call resolves to, with its self type,
 /// when that type is a crate-local ADT.
-fn self_method_call(cx: &LateContext<'_>, e: &Expr<'_>) -> Option<(DefId, DefId)> {
-    let ExprKind::MethodCall(_, recv, ..) = &e.kind else {
+fn self_method_call<'tcx>(cx: &LateContext<'tcx>, e: &Expr<'tcx>) -> Option<(DefId, DefId)> {
+    let Some(Callee::Method {
+        def: method, recv, ..
+    }) = callee_of(cx, e)
+    else {
         return None;
     };
     if !is_self_path(recv) {
         return None;
     }
-    let method = cx.typeck_results().type_dependent_def_id(e.hir_id)?;
     let impl_did = cx.tcx.impl_of_assoc(method)?;
     if !matches!(
         cx.tcx.def_kind(impl_did),
@@ -79,18 +92,8 @@ fn self_method_call(cx: &LateContext<'_>, e: &Expr<'_>) -> Option<(DefId, DefId)
     ) {
         return None;
     }
-    let self_ty = cx
-        .tcx
-        .type_of(impl_did)
-        .instantiate_identity()
-        .skip_normalization();
-    if let ty::Adt(adt, _) = self_ty.kind()
-        && adt.did().is_local()
-    {
-        Some((method, adt.did()))
-    } else {
-        None
-    }
+    let adt = impl_self_adt(cx, impl_did)?;
+    adt.did().is_local().then(|| (method, adt.did()))
 }
 
 /// A guard is a permission-flavored boolean method: the names that promise
@@ -101,37 +104,45 @@ fn is_guard_name(cx: &LateContext<'_>, method: DefId) -> bool {
     n.starts_with("can_") || n.starts_with("may_") || n.starts_with("check_")
 }
 
-/// Peel `!` and grouping to the guard call, if the condition is exactly one.
-fn guard_call_of<'tcx>(cond: &'tcx Expr<'tcx>) -> (&'tcx Expr<'tcx>, bool) {
-    match cond.kind {
-        ExprKind::Unary(UnOp::Not, inner) => {
-            let (e, _) = guard_call_of(inner);
-            (e, true)
-        }
-        ExprKind::DropTemps(inner) => guard_call_of(inner),
-        _ => (cond, false),
-    }
-}
-
-fn block_ends_in_return(e: &Expr<'_>) -> bool {
-    match e.kind {
-        ExprKind::Ret(_) => true,
-        ExprKind::Block(b, _) => match (b.stmts.last(), b.expr) {
-            (_, Some(tail)) => block_ends_in_return(tail),
-            (
-                Some(Stmt {
-                    kind: StmtKind::Expr(s) | StmtKind::Semi(s),
-                    ..
-                }),
-                None,
-            ) => block_ends_in_return(s),
-            _ => false,
-        },
-        _ => false,
-    }
+/// `if self.can_y() { .. }` with no else: the then-branch is still the outer
+/// guard's territory, only more narrowly approved. Any other condition, or a
+/// denial branch, is a decision of its own.
+fn positive_guard_if<'tcx>(
+    cx: &LateContext<'tcx>,
+    e: &'tcx Expr<'tcx>,
+) -> Option<(DefId, DefId, &'tcx Expr<'tcx>)> {
+    let ExprKind::If(cond, then, None) = e.kind else {
+        return None;
+    };
+    let (gexpr, negated) = peel_not(cond);
+    let (guard, adt) = self_method_call(cx, gexpr)?;
+    (!negated && is_guard_name(cx, guard)).then_some((guard, adt, then))
 }
 
 impl AsymmetricGuard {
+    fn note_gate(&mut self, guards: &[DefId], action: DefId, span: Span) {
+        match self.site_index.get(&span) {
+            Some(&i) => {
+                let known = &mut self.gates[i].guards;
+                for &g in guards {
+                    if !known.contains(&g) {
+                        known.push(g);
+                    }
+                }
+            }
+            None => {
+                self.site_index.insert(span, self.gates.len());
+                self.gates.push(Gate {
+                    guards: guards.to_vec(),
+                    action,
+                    span,
+                });
+            }
+        }
+    }
+
+    /// Every same-type call in `scope` is approved by `guard`; below a further
+    /// positive guard it is approved by both.
     fn collect_actions<'tcx>(
         &mut self,
         cx: &LateContext<'tcx>,
@@ -139,29 +150,41 @@ impl AsymmetricGuard {
         guard: DefId,
         adt: DefId,
     ) {
-        let mut gates = Vec::new();
-        for_each_expr(cx, scope, |e: &Expr<'_>| {
-            // Anything below its own condition answers to that condition. (The
-            // then-branch form hands in the guard's own block, which is not one.)
-            if matches!(
-                e.kind,
-                ExprKind::If(..) | ExprKind::Match(..) | ExprKind::Loop(..) | ExprKind::Closure(..)
-            ) {
-                return std::ops::ControlFlow::<(), Descend>::Continue(Descend::No);
-            }
-            if let Some((m, m_adt)) = self_method_call(cx, e)
-                && m_adt == adt
-                && m != guard
-            {
-                gates.push(Gate {
-                    guard,
-                    action: m,
-                    span: e.span,
-                });
-            }
-            std::ops::ControlFlow::<(), Descend>::Continue(Descend::Yes)
-        });
-        self.gates.extend(gates);
+        let mut sites: Vec<(DefId, Span, Vec<DefId>)> = Vec::new();
+        let mut pending = vec![(scope, vec![guard])];
+        while let Some((scope, guards)) = pending.pop() {
+            for_each_expr(cx, scope, |e: &'tcx Expr<'tcx>| {
+                if let Some((inner, _, then)) = positive_guard_if(cx, e) {
+                    let mut below = guards.clone();
+                    if !below.contains(&inner) {
+                        below.push(inner);
+                    }
+                    pending.push((then, below));
+                    return std::ops::ControlFlow::<(), Descend>::Continue(Descend::No);
+                }
+                // Anything below its own condition answers to that condition. (The
+                // then-branch form hands in the guard's own block, which is not one.)
+                if matches!(
+                    e.kind,
+                    ExprKind::If(..)
+                        | ExprKind::Match(..)
+                        | ExprKind::Loop(..)
+                        | ExprKind::Closure(..)
+                ) {
+                    return std::ops::ControlFlow::<(), Descend>::Continue(Descend::No);
+                }
+                if let Some((m, m_adt)) = self_method_call(cx, e)
+                    && m_adt == adt
+                    && !guards.contains(&m)
+                {
+                    sites.push((m, e.span, guards.clone()));
+                }
+                std::ops::ControlFlow::<(), Descend>::Continue(Descend::Yes)
+            });
+        }
+        for (action, span, guards) in sites {
+            self.note_gate(&guards, action, span);
+        }
     }
 }
 
@@ -181,16 +204,21 @@ impl<'tcx> LateLintPass<'tcx> for AsymmetricGuard {
         // Facts: which self-fields this method touches, and what it calls.
         let method = def_id.to_def_id();
         let mut facts = MethodFacts::default();
+        // The walk is pre-order, so a `self` that is the base of a field or
+        // the receiver of a followed call is marked before it is visited; any
+        // other `self` reaching the walk is one that got away.
+        let mut followed: HashSet<HirId> = HashSet::new();
         for_each_expr(cx, body.value, |e: &Expr<'_>| {
-            match &e.kind {
-                ExprKind::Field(base, ident) if is_self_path(base) => {
-                    facts.touched.insert(ident.name);
-                }
-                _ => {
-                    if let Some((m, _)) = self_method_call(cx, e) {
-                        facts.calls.insert(m);
-                    }
-                }
+            if let Some((base, ident)) = self_field(e) {
+                facts.touched.insert(ident.name);
+                followed.insert(base.hir_id);
+            } else if let Some((m, _)) = self_method_call(cx, e)
+                && let ExprKind::MethodCall(_, recv, ..) = e.kind
+            {
+                facts.calls.insert(m);
+                followed.insert(recv.hir_id);
+            } else if is_self_path(e) && !followed.contains(&e.hir_id) {
+                facts.escapes = true;
             }
             std::ops::ControlFlow::<()>::Continue(())
         });
@@ -198,6 +226,13 @@ impl<'tcx> LateLintPass<'tcx> for AsymmetricGuard {
     }
 
     fn check_block(&mut self, cx: &LateContext<'tcx>, block: &'tcx Block<'tcx>) {
+        // `if self.can_x() { self.y() }` as the block's tail gates the same
+        // way it does as a statement; with nothing after it, only that form.
+        if let Some(tail) = block.expr
+            && let Some((guard, adt, then)) = positive_guard_if(cx, tail)
+        {
+            self.collect_actions(cx, then, guard, adt);
+        }
         // `if !self.can_x() { return } ... self.y()` — the guard covers the
         // rest of the block.
         for (i, stmt) in block.stmts.iter().enumerate() {
@@ -207,14 +242,14 @@ impl<'tcx> LateLintPass<'tcx> for AsymmetricGuard {
             let ExprKind::If(cond, then, None) = e.kind else {
                 continue;
             };
-            let (gexpr, negated) = guard_call_of(cond);
+            let (gexpr, negated) = peel_not(cond);
             let Some((guard, adt)) = self_method_call(cx, gexpr) else {
                 continue;
             };
             if !is_guard_name(cx, guard) {
                 continue;
             }
-            if negated && block_ends_in_return(then) {
+            if negated && ends_in_return(then) {
                 for later in &block.stmts[i + 1..] {
                     match later.kind {
                         StmtKind::Expr(le) | StmtKind::Semi(le) => {
@@ -259,20 +294,26 @@ impl<'tcx> LateLintPass<'tcx> for AsymmetricGuard {
             if !mutates {
                 continue;
             }
-            // The guard's coverage is everything it touches transitively
+            // The guards' coverage is everything they touch transitively
             // through same-type calls, so a guard delegating to helpers is
-            // never accused falsely.
+            // never accused falsely; one delegating to something the walk
+            // cannot follow has no computable coverage, and is not judged.
             let mut covered: HashSet<Symbol> = HashSet::new();
-            let mut queue = vec![gate.guard];
+            let mut queue = gate.guards.clone();
             let mut seen: HashSet<DefId> = HashSet::new();
+            let mut computable = true;
             while let Some(m) = queue.pop() {
                 if !seen.insert(m) {
                     continue;
                 }
                 if let Some(f) = self.facts.get(&m) {
+                    computable &= !f.escapes;
                     covered.extend(f.touched.iter().copied());
                     queue.extend(f.calls.iter().copied());
                 }
+            }
+            if !computable {
+                continue;
             }
             let mut missed: Vec<&Symbol> = action
                 .touched
@@ -284,14 +325,23 @@ impl<'tcx> LateLintPass<'tcx> for AsymmetricGuard {
             }
             missed.sort_by_key(|s| s.as_str().to_owned());
             let fields: Vec<String> = missed.iter().map(|s| format!("`{s}`")).collect();
+            let mut guards: Vec<String> = gate
+                .guards
+                .iter()
+                .map(|&g| format!("`{}`", cx.tcx.item_name(g)))
+                .collect();
+            guards.sort();
+            let (guards, reader) = match guards.as_slice() {
+                [one] => (one.clone(), "the guard never reads"),
+                many => (many.join(" and "), "none of the guards read"),
+            };
             emit(
                 cx,
                 ASYMMETRIC_GUARD,
                 gate.span,
                 format!(
-                    "`{}` is gated by `{}`, but touches {} which the guard never reads",
+                    "`{}` is gated by {guards}, but touches {} which {reader}",
                     cx.tcx.item_name(gate.action),
-                    cx.tcx.item_name(gate.guard),
                     fields.join(", "),
                 ),
                 "a guard blind to part of the state its action manipulates cannot be sound; align what the pair reads",

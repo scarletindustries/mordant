@@ -161,6 +161,29 @@ fn trace() {
     println!("{} {}", Trace::Enter, Trace::Exit);
 }
 
+// A tuple constructor handed to `map_err` constructs the variant just as a
+// written-out call does: `Malformed` is built that way and never named, so it
+// is flagged; `Missing` is built the same way and named, so it is not.
+enum ParseError {
+    Missing,
+    Malformed(std::num::ParseIntError),
+}
+
+fn parse(s: &str) -> Result<u32, ParseError> {
+    if s.is_empty() {
+        return Err(ParseError::Missing);
+    }
+    s.parse::<u32>().map_err(ParseError::Malformed)
+}
+
+fn parse_or_zero(s: &str) -> u32 {
+    match parse(s) {
+        Ok(n) => n,
+        Err(ParseError::Missing) => 0,
+        Err(_) => 1,
+    }
+}
+
 fn main() {
     let _ = handle(0);
     let _ = resolve(10);
@@ -170,4 +193,5 @@ fn main() {
     let _ = speeds();
     let _ = run();
     let _ = levels();
+    let _ = parse_or_zero("7");
 }

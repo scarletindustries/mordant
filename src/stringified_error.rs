@@ -1,8 +1,8 @@
+use crate::adt_facts::result_err_ty;
 use crate::baseline::emit;
 use rustc_hir::{Expr, ExprKind};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
-use rustc_span::sym;
 
 rustc_session::declare_lint! {
     /// Flags the site where a typed error is collapsed into a string:
@@ -25,13 +25,9 @@ impl<'tcx> LateLintPass<'tcx> for StringifiedError {
             return;
         }
         let recv_ty = cx.typeck_results().expr_ty_adjusted(recv);
-        let ty::Adt(adt, args) = recv_ty.peel_refs().kind() else {
+        let Some(err_ty) = result_err_ty(cx.tcx, recv_ty.peel_refs()) else {
             return;
         };
-        if !cx.tcx.is_diagnostic_item(sym::Result, adt.did()) {
-            return;
-        }
-        let err_ty = args.type_at(1);
         // Already a string, or opaque to us: nothing is being destroyed.
         let ty::Adt(err_adt, _) = err_ty.peel_refs().kind() else {
             return;
@@ -45,13 +41,9 @@ impl<'tcx> LateLintPass<'tcx> for StringifiedError {
         // The call must actually produce a string error, or nothing was
         // collapsed.
         let out_ty = cx.typeck_results().expr_ty(expr);
-        let ty::Adt(out_adt, out_args) = out_ty.kind() else {
+        let Some(out_err) = result_err_ty(cx.tcx, out_ty) else {
             return;
         };
-        if !cx.tcx.is_diagnostic_item(sym::Result, out_adt.did()) {
-            return;
-        }
-        let out_err = out_args.type_at(1);
         let is_string_out = match out_err.peel_refs().kind() {
             ty::Adt(a, _) => cx.tcx.is_lang_item(a.did(), rustc_hir::LangItem::String),
             _ => out_err.peel_refs().is_str(),
@@ -87,7 +79,7 @@ fn closure_body_stringifies(cx: &LateContext<'_>, body: &Expr<'_>) -> bool {
     }
     match body.kind {
         ExprKind::MethodCall(seg, recv, [], _) => {
-            seg.ident.as_str() == "to_string" && is_param(cx, recv)
+            seg.ident.as_str() == "to_string" && is_param(recv)
         }
         ExprKind::Call(callee, [inner]) => {
             let ExprKind::Path(qpath) = &callee.kind else {
@@ -97,13 +89,12 @@ fn closure_body_stringifies(cx: &LateContext<'_>, body: &Expr<'_>) -> bool {
             let Some(def_id) = res.opt_def_id() else {
                 return false;
             };
-            cx.tcx.def_path_str(def_id) == "std::string::String::from" && is_param(cx, inner)
+            cx.tcx.def_path_str(def_id) == "std::string::String::from" && is_param(inner)
         }
         _ => false,
     }
 }
 
-fn is_param(cx: &LateContext<'_>, expr: &Expr<'_>) -> bool {
-    let _ = cx;
+fn is_param(expr: &Expr<'_>) -> bool {
     matches!(expr.kind, ExprKind::Path(_))
 }

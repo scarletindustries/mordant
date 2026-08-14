@@ -1,21 +1,28 @@
-use clippy_utils::diagnostics::span_lint_hir_and_then;
 use clippy_utils::source::snippet_opt;
 use rustc_ast::LitKind;
 use rustc_errors::Applicability;
-use rustc_hir::def::{CtorOf, DefKind, Res};
+use rustc_hir::def::Res;
 use rustc_hir::def_id::DefId;
-use rustc_hir::{Arm, Expr, ExprKind, MatchSource, Pat, PatExpr, PatExprKind, PatKind, QPath};
+use rustc_hir::{Arm, Expr, ExprKind, HirId, MatchSource, Pat, PatKind, QPath, StmtKind, UnOp};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::Span;
 
 use crate::MordantConfig;
+use crate::baseline::emit_hir_then;
+use crate::enum_facts::{pat_head_qpath, variant_of_res};
 
 rustc_session::declare_lint! {
     /// Flags `_` (or a catch-all binding) matching over a small crate-local
     /// enum. The wildcard absorbs every future variant: adding one compiles
     /// without a whisper, and this match silently routes it to the old
     /// behavior. Listing the variants keeps exhaustiveness checking alive.
+    ///
+    /// Silent on an arm that answers "not this shape" (`None`, `false`, an
+    /// empty slice, string or collection, or a `return` of one of those, with
+    /// or without braces), and on a binding arm whose whole body is another
+    /// `match` on that binding: the inner match is the dispatch, and is
+    /// judged on its own.
     pub WILDCARD_LOCAL_ENUM,
     Warn,
     "wildcard arm over a small crate-local enum"
@@ -37,7 +44,13 @@ impl WildcardLocalEnum {
 
 fn is_negative_extractor(cx: &LateContext<'_>, body: &Expr<'_>) -> bool {
     match body.kind {
-        ExprKind::Lit(lit) => matches!(lit.node, LitKind::Bool(false)),
+        // `""` and `b""` are the empty-slice answer spelled as a literal.
+        ExprKind::Lit(lit) => match lit.node {
+            LitKind::Bool(b) => !b,
+            LitKind::Str(s, _) => s.as_str().is_empty(),
+            LitKind::ByteStr(s, _) => s.as_byte_str().is_empty(),
+            _ => false,
+        },
         ExprKind::Path(_) => clippy_utils::is_none_expr(cx, body),
         // `&[]` and `[]`: the empty-slice answer.
         ExprKind::AddrOf(_, _, inner) => is_negative_extractor(cx, inner),
@@ -59,20 +72,44 @@ fn is_negative_extractor(cx: &LateContext<'_>, body: &Expr<'_>) -> bool {
         // `return None` / `return false`: the early-exit spelling of the same
         // empty answers.
         ExprKind::Ret(Some(inner)) => is_negative_extractor(cx, inner),
+        // `{ None }` and `{ return None; }`: the same answers inside the
+        // braces rustfmt or a comment puts around them. Any other statement
+        // is behavior the arm gives future variants.
+        ExprKind::Block(block, None) => match (block.stmts, block.expr) {
+            ([], Some(tail)) => is_negative_extractor(cx, tail),
+            ([stmt], None) => match stmt.kind {
+                StmtKind::Semi(e) | StmtKind::Expr(e) => {
+                    matches!(e.kind, ExprKind::Ret(Some(_))) && is_negative_extractor(cx, e)
+                }
+                _ => false,
+            },
+            _ => false,
+        },
         _ => false,
     }
 }
 
-/// The variant a pattern head names, resolved through either the variant path
-/// or its constructor.
-fn pat_variant(cx: &LateContext<'_>, pat: &Pat<'_>, qpath: &QPath<'_>) -> Option<(DefId, Span)> {
-    let res = cx.qpath_res(qpath, pat.hir_id);
-    let variant = match res {
-        Res::Def(DefKind::Variant, id) => id,
-        Res::Def(DefKind::Ctor(CtorOf::Variant, _), id) => cx.tcx.parent(id),
-        _ => return None,
+/// A binding arm whose whole body is another `match` on the binding passes
+/// the dispatch on; the inner match is where the variants are or are not
+/// listed, and this lint judges it on its own.
+fn redispatches(body: &Expr<'_>, binding: HirId) -> bool {
+    let mut body = body;
+    while let ExprKind::Block(block, None) = body.kind
+        && block.stmts.is_empty()
+        && let Some(tail) = block.expr
+    {
+        body = tail;
+    }
+    let ExprKind::Match(mut scrut, _, MatchSource::Normal) = body.kind else {
+        return false;
     };
-    Some((variant, qpath.span()))
+    while let ExprKind::AddrOf(_, _, inner) | ExprKind::Unary(UnOp::Deref, inner) = scrut.kind {
+        scrut = inner;
+    }
+    matches!(
+        scrut.kind,
+        ExprKind::Path(QPath::Resolved(None, path)) if path.res == Res::Local(binding)
+    )
 }
 
 /// Every variant the non-catch-all arms cover, or None when an arm's shape is
@@ -104,26 +141,19 @@ fn covered_variants(
         covered: &mut Vec<DefId>,
         qspan: &mut Option<Span>,
     ) -> Option<()> {
-        match &pat.kind {
-            PatKind::Expr(PatExpr {
-                kind: PatExprKind::Path(qpath),
-                ..
-            })
-            | PatKind::TupleStruct(qpath, ..)
-            | PatKind::Struct(qpath, ..) => {
-                let (variant, span) = pat_variant(cx, pat, qpath)?;
-                covered.push(variant);
-                qspan.get_or_insert(span);
-                Some(())
-            }
-            PatKind::Or(pats) => {
-                for p in *pats {
-                    collect(cx, p, covered, qspan)?;
-                }
-                Some(())
-            }
-            _ => None,
+        if let Some(qpath) = pat_head_qpath(pat) {
+            let variant = variant_of_res(cx, cx.qpath_res(qpath, pat.hir_id))?;
+            covered.push(variant);
+            qspan.get_or_insert(qpath.span());
+            return Some(());
         }
+        let PatKind::Or(pats) = pat.kind else {
+            return None;
+        };
+        for p in pats {
+            collect(cx, p, covered, qspan)?;
+        }
+        Some(())
     }
 }
 
@@ -175,20 +205,18 @@ impl<'tcx> LateLintPass<'tcx> for WildcardLocalEnum {
             if arm.guard.is_some() {
                 continue;
             }
-            let catch_all = matches!(
-                arm.pat.kind,
-                PatKind::Wild | PatKind::Binding(_, _, _, None)
-            );
+            let binding = match arm.pat.kind {
+                PatKind::Wild => None,
+                PatKind::Binding(_, id, _, None) => Some(id),
+                _ => continue,
+            };
             // `_ => None` and `_ => false` are extractors asking "is it this
             // one shape?" — future variants are correctly not that shape, so
             // absorption is the right behavior, not a hazard.
             if is_negative_extractor(cx, arm.body) {
                 continue;
             }
-            if !catch_all {
-                continue;
-            }
-            if crate::baseline::suppressed(cx, WILDCARD_LOCAL_ENUM, arm.pat.span) {
+            if binding.is_some_and(|b| redispatches(arm.body, b)) {
                 continue;
             }
             // The fix replaces the catch-all with the uncovered variants,
@@ -223,7 +251,7 @@ impl<'tcx> LateLintPass<'tcx> for WildcardLocalEnum {
             // Emitted against the ARM's hir id, so an #[allow] placed on the
             // arm itself is honored; a plain span emission would only see the
             // enclosing match's lint level.
-            span_lint_hir_and_then(
+            emit_hir_then(
                 cx,
                 WILDCARD_LOCAL_ENUM,
                 arm.hir_id,

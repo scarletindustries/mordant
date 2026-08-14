@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
+use crate::adt_facts::{field_ty, private_local_struct, struct_field};
 use crate::baseline::emit;
 use clippy_utils::get_enclosing_block;
 use rustc_hir::def_id::DefId;
-use rustc_hir::{Expr, ExprKind, HirId};
+use rustc_hir::{Expr, ExprKind, HirId, UnOp};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::Symbol;
@@ -15,7 +16,9 @@ rustc_session::declare_lint! {
     /// makes the unpaired combinations unrepresentable.
     ///
     /// Only fires on structs private to the crate. One lone write to either
-    /// field anywhere disproves the pairing and silences the lint.
+    /// field anywhere — `s.f = ..`, `s.f |= ..`, or either through a `Box`,
+    /// guard or other `Deref` container — disproves the pairing and silences
+    /// the lint.
     pub PARALLEL_BOOLS,
     Warn,
     "bool fields only ever assigned together"
@@ -37,53 +40,36 @@ impl ParallelBools {
 
 /// The crate-private local struct behind `ty`, if it has 2+ bool fields.
 fn relevant_struct<'tcx>(cx: &LateContext<'tcx>, ty: ty::Ty<'tcx>) -> Option<ty::AdtDef<'tcx>> {
-    let ty::Adt(adt, _) = ty.peel_refs().kind() else {
-        return None;
-    };
-    if !adt.is_struct() || !adt.did().is_local() {
-        return None;
-    }
-    if cx
-        .effective_visibilities
-        .is_exported(adt.did().expect_local())
-    {
-        return None;
-    }
+    let adt = private_local_struct(cx, ty)?;
     let bools = adt
         .non_enum_variant()
         .fields
         .iter()
-        .filter(|f| {
-            cx.tcx
-                .type_of(f.did)
-                .instantiate_identity()
-                .skip_normalization()
-                .is_bool()
-        })
+        .filter(|f| field_ty(cx, f).is_bool())
         .count();
-    (bools >= 2).then_some(*adt)
+    (bools >= 2).then_some(adt)
 }
 
 impl<'tcx> LateLintPass<'tcx> for ParallelBools {
     fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
-        let ExprKind::Assign(lhs, _, _) = expr.kind else {
+        let (ExprKind::Assign(mut place, _, _) | ExprKind::AssignOp(_, mut place, _)) = expr.kind
+        else {
             return;
         };
-        let ExprKind::Field(base, ident) = lhs.kind else {
+        while let ExprKind::Unary(UnOp::Deref, inner) | ExprKind::DropTemps(inner) = place.kind {
+            place = inner;
+        }
+        let ExprKind::Field(base, ident) = place.kind else {
             return;
         };
-        let Some(adt) = relevant_struct(cx, cx.typeck_results().expr_ty(base)) else {
+        // The adjusted type: a write through a `Box`, a guard or any other
+        // `Deref` container is a write to the struct behind it, and one such
+        // lone write disproves the pairing like any other.
+        let Some(adt) = relevant_struct(cx, cx.typeck_results().expr_ty_adjusted(base)) else {
             return;
         };
-        let field_is_bool = adt.non_enum_variant().fields.iter().any(|f| {
-            f.name == ident.name
-                && cx
-                    .tcx
-                    .type_of(f.did)
-                    .instantiate_identity()
-                    .skip_normalization()
-                    .is_bool()
-        });
+        let field_is_bool =
+            struct_field(adt, ident.name).is_some_and(|f| field_ty(cx, f).is_bool());
         if !field_is_bool {
             return;
         }

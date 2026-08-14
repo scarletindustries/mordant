@@ -11,28 +11,51 @@
 //! is the only key that survives normal development. Moving a finding between
 //! files consumes allowance in one file and overflows in the other, which is
 //! the desired ratchet behavior.
+//!
+//! Every diagnostic a mordant lint produces goes through one of the three
+//! entry points here (`emit`, `emit_with_note`, `emit_hir_then`), so each
+//! finding is weighed against the baseline exactly once.
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::io::{Read, Seek, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-use clippy_utils::diagnostics::{span_lint_and_help, span_lint_and_then};
+use clippy_utils::diagnostics::{span_lint_and_help, span_lint_and_then, span_lint_hir_and_then};
+use rustc_errors::Diag;
+use rustc_hir::HirId;
 use rustc_lint::{LateContext, LateLintPass, Lint};
 use rustc_span::{FileName, Span};
 
+/// (lint, file relative to the workspace root): the unit the baseline counts.
+type Key = (String, String);
+
+/// What this process does with each finding; fixed for the whole run at
+/// `setup`, since the environment variable that selects it cannot change
+/// while rustc is running.
+enum Mode {
+    /// Consume the accepted count for each key and let the overflow through.
+    Ratchet {
+        /// Remaining suppressions this run.
+        allowance: Mutex<HashMap<Key, usize>>,
+    },
+    /// Emit nothing; collect every finding and rewrite this crate's section of
+    /// the file at `path` from `BaselineWriter::check_crate_post`.
+    Record {
+        path: PathBuf,
+        recorded: Mutex<Vec<Key>>,
+    },
+}
+
 pub struct Baseline {
     root: PathBuf,
-    path: PathBuf,
-    /// (lint, relative file) -> remaining suppressions this run.
-    allowance: Mutex<HashMap<(String, String), usize>>,
+    mode: Mode,
 }
 
 static STATE: OnceLock<Option<Baseline>> = OnceLock::new();
-static RECORDED: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
 
-pub fn write_mode() -> bool {
+fn write_mode() -> bool {
     std::env::var_os("MORDANT_BASELINE_WRITE").is_some()
 }
 
@@ -48,35 +71,48 @@ pub fn setup(file_name: &Option<String>) {
 }
 
 fn init(file_name: &str) -> Option<Baseline> {
+    let record = write_mode();
     let mut dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR")?);
     loop {
         let cand = dir.join(file_name);
         // In write mode the file may not exist yet; anchor at the workspace
         // root, which is where dylint.toml (the config that named us) lives.
-        if cand.exists() || (write_mode() && dir.join("dylint.toml").exists()) {
-            let doc = std::fs::read_to_string(&cand)
-                .map(|s| read_doc(&s))
-                .unwrap_or_default();
-            let mut counts: HashMap<(String, String), usize> = HashMap::new();
-            for section in doc.values() {
-                for (key, n) in section {
-                    if let Some((lint, file)) = key.split_once(':') {
-                        *counts
-                            .entry((lint.to_string(), file.to_string()))
-                            .or_default() += *n as usize;
-                    }
+        if cand.exists() || (record && dir.join("dylint.toml").exists()) {
+            let mode = if record {
+                Mode::Record {
+                    path: cand,
+                    recorded: Mutex::new(Vec::new()),
                 }
-            }
-            return Some(Baseline {
-                root: dir,
-                path: cand,
-                allowance: Mutex::new(counts),
-            });
+            } else {
+                Mode::Ratchet {
+                    allowance: Mutex::new(read_allowance(&cand)),
+                }
+            };
+            return Some(Baseline { root: dir, mode });
         }
         if !dir.pop() {
             return None;
         }
     }
+}
+
+/// Sums every crate section of the file, since a (lint, file) key can appear
+/// under more than one crate (a file shared by a lib and a bin target).
+fn read_allowance(path: &Path) -> HashMap<Key, usize> {
+    let doc = std::fs::read_to_string(path)
+        .map(|s| read_doc(&s))
+        .unwrap_or_default();
+    let mut counts: HashMap<Key, usize> = HashMap::new();
+    for section in doc.values() {
+        for (key, n) in section {
+            if let Some((lint, file)) = key.split_once(':') {
+                *counts
+                    .entry((lint.to_string(), file.to_string()))
+                    .or_default() += *n as usize;
+            }
+        }
+    }
+    counts
 }
 
 fn rel_file(cx: &LateContext<'_>, b: &Baseline, span: Span) -> Option<String> {
@@ -89,8 +125,9 @@ fn rel_file(cx: &LateContext<'_>, b: &Baseline, span: Span) -> Option<String> {
 }
 
 /// True when this finding is consumed by the baseline (or recorded, in write
-/// mode) and must not be emitted.
-pub fn suppressed(cx: &LateContext<'_>, lint: &'static Lint, span: Span) -> bool {
+/// mode) and must not be emitted. Consumes one unit of allowance, so each
+/// finding must pass through here exactly once.
+fn suppressed(cx: &LateContext<'_>, lint: &'static Lint, span: Span) -> bool {
     let Some(Some(b)) = STATE.get().map(Option::as_ref) else {
         return false;
     };
@@ -98,17 +135,18 @@ pub fn suppressed(cx: &LateContext<'_>, lint: &'static Lint, span: Span) -> bool
         return false;
     };
     let key = (lint.name_lower(), file);
-    if write_mode() {
-        RECORDED.lock().unwrap().push(key);
-        return true;
-    }
-    let mut allowance = b.allowance.lock().unwrap();
-    match allowance.get_mut(&key) {
-        Some(n) if *n > 0 => {
-            *n -= 1;
+    match &b.mode {
+        Mode::Record { recorded, .. } => {
+            recorded.lock().unwrap().push(key);
             true
         }
-        _ => false,
+        Mode::Ratchet { allowance } => match allowance.lock().unwrap().get_mut(&key) {
+            Some(n) if *n > 0 => {
+                *n -= 1;
+                true
+            }
+            _ => false,
+        },
     }
 }
 
@@ -146,28 +184,38 @@ pub fn emit_with_note(
     });
 }
 
-// Registered last: flushes write-mode recordings for this crate into the
-// baseline file, replacing only this crate's section.
-rustc_session::declare_lint! {
-    /// Never fires; the pass exists for its `check_crate_post` hook. Declared
-    /// `Warn` because rustc skips a pass whose lints are all allowed, and this
-    /// pass must run.
-    pub MORDANT_BASELINE,
-    Warn,
-    "internal pass that writes the ratchet baseline"
+/// `emit` for a finding whose lint level is read at `hir_id` rather than at
+/// the enclosing item, so an `#[allow]` on that node alone (a match arm, say)
+/// is honored; `decorate` attaches the suggestion or help.
+pub fn emit_hir_then(
+    cx: &LateContext<'_>,
+    lint: &'static Lint,
+    hir_id: HirId,
+    span: Span,
+    msg: impl Into<String>,
+    decorate: impl FnOnce(&mut Diag<'_, ()>),
+) {
+    if suppressed(cx, lint, span) {
+        return;
+    }
+    span_lint_hir_and_then(cx, lint, hir_id, span, msg.into(), decorate);
 }
 
-rustc_session::declare_lint_pass!(BaselineWriter => [MORDANT_BASELINE]);
+// Registered last: flushes write-mode recordings for this crate into the
+// baseline file, replacing only this crate's section. It declares no lint of
+// its own; rustc always runs a lintless pass, so nothing can `allow` it away.
+rustc_session::declare_lint_pass!(BaselineWriter => []);
 
 impl<'tcx> LateLintPass<'tcx> for BaselineWriter {
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
-        if !write_mode() {
-            return;
-        }
-        let Some(Some(b)) = STATE.get().map(Option::as_ref) else {
+        let Some(Some(Baseline {
+            mode: Mode::Record { path, recorded },
+            ..
+        })) = STATE.get().map(Option::as_ref)
+        else {
             return;
         };
-        let recorded: Vec<_> = std::mem::take(&mut *RECORDED.lock().unwrap());
+        let recorded: Vec<Key> = std::mem::take(&mut *recorded.lock().unwrap());
         let mut section: BTreeMap<String, u64> = BTreeMap::new();
         for (lint, file) in recorded {
             *section.entry(format!("{lint}:{file}")).or_default() += 1;
@@ -188,7 +236,7 @@ impl<'tcx> LateLintPass<'tcx> for BaselineWriter {
             .truncate(false)
             .read(true)
             .write(true)
-            .open(&b.path)
+            .open(path)
         else {
             return;
         };

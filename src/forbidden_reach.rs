@@ -3,13 +3,14 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use clippy_utils::visitors::for_each_expr;
 use rustc_hir::def_id::DefId;
 use rustc_hir::intravisit::FnKind;
-use rustc_hir::{Body, Expr, ExprKind, FnDecl};
+use rustc_hir::{Body, Expr, FnDecl};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_span::Span;
 use rustc_span::def_id::LocalDefId;
 
 use crate::MordantConfig;
 use crate::baseline::emit;
+use crate::hir_shapes::{Callee, callee_of};
 
 rustc_session::declare_lint! {
     /// Config-declared reachability bans: "from `scheduler::pick`, no call
@@ -113,19 +114,8 @@ impl<'tcx> LateLintPass<'tcx> for ForbiddenReach {
         let caller = def_id.to_def_id();
         let mut edges = Vec::new();
         for_each_expr(cx, body.value, |e: &Expr<'tcx>| {
-            let callee = match &e.kind {
-                ExprKind::Call(callee, _) => {
-                    if let ExprKind::Path(qpath) = &callee.kind {
-                        cx.qpath_res(qpath, callee.hir_id).opt_def_id()
-                    } else {
-                        None
-                    }
-                }
-                ExprKind::MethodCall(..) => cx.typeck_results().type_dependent_def_id(e.hir_id),
-                _ => None,
-            };
-            if let Some(callee) = callee {
-                edges.push((callee, e.span));
+            if let Some(Callee::Path { def, .. } | Callee::Method { def, .. }) = callee_of(cx, e) {
+                edges.push((def, e.span));
             }
             std::ops::ControlFlow::<()>::Continue(())
         });

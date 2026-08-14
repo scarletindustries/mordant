@@ -22,7 +22,7 @@ use rustc_middle::mir::{
 use rustc_middle::ty;
 use rustc_span::def_id::LocalDefId;
 
-use crate::ctor_flow::mir_for;
+use crate::mir_flow::mir_for;
 
 enum Source {
     Variant(VariantIdx),

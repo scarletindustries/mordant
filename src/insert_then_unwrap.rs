@@ -1,5 +1,5 @@
 use clippy_utils::visitors::for_each_expr;
-use rustc_hir::{Block, Expr, ExprKind, QPath, StmtKind};
+use rustc_hir::{Block, Expr, ExprKind, Pat, QPath, StmtKind, UnOp};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::sym;
@@ -13,6 +13,9 @@ rustc_session::declare_lint! {
     /// could touch the map or the key: no calls, no assignments to either.
     /// The unwrap re-fetches a value the code already held, and the panic
     /// path plus the second hash both disappear by keeping it.
+    ///
+    /// Silent once a `let` in between rebinds the name the map or key was
+    /// spelled with, and treats `-k` / `!k` as a different key from `k`.
     pub INSERT_THEN_UNWRAP,
     Warn,
     "unwrap of a lookup proven by an insert just above"
@@ -21,8 +24,9 @@ rustc_session::declare_lint! {
 rustc_session::declare_lint_pass!(InsertThenUnwrap => [INSERT_THEN_UNWRAP]);
 
 /// A stable textual identity for the small expressions worth tracking:
-/// `self.a.b` chains, plain locals, and literals. Anything else is `None`,
-/// and untrackable means unprovable means silent.
+/// `self.a.b` chains, plain locals, and literals, seen through `&` and `*`
+/// (which name the same value); `-k` and `!k` are different values from `k`.
+/// Anything else is `None`, and untrackable means unprovable means silent.
 fn identity(e: &Expr<'_>) -> Option<String> {
     match &e.kind {
         ExprKind::Field(base, ident) => Some(format!("{}.{}", identity(base)?, ident.name)),
@@ -35,9 +39,24 @@ fn identity(e: &Expr<'_>) -> Option<String> {
             }
         }
         ExprKind::Lit(lit) => Some(format!("lit:{:?}", lit.node)),
-        ExprKind::AddrOf(_, _, inner) | ExprKind::Unary(_, inner) => identity(inner),
+        ExprKind::AddrOf(_, _, inner) | ExprKind::Unary(UnOp::Deref, inner) => identity(inner),
         _ => None,
     }
+}
+
+/// The local an identity is rooted at: `k` for `k` and `k.id`, `None` for
+/// `self` chains and literals, which no `let` can rebind.
+fn root_local(id: &str) -> Option<&str> {
+    let root = id.split('.').next()?;
+    (root != "self" && !root.starts_with("lit:")).then_some(root)
+}
+
+/// A `let` between the insert and the lookup that rebinds the map's or the
+/// key's root name makes the later spelling name a different value.
+fn rebinds(pat: &Pat<'_>, roots: &[&str]) -> bool {
+    let mut hit = false;
+    pat.each_binding(|_, _, _, ident| hit |= roots.contains(&ident.as_str()));
+    hit
 }
 
 fn is_map(cx: &LateContext<'_>, recv: &Expr<'_>) -> bool {
@@ -117,17 +136,23 @@ impl<'tcx> LateLintPass<'tcx> for InsertThenUnwrap {
             let Some((map, key)) = insert_of(cx, e) else {
                 continue;
             };
+            let roots: Vec<&str> = [&map, &key]
+                .into_iter()
+                .filter_map(|id| root_local(id))
+                .collect();
             for later in &block.stmts[i + 1..] {
-                let le = match later.kind {
-                    StmtKind::Expr(le) | StmtKind::Semi(le) => Some(le),
-                    StmtKind::Let(l) => l.init,
-                    StmtKind::Item(_) => None,
+                let (le, pat) = match later.kind {
+                    StmtKind::Expr(le) | StmtKind::Semi(le) => (Some(le), None),
+                    // The initializer still sees the names as the insert did;
+                    // the pattern takes effect for the statements after it.
+                    StmtKind::Let(l) => (l.init, Some(l.pat)),
+                    StmtKind::Item(_) => (None, None),
                 };
-                let Some(le) = le else { continue };
                 // The lookup must be the statement's own top-level shape (or
                 // the let initializer); a lookup buried under other calls is
                 // checked as a disturbance instead.
-                if let Some((gmap, gkey, shown, at)) = get_unwrap_of(cx, le)
+                if let Some(le) = le
+                    && let Some((gmap, gkey, shown, at)) = get_unwrap_of(cx, le)
                     && gmap == map
                     && gkey == key
                 {
@@ -143,7 +168,10 @@ impl<'tcx> LateLintPass<'tcx> for InsertThenUnwrap {
                     );
                     return;
                 }
-                if may_disturb(cx, le) {
+                if pat.is_some_and(|p| rebinds(p, &roots)) {
+                    break;
+                }
+                if le.is_some_and(|le| may_disturb(cx, le)) {
                     break;
                 }
             }

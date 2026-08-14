@@ -23,5 +23,13 @@ LL |     speed(Mode::Fast) + speed(Mode::Slow) + speed(Mode::Crawl) + speed(Mode
    |
    = help: the variant's structure is never read; handle it distinctly or collapse it into another variant
 
-warning: 3 warnings emitted
+warning: `ParseError::Malformed` is constructed here, but no pattern outside `ParseError`'s trait impls ever names it
+  --> $DIR/unread_error_variant.rs:176:30
+   |
+LL |     s.parse::<u32>().map_err(ParseError::Malformed)
+   |                              ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: the variant's structure is never read; handle it distinctly or collapse it into another variant
+
+warning: 4 warnings emitted
 

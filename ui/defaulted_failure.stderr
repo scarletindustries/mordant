@@ -1,0 +1,205 @@
+warning: `parse_port` rejects some of what it is handed, and `unwrap_or` carries on with a fixed value in place of the rejection
+  --> $DIR/defaulted_failure.rs:156:5
+   |
+LL |     parse_port(s).unwrap_or(0)
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the check whose failure is replaced
+  --> $DIR/defaulted_failure.rs:20:8
+   |
+LL |     if s.is_empty() {
+   |        ^^^^^^^^^^^^
+   = help: propagate the failure, or handle the failing arm where its cause is still visible
+   = note: `#[warn(defaulted_failure)]` on by default
+
+warning: `parse_port` rejects some of what it is handed, and `unwrap_or_default` carries on with a fixed value in place of the rejection
+  --> $DIR/defaulted_failure.rs:160:5
+   |
+LL |     parse_port(s).unwrap_or_default()
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the check whose failure is replaced
+  --> $DIR/defaulted_failure.rs:20:8
+   |
+LL |     if s.is_empty() {
+   |        ^^^^^^^^^^^^
+   = help: propagate the failure, or handle the failing arm where its cause is still visible
+
+warning: `parse_port` rejects some of what it is handed, and `unwrap_or_else` carries on with a fixed value in place of the rejection
+  --> $DIR/defaulted_failure.rs:164:5
+   |
+LL |     parse_port(s).unwrap_or_else(|_| u16::MAX)
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the check whose failure is replaced
+  --> $DIR/defaulted_failure.rs:20:8
+   |
+LL |     if s.is_empty() {
+   |        ^^^^^^^^^^^^
+   = help: propagate the failure, or handle the failing arm where its cause is still visible
+
+warning: `parse_port` rejects some of what it is handed, and `unwrap_or_else` carries on with a fixed value in place of the rejection
+  --> $DIR/defaulted_failure.rs:168:5
+   |
+LL |     parse_port(s).unwrap_or_else(|_| Default::default())
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the check whose failure is replaced
+  --> $DIR/defaulted_failure.rs:20:8
+   |
+LL |     if s.is_empty() {
+   |        ^^^^^^^^^^^^
+   = help: propagate the failure, or handle the failing arm where its cause is still visible
+
+warning: `parse_port` rejects some of what it is handed, and `unwrap_or` carries on with a fixed value in place of the rejection
+  --> $DIR/defaulted_failure.rs:172:5
+   |
+LL |     parse_port(s).ok().unwrap_or(80)
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the check whose failure is replaced
+  --> $DIR/defaulted_failure.rs:20:8
+   |
+LL |     if s.is_empty() {
+   |        ^^^^^^^^^^^^
+   = help: propagate the failure, or handle the failing arm where its cause is still visible
+
+warning: `Header::is_open` rejects some of what it is handed, and `unwrap_or` carries on with a fixed value in place of the rejection
+  --> $DIR/defaulted_failure.rs:176:5
+   |
+LL |     h.is_open(s).unwrap_or(true)
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the check whose failure is replaced
+  --> $DIR/defaulted_failure.rs:71:12
+   |
+LL |         if s.is_empty() {
+   |            ^^^^^^^^^^^^
+   = help: propagate the failure, or handle the failing arm where its cause is still visible
+
+warning: `parse_pair` rejects some of what it is handed, and `unwrap_or` carries on with a fixed value in place of the rejection
+  --> $DIR/defaulted_failure.rs:180:5
+   |
+LL |     parse_pair(s).unwrap_or((0, 0))
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the check whose failure is replaced
+  --> $DIR/defaulted_failure.rs:41:18
+   |
+LL |     let (a, b) = s.split_once(':').ok_or(ParseError::Empty)?;
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: propagate the failure, or handle the failing arm where its cause is still visible
+
+warning: `Header::parse_limit` rejects some of what it is handed, and `unwrap_or` carries on with a fixed value in place of the rejection
+  --> $DIR/defaulted_failure.rs:184:5
+   |
+LL |     h.parse_limit(s).unwrap_or(0)
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the check whose failure is replaced
+  --> $DIR/defaulted_failure.rs:54:12
+   |
+LL |         if n > self.limit {
+   |            ^^^^^^^^^^^^^^
+   = help: propagate the failure, or handle the failing arm where its cause is still visible
+
+warning: `parse_port` rejects some of what it is handed, and the `else` returns success in place of the rejection
+  --> $DIR/defaulted_failure.rs:188:5
+   |
+LL | /     let Ok(port) = parse_port(s) else {
+LL | |         return Ok(());
+LL | |     };
+   | |______^
+   |
+note: the check whose failure is replaced
+  --> $DIR/defaulted_failure.rs:20:8
+   |
+LL |     if s.is_empty() {
+   |        ^^^^^^^^^^^^
+   = help: propagate the failure, or handle the failing arm where its cause is still visible
+
+warning: `parse_port` rejects some of what it is handed, and the `else` returns success in place of the rejection
+  --> $DIR/defaulted_failure.rs:196:5
+   |
+LL |     let Ok(port) = parse_port(s) else { return };
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the check whose failure is replaced
+  --> $DIR/defaulted_failure.rs:20:8
+   |
+LL |     if s.is_empty() {
+   |        ^^^^^^^^^^^^
+   = help: propagate the failure, or handle the failing arm where its cause is still visible
+
+warning: `parse_port` rejects some of what it is handed, and the `else` returns success in place of the rejection
+  --> $DIR/defaulted_failure.rs:201:5
+   |
+LL | /     let Some(port) = parse_port(s).ok() else {
+LL | |         return Ok(());
+LL | |     };
+   | |______^
+   |
+note: the check whose failure is replaced
+  --> $DIR/defaulted_failure.rs:20:8
+   |
+LL |     if s.is_empty() {
+   |        ^^^^^^^^^^^^
+   = help: propagate the failure, or handle the failing arm where its cause is still visible
+
+warning: `parse_port` rejects some of what it is handed, and the `else` returns success in place of the rejection
+  --> $DIR/defaulted_failure.rs:209:5
+   |
+LL |     let Some(port) = parse_port(s).ok() else { return };
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the check whose failure is replaced
+  --> $DIR/defaulted_failure.rs:20:8
+   |
+LL |     if s.is_empty() {
+   |        ^^^^^^^^^^^^
+   = help: propagate the failure, or handle the failing arm where its cause is still visible
+
+warning: `Header::send_checked` rejects some of what it is handed, and `unwrap_or` carries on with a fixed value in place of the rejection
+  --> $DIR/defaulted_failure.rs:214:5
+   |
+LL |     h.send_checked(s).unwrap_or(0)
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the check whose failure is replaced
+  --> $DIR/defaulted_failure.rs:93:16
+   |
+LL |             if s.is_empty() {
+   |                ^^^^^^^^^^^^
+   = help: propagate the failure, or handle the failing arm where its cause is still visible
+
+warning: `check_port` rejects some of what it is handed, and `unwrap_or_default` carries on with a fixed value in place of the rejection
+  --> $DIR/defaulted_failure.rs:218:5
+   |
+LL |     check_port(s).unwrap_or_default()
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the check whose failure is replaced
+  --> $DIR/defaulted_failure.rs:103:5
+   |
+LL |     parse_port(s)?;
+   |     ^^^^^^^^^^^^^^
+   = help: propagate the failure, or handle the failing arm where its cause is still visible
+
+warning: `listed_by_config` is listed in `defaulted-failure-callees`, and `unwrap_or` carries on with a fixed value in place of its failure
+  --> $DIR/defaulted_failure.rs:222:5
+   |
+LL |     listed_by_config(s).unwrap_or(0)
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: propagate the failure, or handle the failing arm where its cause is still visible
+
+warning: `core::num::<impl u32>::from_str_radix` is listed in `defaulted-failure-callees`, and `unwrap_or` carries on with a fixed value in place of its failure
+  --> $DIR/defaulted_failure.rs:226:5
+   |
+LL |     u32::from_str_radix(s, 16).unwrap_or(0)
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: propagate the failure, or handle the failing arm where its cause is still visible
+
+warning: 16 warnings emitted
+

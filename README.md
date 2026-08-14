@@ -20,25 +20,27 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 | `stringified_error`    | the destruction site: `.map_err(\|e\| e.to_string())` on a typed error                                                                                                    |
 | `exclusive_options`    | a struct whose `Option` fields are never populated together, so the valid combinations are really an enum                                                                 |
 | `parallel_bools`       | bool fields only ever assigned as a pair, which together encode a state machine                                                                                           |
-| `flag_cluster`         | a named-field struct with several independent bools: n bools is 2^n representable states, and if fewer are legal an enum names the ones that are                          |
+| `flag_cluster`         | opt-in via `flag-cluster-enabled`: a named-field struct with several independent bools, 2^n representable states; if fewer are legal an enum names the ones that are      |
 | `nonidentity_key`      | a map keyed on something that is not the canonical identity of what it names: a span, a pointer's bits, an unresolved path                                                |
-| `bypassed_validator`   | a struct literal that skips a constructor whose body rejects some value it then stores in a field                                                                         |
+| `bypassed_validator`   | a literal, a write to a checked field, or `mem::zeroed`/`transmute` outside a validated type's module and impls, none of which runs the constructor's check               |
 | `guard_flag`           | a bool field that several methods test and bail on at entry, enforcing an ordering invariant at runtime                                                                   |
 | `wildcard_local_enum`  | a `_` arm over a small crate-local enum, which absorbs every future variant without a compile error                                                                       |
 | `discarded_error`      | `.ok();` in statement position, which reads like handling and makes the error unobservable                                                                                |
 | `unread_error_variant` | a private enum variant that is constructed but never named by a pattern outside the enum's own impls, so its structure is never read                                      |
-| `pub_invariant_fields` | a field whose value a constructor checks before storing, but which is assignable outside its module, so any holder can write around the check                             |
 | `asymmetric_guard`     | `self.can_x()` gating a mutation that touches state the guard never reads, so the guard cannot be sound                                                                   |
-| `stale_safety_comment` | a `SAFETY:` comment naming an identifier that no longer exists in the file or any linked crate                                                                            |
+| `stale_safety_comment` | opt-in via `stale-safety-comment-enabled`: a `SAFETY:` comment naming an identifier that no longer exists in the file or any linked crate                                 |
 | `unit_mismatch`        | `timeout_ms + deadline_ns`: addition or comparison between names that claim different units                                                                               |
 | `stale_panic_message`  | a panic, assert, or `expect` message naming an identifier that no longer exists                                                                                           |
 | `lock_order`           | two locks the crate acquires in both orders, with both locations named: the shape of a deadlock                                                                           |
 | `forbidden_reach`      | a config-declared ban ("from `sched::pick`, never reach `Vec::push`") violated by a concrete call path, printed as a witness chain                                        |
 | `unread_none`          | an `Option` field every reader unwraps and no reader handles: a state nobody survives, usually a two-phase object wanting two types                                       |
 | `insert_then_unwrap`   | `map.get(&k).unwrap()` re-fetching what `map.insert(k, ..)` just proved present, with nothing in between that could disturb either                                        |
-| `stored_projection`    | two fields whose constant values agree one-for-one at every construction site: one is a stored projection of the other, so the type admits pairings the constructors never make |
+| `stored_projection`    | two fields whose constant values agree one-for-one at every construction site: one is a projection of the other, so the type admits pairings the constructors never make  |
 | `overwide_parameter`   | a panicking arm for a variant no existing call site passes: the parameter type is wider than the function's domain, and narrowing it turns the panic into a compile error |
-| `narrowed_return`      | a panicking arm for a variant the callee provably never constructs: the return type promises more than the function delivers         |
+| `narrowed_return`      | a panicking arm for a variant the callee provably never constructs: the return type promises more than the function delivers                                              |
+| `stale_across_reentry` | a length, flag, or pointer read off a field of `self`, then a call that can re-enter (closure, fn pointer, `dyn`, `.await`, configured), then the field used through it   |
+| `defaulted_failure`    | `f(x).unwrap_or(0)` or `let Ok(v) = f(x) else { return Ok(()) }` where `f`'s own body rejects some of `x`: the rejection becomes a value and processing carries on        |
+| `unchecked_input_len`  | opt-in via `unchecked-input-len-enabled`: a received integer bounded on one path and turned into memory (`split_at`, `set_len`, `ptr.add`) on a path no check dominates   |
 
 Each diagnostic states what the lint found, why the type is wrong, and the type that replaces it.
 
@@ -77,8 +79,21 @@ nonidentity-key-types = ["my_crate::span::Span"]
 nonidentity-key-forms = ["ptr-cast"]
 nonidentity-key-methods = ["my_crate::value::Value::to_bits"]
 wildcard-local-enum-max-variants = 12
+exclusive-options-min-fields = 2
 flag-cluster-min-bools = 3
 stored-projection-min-sites = 2
+
+# Opt-in: also count `Box<dyn Error>` as a stringly error type.
+stringly-error-include-box-dyn = true
+
+# Opt-in: `flag_cluster`, `stale_safety_comment` and `unchecked_input_len` are
+# surveys to run once over a codebase (most of what they name is legitimate
+# once the real cases are fixed; for the last, a length the caller vouches for
+# that the function also uses as some other value's limit), so they are off
+# until turned on here.
+flag-cluster-enabled = true
+stale-safety-comment-enabled = true
+unchecked-input-len-enabled = true
 
 # Opt-in: flag composite keys (tuples, structs one level deep) that carry a
 # denied type unless one of the fixing types sits beside it. With these two
@@ -90,6 +105,23 @@ nonidentity-key-fixes = ["my_crate::span::FileId"]
 # on top of the std ones. A constructor failing with one of these is not
 # treated as validating any field it stores.
 validator-resource-errors = ["my_alloc::AllocError", "my_sys::Error"]
+
+# This project's own re-entry points for `stale_across_reentry`, on top of the
+# built-in set (calls through closures, fn pointers, and `dyn`, and `.await`).
+# Matched by `::`-segment suffix; a trailing `*` matches the rest of the name.
+# A method of a trait impl is matched under its type or its trait
+# (`Worker::run_job`, `Runner::run_job`) as well as by bare name.
+stale-across-reentry-callees = ["Vm::run_callback", "dispatch*"]
+
+# Callees `defaulted_failure` reports without reading their body: parsers in
+# other crates, or local ones returning Option or building their failure with
+# combinators. A local Result-returning callee whose body shows the check
+# needs no entry. Error types that are already recorded by the time they are
+# returned (an "exception pending" marker) are not worth reporting a default
+# of; both keys are spelled like validator-resource-errors, which this lint
+# honours too.
+defaulted-failure-callees = ["toml::from_str", "from_str_radix"]
+defaulted-failure-ignored-errors = ["my_jsc::JsError"]
 
 # Reachability bans. A finding prints the concrete call chain; dynamic
 # dispatch is invisible to the walk, so a clean run proves nothing, but every
