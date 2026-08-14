@@ -20,8 +20,11 @@
 use std::collections::{HashSet, VecDeque};
 
 use rustc_hir::def_id::LocalDefId;
+use rustc_index::IndexVec;
 use rustc_index::bit_set::DenseBitSet;
-use rustc_middle::mir::{BasicBlock, Body, Local, Place, ProjectionElem, TerminatorKind};
+use rustc_middle::mir::{
+    BasicBlock, BasicBlockData, Body, Local, Place, ProjectionElem, TerminatorKind,
+};
 use rustc_middle::ty::TyCtxt;
 
 // ── MIR access ───────────────────────────────────────────────────────────────
@@ -177,13 +180,14 @@ pub(crate) fn place_info(place: Place<'_>) -> PlaceInfo {
 /// "does not happen" here, otherwise everything after `assert!(x)` would be
 /// control-dependent on `x`.
 pub(crate) struct Cfg {
-    succs: Vec<Vec<usize>>,
-    /// Index of the virtual exit node.
-    exit: usize,
+    succs: IndexVec<BasicBlock, Vec<BasicBlock>>,
+    /// The virtual exit node, one past the last block.
+    exit: BasicBlock,
 }
 
-fn raw_successors(body: &Body<'_>, bb: BasicBlock) -> Vec<BasicBlock> {
-    let Some(term) = &body.basic_blocks[bb].terminator else {
+/// Normal (non-unwind) successors of a non-cleanup block; none otherwise.
+fn raw_successors(body: &Body<'_>, data: &BasicBlockData<'_>) -> Vec<BasicBlock> {
+    let Some(term) = data.terminator.as_ref().filter(|_| !data.is_cleanup) else {
         return Vec::new();
     };
     // Unwind targets are always cleanup blocks, so this leaves the normal edges.
@@ -197,27 +201,18 @@ fn raw_successors(body: &Body<'_>, bb: BasicBlock) -> Vec<BasicBlock> {
 }
 
 pub(crate) fn build_cfg(body: &Body<'_>) -> Cfg {
-    let n = body.basic_blocks.len();
-    let raw: Vec<Vec<usize>> = (0..n)
-        .map(|i| {
-            let bb = BasicBlock::from_usize(i);
-            if body.basic_blocks[bb].is_cleanup {
-                Vec::new()
-            } else {
-                raw_successors(body, bb)
-                    .into_iter()
-                    .map(|b| b.as_usize())
-                    .collect()
-            }
-        })
+    let exit = BasicBlock::from_usize(body.basic_blocks.len());
+    let raw: IndexVec<BasicBlock, Vec<BasicBlock>> = body
+        .basic_blocks
+        .iter()
+        .map(|data| raw_successors(body, data))
         .collect();
-    let mut can_return: Vec<bool> = (0..n)
-        .map(|i| {
+    let mut can_return: IndexVec<BasicBlock, bool> = body
+        .basic_blocks
+        .iter()
+        .map(|data| {
             matches!(
-                body.basic_blocks[BasicBlock::from_usize(i)]
-                    .terminator
-                    .as_ref()
-                    .map(|t| &t.kind),
+                data.terminator.as_ref().map(|t| &t.kind),
                 Some(TerminatorKind::Return | TerminatorKind::TailCall { .. })
             )
         })
@@ -225,36 +220,38 @@ pub(crate) fn build_cfg(body: &Body<'_>) -> Cfg {
     let mut changed = true;
     while changed {
         changed = false;
-        for b in 0..n {
+        for b in raw.indices() {
             if !can_return[b] && raw[b].iter().any(|s| can_return[*s]) {
                 can_return[b] = true;
                 changed = true;
             }
         }
     }
-    let succs = (0..n)
-        .map(|b| {
-            let live: Vec<usize> = raw[b].iter().copied().filter(|s| can_return[*s]).collect();
-            if live.is_empty() { vec![n] } else { live }
+    let succs = raw
+        .iter()
+        .map(|r| {
+            let live: Vec<BasicBlock> = r.iter().copied().filter(|s| can_return[*s]).collect();
+            if live.is_empty() { vec![exit] } else { live }
         })
         .collect();
-    Cfg { succs, exit: n }
+    Cfg { succs, exit }
 }
 
-pub(crate) type Bits = DenseBitSet<usize>;
-
+type Bits = DenseBitSet<BasicBlock>;
 /// Post-dominator sets over blocks plus the virtual exit.
-pub(crate) fn post_dominators(cfg: &Cfg) -> Vec<Bits> {
-    let n = cfg.exit;
-    let mut pdom: Vec<Bits> = (0..=n).map(|_| Bits::new_filled(n + 1)).collect();
-    pdom[n] = Bits::new_empty(n + 1);
-    pdom[n].insert(n);
+pub(crate) type Pdoms = IndexVec<BasicBlock, Bits>;
+
+pub(crate) fn post_dominators(cfg: &Cfg) -> Pdoms {
+    let size = cfg.exit.as_usize() + 1;
+    let mut pdom = IndexVec::from_elem_n(Bits::new_filled(size), size);
+    pdom[cfg.exit] = Bits::new_empty(size);
+    pdom[cfg.exit].insert(cfg.exit);
     let mut changed = true;
     while changed {
         changed = false;
-        for b in 0..n {
-            let mut acc = Bits::new_filled(n + 1);
-            for &s in &cfg.succs[b] {
+        for (b, succs) in cfg.succs.iter_enumerated() {
+            let mut acc = Bits::new_filled(size);
+            for &s in succs {
                 acc.intersect(&pdom[s]);
             }
             acc.insert(b);
@@ -267,40 +264,33 @@ pub(crate) fn post_dominators(cfg: &Cfg) -> Vec<Bits> {
     pdom
 }
 
-/// Branches (`t` not post-dominating them, but post-dominating one of their
-/// successors) whose outcome decides whether `t` runs, in block order.
-fn direct_deps(cfg: &Cfg, pdom: &[Bits], t: usize) -> Vec<usize> {
-    (0..cfg.exit)
-        .filter(|a| {
+/// Branch blocks that `t` is directly control-dependent on, in block order:
+/// `t` does not post-dominate them but does post-dominate one of their
+/// successors, so their outcome sends control to `t` or away from it. A
+/// branch that only decides whether one of those is reached (an early
+/// `return Ok` guard in front of it) is not among them; `control_deps` has
+/// those too.
+pub(crate) fn direct_control_deps(cfg: &Cfg, pdom: &Pdoms, t: BasicBlock) -> Vec<BasicBlock> {
+    cfg.succs
+        .iter_enumerated()
+        .filter(|(a, succs)| {
             let strictly = pdom[*a].contains(t) && *a != t;
-            cfg.succs[*a].len() >= 2
-                && !strictly
-                && cfg.succs[*a].iter().any(|s| pdom[*s].contains(t))
+            succs.len() >= 2 && !strictly && succs.iter().any(|s| pdom[*s].contains(t))
         })
-        .collect()
-}
-
-/// Branch blocks that `target` is directly control-dependent on: the ones
-/// whose outcome sends control to `target` or away from it. A branch that
-/// only decides whether one of those is reached (an early `return Ok` guard
-/// in front of it) is not among them; `control_deps` has those too.
-pub(crate) fn direct_control_deps(cfg: &Cfg, pdom: &[Bits], target: BasicBlock) -> Vec<BasicBlock> {
-    direct_deps(cfg, pdom, target.as_usize())
-        .into_iter()
-        .map(BasicBlock::from_usize)
+        .map(|(a, _)| a)
         .collect()
 }
 
 /// Branch blocks that `target` is transitively control-dependent on,
 /// innermost first.
-pub(crate) fn control_deps(cfg: &Cfg, pdom: &[Bits], target: BasicBlock) -> Vec<BasicBlock> {
+pub(crate) fn control_deps(cfg: &Cfg, pdom: &Pdoms, target: BasicBlock) -> Vec<BasicBlock> {
     let mut seen = HashSet::new();
-    let mut q = VecDeque::from([target.as_usize()]);
+    let mut q = VecDeque::from([target]);
     let mut deps = Vec::new();
     while let Some(t) = q.pop_front() {
-        for a in direct_deps(cfg, pdom, t) {
+        for a in direct_control_deps(cfg, pdom, t) {
             if seen.insert(a) {
-                deps.push(BasicBlock::from_usize(a));
+                deps.push(a);
                 q.push_back(a);
             }
         }
