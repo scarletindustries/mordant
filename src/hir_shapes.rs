@@ -7,6 +7,7 @@
 use rustc_hir::def_id::DefId;
 use rustc_hir::{Expr, ExprKind, QPath, Stmt, StmtKind, UnOp};
 use rustc_lint::LateContext;
+use rustc_middle::ty::AdtDef;
 use rustc_span::Ident;
 use rustc_span::symbol::kw;
 
@@ -22,6 +23,37 @@ pub(crate) fn self_field<'h>(e: &Expr<'h>) -> Option<(&'h Expr<'h>, Ident)> {
         ExprKind::Field(base, ident) if is_self_path(base) => Some((base, ident)),
         _ => None,
     }
+}
+
+/// The `base.field` an assignment target writes, through any number of
+/// explicit derefs: `x.f`, `(*this).f`, `*s.f`. Returned as `base`, the
+/// field name, and the `Field` expression itself.
+pub(crate) fn assigned_field<'h>(
+    mut place: &'h Expr<'h>,
+) -> Option<(&'h Expr<'h>, Ident, &'h Expr<'h>)> {
+    while let ExprKind::Unary(UnOp::Deref, inner) | ExprKind::DropTemps(inner) = place.kind {
+        place = inner;
+    }
+    match place.kind {
+        ExprKind::Field(base, ident) => Some((base, ident, place)),
+        _ => None,
+    }
+}
+
+/// `assigned_field` with `base` resolved to the ADT behind its ADJUSTED
+/// type, so a write through a `Box`, a guard or any other `Deref` container
+/// reaches the type it holds.
+pub(crate) fn assigned_adt_field<'tcx>(
+    cx: &LateContext<'tcx>,
+    place: &'tcx Expr<'tcx>,
+) -> Option<(AdtDef<'tcx>, Ident, &'tcx Expr<'tcx>)> {
+    let (base, ident, field) = assigned_field(place)?;
+    let adt = cx
+        .typeck_results()
+        .expr_ty_adjusted(base)
+        .peel_refs()
+        .ty_adt_def()?;
+    Some((adt, ident, field))
 }
 
 /// `e` with every `!` and HIR condition wrapper stripped, in any
@@ -92,4 +124,33 @@ pub(crate) fn callee_of<'tcx>(cx: &LateContext<'tcx>, e: &Expr<'tcx>) -> Option<
         }
         _ => None,
     }
+}
+
+/// A definition's path with generic segments stripped, bare and prefixed
+/// with its crate name: the two spellings a config pattern may name it by.
+pub(crate) fn def_path_names(cx: &LateContext<'_>, def: DefId) -> [String; 2] {
+    let path = strip_generic_segments(&cx.tcx.def_path_str(def));
+    let with_crate = format!("{}::{}", cx.tcx.crate_name(def.krate), path);
+    [path, with_crate]
+}
+
+/// `std::vec::Vec::<T>::push` -> `std::vec::Vec::push`: generic-argument
+/// segments would defeat suffix matching, and no pattern is per-instantiation.
+pub(crate) fn strip_generic_segments(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    let mut depth = 0usize;
+    let mut chars = path.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '<' => depth += 1,
+            '>' => depth = depth.saturating_sub(1),
+            _ if depth > 0 => {}
+            ':' if chars.peek() == Some(&':') && out.ends_with("::") => {
+                // Collapse the `::` that wrapped a stripped `::<..>`.
+                chars.next();
+            }
+            _ => out.push(c),
+        }
+    }
+    out
 }

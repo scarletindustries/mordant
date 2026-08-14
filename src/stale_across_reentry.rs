@@ -14,6 +14,7 @@ use rustc_span::symbol::{Symbol, kw, sym};
 use crate::MordantConfig;
 use crate::adt_facts::impl_self_adt;
 use crate::baseline::emit_with_note;
+use crate::hir_shapes::{def_path_names, strip_generic_segments};
 
 rustc_session::declare_lint! {
     /// A fact read off a field of `self` (`let n = self.items.len()`, `let p =
@@ -85,7 +86,7 @@ impl StaleAcrossReentry {
         std::iter::once(def)
             .chain(impl_item_of(cx, def, args))
             .flat_map(|def| callee_names(cx, def))
-            .any(|(name, with_crate)| {
+            .any(|[name, with_crate]| {
                 self.callees
                     .iter()
                     .any(|p| matches_pattern(&name, p) || matches_pattern(&with_crate, p))
@@ -119,29 +120,26 @@ fn impl_item_of<'tcx>(
 /// (`Vm::run_callback`) and trait items (`Runner::run_job`); an impl's item
 /// renders as `<Worker as Runner>::run_job`, which no `Type::method` pattern
 /// matches, so it is spelled `Worker::run_job` and `Runner::run_job` instead.
-fn callee_names(cx: &LateContext<'_>, def: DefId) -> Vec<(String, String)> {
-    let path_of = |did: DefId| strip_generic_segments(&cx.tcx.def_path_str(did));
-    let mut names = vec![path_of(def)];
+fn callee_names(cx: &LateContext<'_>, def: DefId) -> Vec<[String; 2]> {
+    let mut names = vec![def_path_names(cx, def)];
     if let Some(impl_did) = cx.tcx.impl_of_assoc(def)
         && let Some(trait_ref) = cx.tcx.impl_opt_trait_ref(impl_did)
     {
-        let item = cx.tcx.item_name(def);
-        if let Some(adt) = impl_self_adt(cx, impl_did) {
-            names.push(format!("{}::{item}", path_of(adt.did())));
-        }
-        names.push(format!(
-            "{}::{item}",
-            path_of(trait_ref.skip_binder().def_id)
-        ));
-    }
-    let krate = cx.tcx.crate_name(def.krate);
-    names
-        .into_iter()
-        .map(|name| {
+        let (krate, item) = (cx.tcx.crate_name(def.krate), cx.tcx.item_name(def));
+        let owners = impl_self_adt(cx, impl_did)
+            .map(|adt| adt.did())
+            .into_iter()
+            .chain([trait_ref.skip_binder().def_id]);
+        names.extend(owners.map(|owner| {
+            let name = format!(
+                "{}::{item}",
+                strip_generic_segments(&cx.tcx.def_path_str(owner))
+            );
             let with_crate = format!("{krate}::{name}");
-            (name, with_crate)
-        })
-        .collect()
+            [name, with_crate]
+        }));
+    }
+    names
 }
 
 /// Segment-wise suffix match: `run_callback` and `Vm::run_callback` both
@@ -158,26 +156,6 @@ fn matches_pattern(name: &str, pattern: &str) -> bool {
         None => have_last == want_last,
     };
     last_matches && want.all(|w| have.next() == Some(w))
-}
-
-/// `Vec::<T>::push` -> `Vec::push`, so patterns are written the way the
-/// source spells the call.
-fn strip_generic_segments(path: &str) -> String {
-    let mut out = String::with_capacity(path.len());
-    let mut depth = 0usize;
-    let mut chars = path.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '<' => depth += 1,
-            '>' => depth = depth.saturating_sub(1),
-            _ if depth > 0 => {}
-            ':' if chars.peek() == Some(&':') && out.ends_with("::") => {
-                chars.next();
-            }
-            _ => out.push(c),
-        }
-    }
-    out
 }
 
 /// What kind of fact a binding holds about its place, which decides what

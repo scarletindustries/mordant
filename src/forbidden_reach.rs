@@ -10,7 +10,7 @@ use rustc_span::def_id::LocalDefId;
 
 use crate::MordantConfig;
 use crate::baseline::emit;
-use crate::hir_shapes::{Callee, callee_of};
+use crate::hir_shapes::{Callee, callee_of, def_path_names};
 
 rustc_session::declare_lint! {
     /// Config-declared reachability bans: "from `scheduler::pick`, no call
@@ -64,38 +64,11 @@ impl ForbiddenReach {
         }
     }
 
-    fn names_of(&self, cx: &LateContext<'_>, def: DefId) -> [String; 2] {
-        let path = strip_generic_segments(&cx.tcx.def_path_str(def));
-        let with_crate = format!("{}::{}", cx.tcx.crate_name(def.krate), path);
-        [path, with_crate]
-    }
-
     /// Path-suffix match on `::`-separated segments, so "Vec::push" matches
     /// `std::vec::Vec::push` but a bare substring never matches by accident.
     fn matches_pattern(name: &str, pattern: &str) -> bool {
         name == pattern || name.ends_with(&format!("::{pattern}"))
     }
-}
-
-/// `std::vec::Vec::<T>::push` -> `std::vec::Vec::push`: generic-argument
-/// segments would defeat suffix matching, and no ban is per-instantiation.
-fn strip_generic_segments(path: &str) -> String {
-    let mut out = String::with_capacity(path.len());
-    let mut depth = 0usize;
-    let mut chars = path.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '<' => depth += 1,
-            '>' => depth = depth.saturating_sub(1),
-            _ if depth > 0 => {}
-            ':' if chars.peek() == Some(&':') && out.ends_with("::") => {
-                // Collapse the `::` that wrapped a stripped `::<..>`.
-                chars.next();
-            }
-            _ => out.push(c),
-        }
-    }
-    out
 }
 
 impl<'tcx> LateLintPass<'tcx> for ForbiddenReach {
@@ -121,12 +94,9 @@ impl<'tcx> LateLintPass<'tcx> for ForbiddenReach {
         });
         self.calls.insert(caller, edges);
 
+        let names = def_path_names(cx, caller);
         for (i, rule) in self.rules.iter().enumerate() {
-            if self
-                .names_of(cx, caller)
-                .iter()
-                .any(|n| Self::matches_pattern(n, &rule.from))
-            {
+            if names.iter().any(|n| Self::matches_pattern(n, &rule.from)) {
                 self.roots.push((i, caller, span));
             }
         }
@@ -152,8 +122,7 @@ impl<'tcx> LateLintPass<'tcx> for ForbiddenReach {
                     continue;
                 };
                 for &(callee, at) in edges {
-                    let banned = self
-                        .names_of(cx, callee)
+                    let banned = def_path_names(cx, callee)
                         .iter()
                         .any(|n| rule.never.iter().any(|p| Self::matches_pattern(n, p)));
                     if banned {
