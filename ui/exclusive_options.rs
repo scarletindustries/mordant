@@ -89,6 +89,31 @@ fn one_site() -> OneSite {
     }
 }
 
+// Fine: the later assignment goes through a Box, which is still a write to
+// the field.
+struct Boxed {
+    x: Option<u32>,
+    y: Option<u32>,
+}
+
+fn boxed_x() -> Box<Boxed> {
+    Box::new(Boxed {
+        x: Some(1),
+        y: None,
+    })
+}
+
+fn boxed_y() -> Box<Boxed> {
+    Box::new(Boxed {
+        x: None,
+        y: Some(2),
+    })
+}
+
+fn reopen(b: &mut Box<Boxed>) {
+    b.y = Some(3);
+}
+
 fn main() {
     let _ = success();
     let _ = failure();
@@ -99,4 +124,7 @@ fn main() {
     let _ = from_var(Some(1));
     let _ = from_var_other();
     let _ = one_site();
+    let mut b = boxed_x();
+    reopen(&mut b);
+    let _ = boxed_y();
 }

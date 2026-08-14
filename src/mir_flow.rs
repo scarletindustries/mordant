@@ -1,7 +1,7 @@
 //! MIR machinery shared by the body-level analyses, with no opinion about
 //! what any of it means for a lint.
 //!
-//! It answers four questions about a body:
+//! It answers five questions about a body:
 //!
 //! * which MIR to read at all (`mir_for`: the pre-optimization body, so `?`
 //!   is still a `Try::branch` call and every aggregate is intact);
@@ -11,11 +11,15 @@
 //!   `post_dominators`, `control_deps`), over a CFG in which blocks that
 //!   cannot reach a `return` do not exist, so nothing is "decided" by an
 //!   `assert!`;
+//! * whether every path to a block passes through another (`dominates`).
+//!   This is a different relation from control dependence: a clamp's branch
+//!   dominates the use after it without deciding whether the use runs;
 //! * what a branch switches on (`switch_operand_atoms`).
 //!
 //! What the answers mean is the caller's business: `ctor_flow` combines them
-//! into "does a failure exit depend on a stored field", `variant_flow` uses
-//! only `mir_for` and traces returned variants its own way.
+//! into "does a failure exit depend on a stored field", `unchecked_input_len`
+//! asks whether a comparison dominates a use, `variant_flow` uses only
+//! `mir_for` and traces returned variants its own way.
 
 use std::collections::{HashSet, VecDeque};
 
@@ -316,25 +320,36 @@ pub(crate) fn post_dominators(cfg: &Cfg) -> Vec<Bits> {
     pdom
 }
 
+/// Branches (`t` not post-dominating them, but post-dominating one of their
+/// successors) whose outcome decides whether `t` runs, in block order.
+fn direct_deps(cfg: &Cfg, pdom: &[Bits], t: usize) -> Vec<usize> {
+    (0..cfg.exit)
+        .filter(|a| {
+            let strictly = pdom[*a].has(t) && *a != t;
+            cfg.succs[*a].len() >= 2 && !strictly && cfg.succs[*a].iter().any(|s| pdom[*s].has(t))
+        })
+        .collect()
+}
+
+/// Branch blocks that `target` is directly control-dependent on: the ones
+/// whose outcome sends control to `target` or away from it. A branch that
+/// only decides whether one of those is reached (an early `return Ok` guard
+/// in front of it) is not among them; `control_deps` has those too.
+pub(crate) fn direct_control_deps(cfg: &Cfg, pdom: &[Bits], target: BasicBlock) -> Vec<BasicBlock> {
+    direct_deps(cfg, pdom, target.as_usize())
+        .into_iter()
+        .map(BasicBlock::from_usize)
+        .collect()
+}
+
 /// Branch blocks that `target` is transitively control-dependent on,
 /// innermost first.
 pub(crate) fn control_deps(cfg: &Cfg, pdom: &[Bits], target: BasicBlock) -> Vec<BasicBlock> {
-    let branches: Vec<usize> = (0..cfg.exit).filter(|a| cfg.succs[*a].len() >= 2).collect();
-    let direct = |t: usize| -> Vec<usize> {
-        branches
-            .iter()
-            .copied()
-            .filter(|a| {
-                let strictly = pdom[*a].has(t) && *a != t;
-                !strictly && cfg.succs[*a].iter().any(|s| pdom[*s].has(t))
-            })
-            .collect()
-    };
     let mut seen = HashSet::new();
     let mut q = VecDeque::from([target.as_usize()]);
     let mut deps = Vec::new();
     while let Some(t) = q.pop_front() {
-        for a in direct(t) {
+        for a in direct_deps(cfg, pdom, t) {
             if seen.insert(a) {
                 deps.push(BasicBlock::from_usize(a));
                 q.push_back(a);
@@ -356,4 +371,13 @@ pub(crate) fn switch_operand_atoms(body: &Body<'_>, bb: BasicBlock) -> Vec<Atom>
             .unwrap_or_default(),
         _ => Vec::new(),
     }
+}
+
+// ── dominance ────────────────────────────────────────────────────────────────
+
+/// Every path from the entry to `at` passes through `check` (rustc's forward
+/// dominators over the full CFG). Reflexive; false when `at` is unreachable.
+pub(crate) fn dominates(body: &Body<'_>, check: BasicBlock, at: BasicBlock) -> bool {
+    let d = body.basic_blocks.dominators();
+    d.is_reachable(at) && d.dominates(check, at)
 }

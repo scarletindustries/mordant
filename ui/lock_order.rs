@@ -52,6 +52,57 @@ impl T {
     }
 }
 
+struct Pool {
+    x: Mutex<u32>,
+    y: Mutex<u32>,
+}
+
+impl Pool {
+    fn xy(&self) -> u32 {
+        let gx = self.x.lock().unwrap();
+        let gy = self.y.lock().unwrap();
+        *gx + *gy
+    }
+}
+
+struct Cache {
+    x: Mutex<u32>,
+    y: Mutex<u32>,
+}
+
+impl Cache {
+    // Fine: `Cache::y` and `Cache::x` are not `Pool::x` and `Pool::y`; a
+    // field name shared by two types is not one lock.
+    fn yx(&self) -> u32 {
+        let gy = self.y.lock().unwrap();
+        let gx = self.x.lock().unwrap();
+        *gx + *gy
+    }
+}
+
+struct Deferred {
+    e: Mutex<u32>,
+    f: Mutex<u32>,
+}
+
+impl Deferred {
+    fn ef(&self) -> u32 {
+        let ge = self.e.lock().unwrap();
+        let gf = self.f.lock().unwrap();
+        *ge + *gf
+    }
+
+    // Fine: the reverse order is only inside a closure built while `f` is
+    // held; here it runs after the drop, and in general when its holder says.
+    fn fe_later(&self) -> u32 {
+        let gf = self.f.lock().unwrap();
+        let job = || *self.e.lock().unwrap();
+        let v = *gf;
+        drop(gf);
+        v + job()
+    }
+}
+
 fn main() {
     let s = S {
         a: Mutex::new(1),
@@ -63,4 +114,18 @@ fn main() {
         d: Mutex::new(4),
     };
     let _ = t.first() + t.second();
+    let p = Pool {
+        x: Mutex::new(5),
+        y: Mutex::new(6),
+    };
+    let c = Cache {
+        x: Mutex::new(7),
+        y: Mutex::new(8),
+    };
+    let _ = p.xy() + c.yx();
+    let d = Deferred {
+        e: Mutex::new(9),
+        f: Mutex::new(10),
+    };
+    let _ = d.ef() + d.fe_later();
 }

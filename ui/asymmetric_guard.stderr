@@ -15,5 +15,13 @@ LL |         let n = self.drain();
    |
    = help: a guard blind to part of the state its action manipulates cannot be sound; align what the pair reads
 
-warning: 2 warnings emitted
+warning: `detach` is gated by `can_donate` and `can_log`, but touches `conns` which none of the guards read
+  --> $DIR/asymmetric_guard.rs:120:13
+   |
+LL |             self.detach();
+   |             ^^^^^^^^^^^^^
+   |
+   = help: a guard blind to part of the state its action manipulates cannot be sound; align what the pair reads
+
+warning: 3 warnings emitted
 

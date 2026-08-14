@@ -4,7 +4,7 @@
 //! than any other divergence. Every lint that asks "which variant is this"
 //! goes through here, so the answer is the same in all of them.
 
-use rustc_hir::def::{CtorOf, DefKind, Res};
+use rustc_hir::def::{CtorKind, CtorOf, DefKind, Res};
 use rustc_hir::def_id::DefId;
 use rustc_hir::{Expr, ExprKind, Pat, PatExpr, PatExprKind, PatKind, QPath};
 use rustc_lint::LateContext;
@@ -45,8 +45,10 @@ pub(crate) fn private_enum_of(cx: &LateContext<'_>, variant: DefId) -> Option<De
     Some(enum_did)
 }
 
-/// The variant a constructor-literal argument passes, or None for anything
-/// short of a literal constructor.
+/// The variant whose VALUE `e` is: `E::Unit`, `E::Tuple(..)` or
+/// `E::Struct { .. }` written out. None for anything else, including a bare
+/// `E::Tuple` passed along as a function value — that expression is a
+/// constructor, not a value of the enum, so it passes no variant anywhere.
 pub(crate) fn ctor_literal_variant(cx: &LateContext<'_>, e: &Expr<'_>) -> Option<DefId> {
     let res = match &e.kind {
         ExprKind::Call(callee, _) => {
@@ -55,11 +57,26 @@ pub(crate) fn ctor_literal_variant(cx: &LateContext<'_>, e: &Expr<'_>) -> Option
             };
             cx.qpath_res(qpath, callee.hir_id)
         }
-        ExprKind::Path(qpath) => cx.qpath_res(qpath, e.hir_id),
+        ExprKind::Path(qpath) => match cx.qpath_res(qpath, e.hir_id) {
+            Res::Def(DefKind::Ctor(CtorOf::Variant, CtorKind::Fn), _) => return None,
+            res => res,
+        },
         ExprKind::Struct(qpath, ..) => cx.qpath_res(qpath, e.hir_id),
         _ => return None,
     };
     variant_of_res(cx, res)
+}
+
+/// The variant `e` constructs, now or later: everything
+/// [`ctor_literal_variant`] accepts, plus a bare `E::Tuple` handed to
+/// `map`/`map_err`/`ok_or_else`, which builds the variant when it is called.
+/// This is the question "does the crate ever make one of these"; the value
+/// question above is the one for "what does this argument pass".
+pub(crate) fn constructed_variant(cx: &LateContext<'_>, e: &Expr<'_>) -> Option<DefId> {
+    if let ExprKind::Path(qpath) = &e.kind {
+        return variant_of_res(cx, cx.qpath_res(qpath, e.hir_id));
+    }
+    ctor_literal_variant(cx, e)
 }
 
 /// The variant a match-arm pattern names at its head.

@@ -18,7 +18,9 @@ rustc_session::declare_lint! {
     /// site can send: the function takes the full enum, panics on `E::C`, and
     /// every call site in the crate provably passes a different variant
     /// (constructor literals only — anything else makes the set unknowable
-    /// and the lint silent). The parameter type is wider than the function's
+    /// and the lint silent; a method's receiver is the value sent to `self`,
+    /// so `m.run()` makes `run`'s domain unknowable while `Mode::Off.run()`
+    /// passes `Off`). The parameter type is wider than the function's
     /// real domain; narrowing it turns the panic into a compile error for
     /// future callers.
     pub OVERWIDE_PARAMETER,
@@ -53,6 +55,25 @@ rustc_session::impl_lint_pass!(OverwideParameter => [OVERWIDE_PARAMETER]);
 impl OverwideParameter {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// One call of `def`, with the value sent to each body param index.
+    fn record_call<'tcx>(
+        &mut self,
+        cx: &LateContext<'tcx>,
+        def: DefId,
+        values: impl Iterator<Item = (usize, &'tcx Expr<'tcx>)>,
+    ) {
+        for (i, value) in values {
+            let facts = self.calls.entry((def, i)).or_default();
+            facts.sites += 1;
+            match crate::enum_facts::ctor_literal_variant(cx, value) {
+                Some(v) => {
+                    facts.passed.insert(v);
+                }
+                None => facts.unknown = true,
+            }
+        }
     }
 }
 
@@ -137,34 +158,21 @@ impl<'tcx> LateLintPass<'tcx> for OverwideParameter {
                 {
                     return;
                 }
-                for (i, arg) in args.iter().enumerate() {
-                    let facts = self.calls.entry((def, i)).or_default();
-                    facts.sites += 1;
-                    match crate::enum_facts::ctor_literal_variant(cx, arg) {
-                        Some(v) => {
-                            facts.passed.insert(v);
-                        }
-                        None => facts.unknown = true,
-                    }
-                }
+                self.record_call(cx, def, args.iter().enumerate());
             }
-            Some(Callee::Method { def, args, .. }) => {
+            Some(Callee::Method { def, recv, args }) => {
                 if !def.is_local() {
                     return;
                 }
-                // Method args start after the receiver, which is param 0 in
-                // the body's param list only for free fns; for methods the
-                // receiver occupies body param 0, so args map to 1..
-                for (i, arg) in args.iter().enumerate() {
-                    let facts = self.calls.entry((def, i + 1)).or_default();
-                    facts.sites += 1;
-                    match crate::enum_facts::ctor_literal_variant(cx, arg) {
-                        Some(v) => {
-                            facts.passed.insert(v);
-                        }
-                        None => facts.unknown = true,
-                    }
-                }
+                // The receiver is the body's param 0 (`self`), so it is a
+                // call-site value for that param like any other: `m.run()`
+                // sends whatever `m` holds, `Mode::Off.run()` sends `Off`.
+                self.record_call(
+                    cx,
+                    def,
+                    std::iter::once((0, recv))
+                        .chain(args.iter().enumerate().map(|(i, a)| (i + 1, a))),
+                );
             }
             // A bare reference to a local fn (fn pointer, higher-order use):
             // its future call sites are invisible. The callee position of a
@@ -200,6 +208,7 @@ impl<'tcx> LateLintPass<'tcx> for OverwideParameter {
     }
 
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
+        let mut findings: Vec<(Span, String)> = Vec::new();
         for (fn_def, params) in &self.fns {
             if self.poisoned.contains(fn_def) {
                 continue;
@@ -223,9 +232,7 @@ impl<'tcx> LateLintPass<'tcx> for OverwideParameter {
                         .map(|v| format!("`{}`", cx.tcx.item_name(*v)))
                         .collect();
                     passed.sort();
-                    emit(
-                        cx,
-                        OVERWIDE_PARAMETER,
+                    findings.push((
                         *span,
                         format!(
                             "all {} call sites of `{}` pass {}; this arm panics on `{}`, which no existing caller sends",
@@ -234,10 +241,20 @@ impl<'tcx> LateLintPass<'tcx> for OverwideParameter {
                             passed.join(", "),
                             cx.tcx.item_name(*variant),
                         ),
-                        "the parameter is wider than the function's domain; narrow the type and the panic becomes a compile error for future callers",
-                    );
+                    ));
                 }
             }
+        }
+        // `fns` is a HashMap; report in source order.
+        findings.sort_by_key(|(span, _)| span.lo());
+        for (span, msg) in findings {
+            emit(
+                cx,
+                OVERWIDE_PARAMETER,
+                span,
+                msg,
+                "the parameter is wider than the function's domain; narrow the type and the panic becomes a compile error for future callers",
+            );
         }
     }
 }

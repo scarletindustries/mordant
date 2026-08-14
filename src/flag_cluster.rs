@@ -14,6 +14,10 @@ rustc_session::declare_lint! {
     /// Silent on any struct with an explicit `repr` — its layout is dictated
     /// from outside Rust (a hardware register, a wire format), so all `2^n`
     /// states may genuinely be reachable.
+    ///
+    /// Runs only with `flag-cluster-enabled = true` in `dylint.toml`. Most
+    /// structs it names are option bags whose states are all legal, so it is
+    /// a survey to run once over a codebase, not a gate to keep on.
     pub FLAG_CLUSTER,
     Warn,
     "struct with several independent bool fields"

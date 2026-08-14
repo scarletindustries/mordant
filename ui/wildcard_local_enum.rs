@@ -120,6 +120,111 @@ fn non_enum_is_fine(x: u32) -> u32 {
     }
 }
 
+// `b""` and `""` are the empty-slice answer spelled as a literal.
+fn extractor_empty_bytestr_is_fine(o: &Op) -> &'static [u8] {
+    match o {
+        Op::Add => b"+",
+        _ => b"",
+    }
+}
+
+fn extractor_empty_str_is_fine(o: &Op) -> &'static str {
+    match o {
+        Op::Add => "+",
+        _ => "",
+    }
+}
+
+// The same answers inside braces.
+fn extractor_braced_return_is_fine(o: &Op) -> Option<u32> {
+    let n = match o {
+        Op::Add => 1,
+        _ => {
+            return None;
+        }
+    };
+    Some(n)
+}
+
+fn extractor_braced_tail_is_fine(o: &Op) -> Option<u32> {
+    match o {
+        Op::Add => Some(1),
+        _ => {
+            // Nothing else has a cost.
+            None
+        }
+    }
+}
+
+// A statement before the answer is behavior the arm gives future variants.
+fn braced_statement_is_flagged(o: &Op) -> Option<u32> {
+    match o {
+        Op::Add => Some(1),
+        _ => {
+            note();
+            None
+        }
+    }
+}
+
+fn note() {}
+
+// A binding arm whose whole body is another match on the binding hands the
+// dispatch on; the inner match is judged on its own.
+fn redispatch_is_fine(o: Op) -> i32 {
+    match o {
+        Op::Add => 1,
+        other => match other {
+            Op::Add => 0,
+            Op::Sub => 2,
+            Op::Mul => 3,
+        },
+    }
+}
+
+macro_rules! dispatch {
+    ($o:expr) => {
+        match $o {
+            Op::Add => 1,
+            Op::Sub => 2,
+            Op::Mul => 3,
+        }
+    };
+}
+
+fn redispatch_via_macro_is_fine(o: Op) -> i32 {
+    match o {
+        Op::Mul => 30,
+        other => dispatch!(other),
+    }
+}
+
+// Only the inner match's own wildcard is flagged.
+fn redispatch_flags_inner_only(o: Op) -> i32 {
+    match o {
+        Op::Add => 1,
+        other => match other {
+            Op::Sub => 2,
+            _ => 0,
+        },
+    }
+}
+
+// A statement before the inner match runs for future variants too.
+fn redispatch_after_statement_is_flagged(o: Op) -> i32 {
+    match o {
+        Op::Add => 1,
+        other => {
+            note();
+            match other {
+                Op::Add => 0,
+                Op::Sub => 2,
+                Op::Mul => 3,
+            }
+        }
+    }
+}
+
 fn main() {
     let _ = wild_is_flagged(Op::Add);
     let _ = binding_is_flagged(Op::Sub);
@@ -135,4 +240,13 @@ fn main() {
     let _ = non_exhaustive_listed_is_fine(Entry::Irq);
     let _ = foreign_enum_is_fine(Some(1));
     let _ = non_enum_is_fine(1);
+    let _ = extractor_empty_bytestr_is_fine(&Op::Add);
+    let _ = extractor_empty_str_is_fine(&Op::Sub);
+    let _ = extractor_braced_return_is_fine(&Op::Mul);
+    let _ = extractor_braced_tail_is_fine(&Op::Add);
+    let _ = braced_statement_is_flagged(&Op::Sub);
+    let _ = redispatch_is_fine(Op::Mul);
+    let _ = redispatch_via_macro_is_fine(Op::Add);
+    let _ = redispatch_flags_inner_only(Op::Sub);
+    let _ = redispatch_after_statement_is_flagged(Op::Mul);
 }

@@ -1,6 +1,6 @@
-// A literal that bypasses a validating constructor from outside the type's
-// module is flagged. Literals in the type's own module or impls, and types
-// with no validator, are not.
+// Outside a validated type's module and impls, a literal, a write to a checked
+// field, or mem::zeroed/transmute/assume_init producing it is flagged. Its own
+// module and impls, unchecked fields, and types with no validator are not.
 
 mod port {
     pub struct Port {
@@ -297,4 +297,221 @@ fn main() {
     let _ = validators::Small::new(Some(3)).map(|s| s.n);
     let _ = validators::NonZero::new(1).map(|z| z.n);
     let _ = validators::NonZero { n: 0 };
+    outside::sites();
+}
+
+// Every probe above gets one site here, in a module that is none of theirs:
+// the validated ones are flagged once each, the rest stay silent.
+mod outside {
+    use crate::not_validators::{Buf, Config, Narrow};
+    use crate::not_validators_2::{Header, Parser};
+    use crate::validators::{Checked, Even, Small};
+    use crate::{Alias, Free, Node, gate, inner};
+
+    // Writes to a checked field, through `&mut`, compound, and through a Box.
+    fn header(h: &mut Header) {
+        h.port = 0;
+    }
+    fn even(e: &mut Even) {
+        e.n += 1;
+    }
+    fn small(s: &mut Box<Small>) {
+        s.n = 200;
+    }
+
+    // A `..base` literal is a bypass only when it supplies a checked field
+    // itself; `port` taken from `base` was checked when `base` was made, and
+    // `host` was never checked at all.
+    fn checked(base: Checked, other: Checked, c: &mut Checked) -> (Checked, Checked) {
+        c.host = String::new();
+        (
+            Checked { port: 0, ..base },
+            Checked { host: String::new(), ..other },
+        )
+    }
+
+    // Values that never went through the constructor at all.
+    fn conjured() -> (inner::Level, gate::Gate, gate::Gate, Free) {
+        unsafe {
+            (
+                std::mem::zeroed::<inner::Level>(),
+                std::mem::transmute::<u8, gate::Gate>(0),
+                std::mem::MaybeUninit::<gate::Gate>::zeroed().assume_init(),
+                std::mem::zeroed::<Free>(),
+            )
+        }
+    }
+
+    // A trait impl is the type's own code wherever it is written.
+    pub trait Reset {
+        fn reset(&mut self);
+    }
+    impl Reset for inner::Level {
+        fn reset(&mut self) {
+            self.value = 0;
+        }
+    }
+
+    // The same sites on types whose constructors check nothing they store.
+    fn unvalidated(n: &mut Narrow, c: &mut Config, node: &mut Node, a: &mut Alias) -> (Buf, Parser) {
+        n.n = 0;
+        c.port = 0;
+        node.depth = 1;
+        a.to = "node:x";
+        (Buf { bytes: Vec::new(), cap: 0 }, Parser { log: 0, pos: 0 })
+    }
+
+    pub fn sites() {
+        if let (Ok(mut h), Some(mut e), Some(s)) =
+            (Header::decode(0, &[1, 2], 1), Even::new(2), Small::new(Some(1)))
+        {
+            header(&mut h);
+            even(&mut e);
+            small(&mut Box::new(s));
+        }
+        if let (Ok(a), Ok(b), Ok(mut c)) = (
+            Checked::from_pairs(&[("port", "1"), ("host", "a")]),
+            Checked::from_pairs(&[("port", "1"), ("host", "b")]),
+            Checked::from_pairs(&[("port", "1"), ("host", "c")]),
+        ) {
+            let _ = checked(a, b, &mut c);
+        }
+        let (mut level, g1, g2, free) = conjured();
+        level.reset();
+        let _ = (level.value, g1.v, g2.v, free.n);
+        if let Some(mut g) = gate::Gate::new(0) {
+            gate::open(&mut g);
+        }
+        if let (Ok(mut n), Ok(mut c)) = (
+            Narrow::new(1),
+            Config::from_pairs(&[("port", "1"), ("host", "h")]),
+        ) {
+            let mut node = Node { depth: 0, up: None };
+            let mut alias = Alias { from: "x", to: "node:x" };
+            let (buf, parser) = unvalidated(&mut n, &mut c, &mut node, &mut alias);
+            let _ = (buf.cap, parser.pos, node.depth, alias.to);
+        }
+    }
+}
+
+mod gate {
+    // Validated with a pub field; written only from inside here, which is the
+    // type's own module and so not a bypass. Its outside sites are conjured.
+    pub struct Gate {
+        pub v: u8,
+    }
+
+    impl Gate {
+        pub fn new(v: u8) -> Option<Gate> {
+            if v < 2 { Some(Gate { v }) } else { None }
+        }
+    }
+
+    pub fn open(g: &mut Gate) {
+        g.v = 1;
+    }
+}
+
+mod widened {
+    pub struct Tag<'a> {
+        pub s: &'a str,
+    }
+
+    impl<'a> Tag<'a> {
+        pub fn new(s: &'a str) -> Option<Tag<'a>> {
+            if s.is_empty() { None } else { Some(Tag { s }) }
+        }
+    }
+
+    mod elsewhere {
+        use super::Tag;
+
+        // The transmute only widens the lifetime of a value that already went
+        // through `Tag::new`; the write is a bypass.
+        pub fn widen(t: Tag<'_>, u: &mut Tag<'_>) -> Tag<'static> {
+            u.s = "";
+            unsafe { std::mem::transmute::<Tag<'_>, Tag<'static>>(t) }
+        }
+    }
+}
+
+mod promoted {
+    use std::marker::PhantomData;
+
+    pub struct Raw;
+    pub struct Ok;
+
+    pub struct Slot<State> {
+        pub n: u8,
+        pub state: PhantomData<State>,
+    }
+
+    impl Slot<Ok> {
+        pub fn promote(n: u8) -> Option<Slot<Ok>> {
+            if n == 0 { None } else { Some(Slot { n, state: PhantomData }) }
+        }
+    }
+
+    pub fn raw(n: u8) -> Slot<Raw> {
+        Slot { n, state: PhantomData }
+    }
+
+    mod elsewhere {
+        use super::{Ok, Raw, Slot};
+
+        // Same type, different parameter: this is the promotion `promote`
+        // gates, not a lifetime change.
+        pub fn promote(s: Slot<Raw>) -> Slot<Ok> {
+            unsafe { std::mem::transmute::<Slot<Raw>, Slot<Ok>>(s) }
+        }
+    }
+}
+
+mod two_validators {
+    pub struct Pair {
+        pub a: u8,
+        pub b: u8,
+    }
+
+    impl Pair {
+        pub fn new(a: u8) -> Option<Pair> {
+            if a > 9 { None } else { Some(Pair { a, b: 0 }) }
+        }
+
+        pub fn parse(b: u8) -> Option<Pair> {
+            if b > 99 { None } else { Some(Pair { a: 0, b }) }
+        }
+    }
+
+    mod elsewhere {
+        use super::Pair;
+
+        // `b` is checked by the second constructor, so the tail literal is
+        // charged to that one.
+        pub fn rebuild(base: Pair) -> Pair {
+            Pair { b: 200, ..base }
+        }
+    }
+}
+
+mod tuple {
+    pub struct Digit(pub u8);
+
+    impl Digit {
+        pub fn new(d: u8) -> Option<Digit> {
+            if d > 9 { None } else { Some(Digit(d)) }
+        }
+    }
+
+    pub struct Plain(pub u8);
+
+    mod elsewhere {
+        use super::{Digit, Plain};
+
+        // Calling the tuple constructor is the literal; `Plain` has no
+        // validator to go around.
+        pub fn make() -> (Digit, Plain) {
+            (Digit(10), Plain(10))
+        }
+    }
 }

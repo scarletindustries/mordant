@@ -53,8 +53,8 @@ use rustc_span::{Span, sym};
 
 use crate::adt_facts::result_err_ty;
 use crate::mir_flow::{
-    ANY_ELEM, Atom, Exactness, build_cfg, control_deps, is_prefix, mir_for, operand_place,
-    place_info, post_dominators, switch_operand_atoms,
+    ANY_ELEM, Atom, Exactness, build_cfg, control_deps, direct_control_deps, is_prefix, mir_for,
+    operand_place, place_info, post_dominators, switch_operand_atoms,
 };
 
 /// Error types that report the environment refusing, not the value being
@@ -100,6 +100,65 @@ pub(crate) fn checked_fields(
         .collect();
     v.sort_by_key(|f| f.field);
     v
+}
+
+/// The branch in `callee` whose outcome sends it to a non-resource
+/// `Err`/`None` and whose condition reads back to one of its arguments other
+/// than a `self` receiver: the check a caller discards when it replaces the
+/// failure with a default. Only the branches an exit is directly
+/// control-dependent on are read: an argument test that merely stands in
+/// front of a receiver-decided exit (`if s.is_empty() { return Ok(0) }`
+/// before `if self.closed { return Err(..) }`) accepts the argument, it does
+/// not reject it. None when the body always succeeds, fails only on
+/// resources, on its receiver's own state (an empty queue, a lexer at the
+/// wrong token) or on state it was not handed at all, or builds its failure
+/// with combinators instead of a branch of its own.
+pub(crate) fn argument_decided_failure(
+    tcx: TyCtxt<'_>,
+    callee: LocalDefId,
+    extra_resource_errors: &[String],
+) -> Option<Span> {
+    let first_argument = if tcx
+        .opt_associated_item(callee.to_def_id())
+        .is_some_and(|item| item.is_method())
+    {
+        2
+    } else {
+        1
+    };
+    let body = mir_for(tcx, callee)?;
+    if body.tainted_by_errors.is_some() {
+        return None;
+    }
+    if let Some(e) = result_err_ty(tcx, body.local_decls[RETURN_PLACE].ty)
+        && is_resource_error(tcx, e, extra_resource_errors)
+    {
+        return None;
+    }
+    let facts = gather(tcx, &body, None, extra_resource_errors);
+    if facts.failure_blocks.is_empty() {
+        return None;
+    }
+    let cfg = build_cfg(&body);
+    let pdom = post_dominators(&cfg);
+    let mut visited: HashSet<BasicBlock> = HashSet::new();
+    for &fb in &facts.failure_blocks {
+        for branch in direct_control_deps(&cfg, &pdom, fb) {
+            if !visited.insert(branch)
+                || decides_on_resource(tcx, &body, &facts, branch, extra_resource_errors)
+            {
+                continue;
+            }
+            let decision = decision_slice(&facts.defs, &switch_operand_atoms(&body, branch), &[]);
+            if decision
+                .iter()
+                .any(|a| (first_argument..=body.arg_count).contains(&a.local.as_usize()))
+            {
+                return Some(body.basic_blocks[branch].terminator().source_info.span);
+            }
+        }
+    }
+    None
 }
 
 // ── def facts ────────────────────────────────────────────────────────────────
@@ -240,10 +299,13 @@ fn reads_of_operand(op: &Operand<'_>, same: bool, out: &mut Vec<Read>) {
     }
 }
 
+/// `self_did` is the type under construction; None for a body whose failure
+/// exits are the question and whose return value is not (no `Self` roots, no
+/// closures to follow).
 fn gather<'tcx>(
     tcx: TyCtxt<'tcx>,
     body: &Body<'tcx>,
-    self_did: DefId,
+    self_did: Option<DefId>,
     extra_resource_errors: &[String],
 ) -> Facts {
     let n = body.local_decls.len();
@@ -349,7 +411,7 @@ fn gather<'tcx>(
                         }
                         AggregateKind::Closure(cdid, args) => {
                             let out = args.as_closure().sig().output().skip_binder();
-                            if mentions_self(out, self_did)
+                            if self_did.is_some_and(|s| mentions_self(out, s))
                                 && let Some(l) = cdid.as_local()
                             {
                                 closures.push(l);
@@ -495,7 +557,7 @@ fn gather<'tcx>(
     }
     // A body returning bare `Self` (a helper, a closure): the return place
     // itself is the self value.
-    if is_self_ty(body.local_decls[RETURN_PLACE].ty, self_did) {
+    if self_did.is_some_and(|s| is_self_ty(body.local_decls[RETURN_PLACE].ty, s)) {
         self_roots.push(Atom::whole(RETURN_PLACE));
     }
     failure_blocks.sort();
@@ -684,7 +746,7 @@ fn helper_summary<'tcx>(
     }
     memo.insert(def, None);
     let body = mir_for(tcx, def)?;
-    let facts = gather(tcx, &body, self_did, &[]);
+    let facts = gather(tcx, &body, Some(self_did), &[]);
     let nfields = tcx.adt_def(self_did).non_enum_variant().fields.len();
     let roots = field_roots(tcx, &body, &facts, self_did, nfields, memo, depth + 1);
     let argc = body.arg_count;
@@ -794,7 +856,7 @@ fn analyze_body<'tcx>(
     {
         return;
     }
-    let facts = gather(tcx, &body, self_did, extra_resource_errors);
+    let facts = gather(tcx, &body, Some(self_did), extra_resource_errors);
     let closures = facts.closures.clone();
     if !facts.failure_blocks.is_empty() {
         let nfields = tcx.adt_def(self_did).non_enum_variant().fields.len();

@@ -5,58 +5,122 @@ use crate::baseline::emit_with_note;
 use crate::ctor_flow::{self, FieldCheck};
 use clippy_utils::ty::ty_from_hir_ty;
 use rustc_abi::FieldIdx;
+use rustc_hir::def::{CtorKind, CtorOf, DefKind, Res};
 use rustc_hir::def_id::DefId;
-use rustc_hir::{Expr, ExprKind, FnRetTy, ImplItem, ImplItemKind, ItemKind};
+use rustc_hir::{
+    Expr, ExprKind, FnRetTy, HirId, ImplItem, ImplItemKind, ItemKind, StructTailExpr, UnOp,
+};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::{Span, Symbol, sym};
 
 rustc_session::declare_lint! {
-    /// Flags struct literals that bypass a validating constructor: a
-    /// receiver-less associated function returning `Result<Self, _>` or
+    /// Flags a value of a validated type made or changed without its
+    /// validating constructor running. A validating constructor is a
+    /// receiver-less inherent function returning `Result<Self, _>` or
     /// `Option<Self>` whose body rejects some value it then stores in a field
-    /// (see `ctor_flow`). A literal outside the type's own module constructs
-    /// it without that check ever running. Constructors that only fail
-    /// because their input did not parse or a resource ran out check nothing
-    /// about the fields and are not validators.
+    /// (see `ctor_flow`). Outside the type's own module and impls, each of
+    /// these skips that check:
+    ///
+    /// * a struct literal, `S(x)` on a tuple struct included -- one with a
+    ///   `..base` tail only when it names a field some validator checks,
+    ///   since the fields it takes from `base` were checked when `base` was
+    ///   made;
+    /// * an assignment, plain or compound, to a checked field;
+    /// * `mem::zeroed`, `mem::transmute` or `MaybeUninit::assume_init`
+    ///   producing the type.
+    ///
+    /// Silent on: anything in the type's module or in any impl of it, trait
+    /// impls included, so a written or derived `Default`, `From` or `Clone`
+    /// is the type's own business; any site in a crate other than the one
+    /// defining the type, since validators are only known for local impls,
+    /// so a `pub` checked field of an exported type is not covered; writes to
+    /// fields no constructor checks; `T::default()` and every other call
+    /// (whatever literal it ends in is wherever the callee is), and a tuple
+    /// constructor passed as a value rather than called; a `transmute` that
+    /// only changes the lifetimes of a value already of the type; and
+    /// `&mut s.f` handed to something else, which is not an assignment here.
+    /// Constructors that only fail because their input did not parse or a
+    /// resource ran out check nothing about the fields and are not
+    /// validators.
     pub BYPASSED_VALIDATOR,
     Warn,
-    "struct literal bypasses the type's validating constructor"
+    "value of a validated type made or changed without its validating constructor"
 }
 
 struct Validator {
     ctor: Symbol,
-    checks: Vec<FieldCheck>,
+    /// A validator checks at least one field; a finding about a whole value
+    /// points at this one's check.
+    first: FieldCheck,
+    rest: Vec<FieldCheck>,
+}
+
+impl Validator {
+    fn checks(&self) -> impl Iterator<Item = &FieldCheck> {
+        std::iter::once(&self.first).chain(&self.rest)
+    }
+}
+
+/// Which fields a literal supplies itself.
+enum Literal {
+    All,
+    /// A `..base` (or `..` default-fields) literal: only these are new values.
+    Only(Vec<FieldIdx>),
+}
+
+enum SiteKind {
+    Literal(Literal),
+    Write(FieldIdx),
+    /// `mem::zeroed` and friends, named the way the message shows them.
+    Conjured(&'static str),
+}
+
+/// Something done to a crate-local struct outside its own module and impls.
+/// Resolved against `validators` at the end of the crate: the impl holding
+/// the constructor may be visited after the code that goes around it.
+struct Site {
+    adt: DefId,
+    span: Span,
+    kind: SiteKind,
 }
 
 pub struct BypassedValidator {
     extra_resource_errors: Vec<String>,
     /// struct -> constructors that check at least one stored field.
     validators: HashMap<DefId, Vec<Validator>>,
-    /// Literal constructions outside the struct's own module and impls.
-    literals: Vec<(DefId, Span)>,
+    sites: Vec<Site>,
 }
 
-rustc_session::declare_lint! {
-    /// Flags a field whose value a validating constructor checks (see
-    /// `ctor_flow`) but which is visible outside the type's own module. Any
-    /// holder can assign the field directly, so the constructor's check holds
-    /// only until the first write. Fields the constructor never inspects are
-    /// not reported, whatever their visibility.
-    pub PUB_INVARIANT_FIELDS,
-    Warn,
-    "checked field assignable outside its module"
-}
-
-rustc_session::impl_lint_pass!(BypassedValidator => [BYPASSED_VALIDATOR, PUB_INVARIANT_FIELDS]);
+rustc_session::impl_lint_pass!(BypassedValidator => [BYPASSED_VALIDATOR]);
 
 impl BypassedValidator {
     pub fn new(config: &crate::MordantConfig) -> Self {
         Self {
             extra_resource_errors: config.validator_resource_errors.clone(),
             validators: HashMap::new(),
-            literals: Vec::new(),
+            sites: Vec::new(),
         }
+    }
+
+    fn note_site(
+        &mut self,
+        cx: &LateContext<'_>,
+        expr: &Expr<'_>,
+        adt: ty::AdtDef<'_>,
+        kind: SiteKind,
+    ) {
+        if !adt.is_struct()
+            || !adt.did().is_local()
+            || is_types_own_code(cx, expr.hir_id, adt.did())
+        {
+            return;
+        }
+        self.sites.push(Site {
+            adt: adt.did(),
+            span: expr.span,
+            kind,
+        });
     }
 }
 
@@ -64,6 +128,68 @@ impl BypassedValidator {
 fn impl_self_struct(cx: &LateContext<'_>, impl_did: DefId) -> Option<DefId> {
     let adt = impl_self_adt(cx, impl_did)?;
     (adt.is_struct() && adt.did().is_local()).then(|| adt.did())
+}
+
+/// The type's own module can build and write it whatever the field
+/// visibility (a static table its `Option<Self>` lookup searches, a sibling
+/// helper), and so can any impl of it from any module (constructors,
+/// `Default`, builders): that code is the implementation, not a caller going
+/// around it.
+fn is_types_own_code(cx: &LateContext<'_>, at: HirId, struct_did: DefId) -> bool {
+    if cx.tcx.parent_module(at) == cx.tcx.parent_module_from_def_id(struct_did.expect_local()) {
+        return true;
+    }
+    let mut cur = cx.tcx.hir_enclosing_body_owner(at).to_def_id();
+    while let Some(parent) = cx.tcx.opt_parent(cur) {
+        if matches!(cx.tcx.def_kind(parent), DefKind::Impl { .. })
+            && impl_self_struct(cx, parent) == Some(struct_did)
+        {
+            return true;
+        }
+        cur = parent;
+    }
+    false
+}
+
+/// What a call expression, path or method, invokes.
+fn callee(cx: &LateContext<'_>, expr: &Expr<'_>) -> Option<DefId> {
+    match expr.kind {
+        ExprKind::Call(f, _) => {
+            let ExprKind::Path(ref qpath) = f.kind else {
+                return None;
+            };
+            cx.qpath_res(qpath, f.hir_id).opt_def_id()
+        }
+        ExprKind::MethodCall(..) => cx.typeck_results().type_dependent_def_id(expr.hir_id),
+        _ => None,
+    }
+}
+
+fn is_tuple_ctor_call(cx: &LateContext<'_>, expr: &Expr<'_>) -> bool {
+    let ExprKind::Call(f, _) = expr.kind else {
+        return false;
+    };
+    let ExprKind::Path(ref qpath) = f.kind else {
+        return false;
+    };
+    matches!(
+        cx.qpath_res(qpath, f.hir_id),
+        Res::Def(DefKind::Ctor(CtorOf::Struct, CtorKind::Fn), _)
+    )
+}
+
+/// The name a finding gives a callee that produces a value out of nothing.
+fn conjurer(cx: &LateContext<'_>, callee: DefId) -> Option<&'static str> {
+    let name = cx.tcx.get_diagnostic_name(callee)?;
+    if name == sym::mem_zeroed {
+        Some("mem::zeroed")
+    } else if name == sym::transmute {
+        Some("mem::transmute")
+    } else if name == sym::assume_init {
+        Some("MaybeUninit::assume_init")
+    } else {
+        None
+    }
 }
 
 impl<'tcx> LateLintPass<'tcx> for BypassedValidator {
@@ -104,126 +230,171 @@ impl<'tcx> LateLintPass<'tcx> for BypassedValidator {
         if !wraps_self {
             return;
         }
-        let checks = ctor_flow::checked_fields(
+        let mut checks = ctor_flow::checked_fields(
             cx,
             item.owner_id.def_id,
             struct_did,
             &self.extra_resource_errors,
-        );
-        if !checks.is_empty() {
-            self.validators
-                .entry(struct_did)
-                .or_default()
-                .push(Validator {
-                    ctor: item.ident.name,
-                    checks,
-                });
-        }
+        )
+        .into_iter();
+        let Some(first) = checks.next() else {
+            return;
+        };
+        self.validators
+            .entry(struct_did)
+            .or_default()
+            .push(Validator {
+                ctor: item.ident.name,
+                first,
+                rest: checks.collect(),
+            });
     }
 
     fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
-        if !matches!(expr.kind, ExprKind::Struct(..)) {
-            return;
-        }
-        let ty = cx.typeck_results().expr_ty(expr);
-        let ty::Adt(adt, _) = ty.kind() else {
-            return;
-        };
-        let Some(struct_local) = adt.did().as_local() else {
-            return;
-        };
-        if !adt.is_struct() {
-            return;
-        }
-        // The type's own module can write the literal whatever the field
-        // visibility, so a literal there is the author's (a static table the
-        // `Option<Self>` lookup searches, a sibling helper), not a bypass.
-        // This is the same boundary `pub_invariant_fields` holds fields to.
-        if cx.tcx.parent_module(expr.hir_id) == cx.tcx.parent_module_from_def_id(struct_local) {
-            return;
-        }
-        // Literals inside the type's own impls (constructors, Default,
-        // builders) are the implementation even from another module.
-        let owner = cx.tcx.hir_enclosing_body_owner(expr.hir_id);
-        let mut cur = owner.to_def_id();
-        while let Some(parent) = cx.tcx.opt_parent(cur) {
-            if matches!(
-                cx.tcx.def_kind(parent),
-                rustc_hir::def::DefKind::Impl { .. }
-            ) && impl_self_struct(cx, parent) == Some(adt.did())
-            {
-                return;
+        let results = cx.typeck_results();
+        match expr.kind {
+            ExprKind::Struct(_, fields, tail) => {
+                let Some(adt) = results.expr_ty(expr).ty_adt_def() else {
+                    return;
+                };
+                let literal = match tail {
+                    StructTailExpr::None => Literal::All,
+                    _ => Literal::Only(
+                        fields
+                            .iter()
+                            .filter_map(|f| results.opt_field_index(f.hir_id))
+                            .collect(),
+                    ),
+                };
+                self.note_site(cx, expr, adt, SiteKind::Literal(literal));
             }
-            cur = parent;
+            ExprKind::Assign(place, ..) | ExprKind::AssignOp(_, place, _) => {
+                // `*s.f = ..` and `(*b).f = ..` both write `f`; the base's
+                // type after auto-deref says whose `f`, so a write through a
+                // `Box` or a guard counts.
+                let mut place = place;
+                while let ExprKind::Unary(UnOp::Deref, inner) | ExprKind::DropTemps(inner) =
+                    place.kind
+                {
+                    place = inner;
+                }
+                let ExprKind::Field(base, _) = place.kind else {
+                    return;
+                };
+                let Some(adt) = results.expr_ty_adjusted(base).peel_refs().ty_adt_def() else {
+                    return;
+                };
+                let Some(field) = results.opt_field_index(place.hir_id) else {
+                    return;
+                };
+                self.note_site(cx, expr, adt, SiteKind::Write(field));
+            }
+            ExprKind::Call(..) | ExprKind::MethodCall(..) => {
+                let Some(adt) = results.expr_ty(expr).ty_adt_def() else {
+                    return;
+                };
+                // `S(x)` has no callee body: the call is the literal.
+                if is_tuple_ctor_call(cx, expr) {
+                    self.note_site(cx, expr, adt, SiteKind::Literal(Literal::All));
+                    return;
+                }
+                let Some(what) = callee(cx, expr).and_then(|c| conjurer(cx, c)) else {
+                    return;
+                };
+                // `transmute::<S<'a>, S<'static>>(s)` re-types a value that
+                // already went through the constructor; it makes nothing.
+                // Changing a type parameter (`S<Unchecked>` to `S<Checked>`)
+                // is what a validator returning the latter exists to gate.
+                if let ExprKind::Call(_, [arg]) = expr.kind
+                    && cx.tcx.erase_and_anonymize_regions(results.expr_ty(arg))
+                        == cx.tcx.erase_and_anonymize_regions(results.expr_ty(expr))
+                {
+                    return;
+                }
+                self.note_site(cx, expr, adt, SiteKind::Conjured(what));
+            }
+            _ => {}
         }
-        self.literals.push((adt.did(), expr.span));
     }
 
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
-        let mut validators: Vec<_> = self.validators.iter().collect();
-        validators.sort_by_key(|(did, _)| cx.tcx.def_span(**did).lo());
-        for (did, ctors) in validators {
-            let parent_mod = cx.tcx.parent_module_from_def_id(did.expect_local());
-            let fields = &cx.tcx.adt_def(*did).non_enum_variant().fields;
-            let mut reported: Vec<FieldIdx> = Vec::new();
-            for v in ctors {
-                for check in &v.checks {
-                    if reported.contains(&check.field) {
-                        continue;
-                    }
-                    let field = &fields[check.field];
-                    // A private field is Restricted to exactly the parent
-                    // module; anything else widens the write surface past
-                    // the check.
-                    if cx.tcx.visibility(field.did)
-                        == ty::Visibility::Restricted(parent_mod.to_def_id())
-                    {
-                        continue;
-                    }
-                    reported.push(check.field);
-                    emit_with_note(
-                        cx,
-                        PUB_INVARIANT_FIELDS,
-                        cx.tcx.def_span(field.did),
-                        format!(
-                            "`{}::{}` rejects some values of `{}` before storing it, but the field is assignable outside its module",
-                            cx.tcx.item_name(*did),
-                            v.ctor,
-                            field.name,
-                        ),
-                        check.check,
-                        "the check a direct write skips",
-                        "make the field private; the checked invariant otherwise holds only until the first outside write",
-                    );
-                }
-            }
-        }
-        for (did, span) in &self.literals {
-            let Some(ctors) = self.validators.get(did) else {
+        for site in &self.sites {
+            let Some(ctors) = self.validators.get(&site.adt) else {
                 continue;
             };
-            let fields = &cx.tcx.adt_def(*did).non_enum_variant().fields;
-            let v = &ctors[0];
-            let names: Vec<String> = v
-                .checks
-                .iter()
-                .map(|c| format!("`{}`", fields[c.field].name))
-                .collect();
-            emit_with_note(
-                cx,
-                BYPASSED_VALIDATOR,
-                *span,
-                format!(
-                    "`{}` is constructed by literal here, but `{}::{}` checks {} before constructing one",
-                    cx.tcx.def_path_str(*did),
-                    cx.tcx.item_name(*did),
-                    v.ctor,
-                    names.join(", "),
-                ),
-                v.checks[0].check,
-                "the check this literal never runs",
-                "construct through the validating function, or move this literal into the type's module",
-            );
+            let fields = &cx.tcx.adt_def(site.adt).non_enum_variant().fields;
+            let checked = |v: &Validator| {
+                v.checks()
+                    .map(|c| format!("`{}`", fields[c.field].name))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            // Which constructor a site is charged to: for a whole value the
+            // first one, otherwise whichever checks a field the site touches,
+            // which is not necessarily the first.
+            let field_checker = |is_hit: &dyn Fn(FieldIdx) -> bool| {
+                ctors
+                    .iter()
+                    .find_map(|v| v.checks().find(|c| is_hit(c.field)).map(|c| (v, c)))
+            };
+            let (msg, check, note, help) = match &site.kind {
+                SiteKind::Literal(literal) => {
+                    let by = match literal {
+                        Literal::All => ctors.first().map(|v| (v, &v.first)),
+                        Literal::Only(supplied) => field_checker(&|f| supplied.contains(&f)),
+                    };
+                    let Some((by, check)) = by else {
+                        continue;
+                    };
+                    (
+                        format!(
+                            "`{}` is constructed by literal here, but `{}::{}` checks {} before constructing one",
+                            cx.tcx.def_path_str(site.adt),
+                            cx.tcx.item_name(site.adt),
+                            by.ctor,
+                            checked(by),
+                        ),
+                        check.check,
+                        "the check this literal never runs",
+                        "construct through the validating function, or move this literal into the type's module",
+                    )
+                }
+                SiteKind::Conjured(what) => {
+                    let Some(by) = ctors.first() else {
+                        continue;
+                    };
+                    (
+                        format!(
+                            "`{}` is produced by `{what}` here, but `{}::{}` checks {} before constructing one",
+                            cx.tcx.def_path_str(site.adt),
+                            cx.tcx.item_name(site.adt),
+                            by.ctor,
+                            checked(by),
+                        ),
+                        by.first.check,
+                        "the check this value never went through",
+                        "construct through the validating function",
+                    )
+                }
+                SiteKind::Write(field) => {
+                    let Some((by, check)) = field_checker(&|f| f == *field) else {
+                        continue;
+                    };
+                    let name = fields[*field].name;
+                    (
+                        format!(
+                            "`{}::{name}` is written directly here, but `{}::{}` rejects some values of `{name}` before storing one",
+                            cx.tcx.def_path_str(site.adt),
+                            cx.tcx.item_name(site.adt),
+                            by.ctor,
+                        ),
+                        check.check,
+                        "the check this write never runs",
+                        "change the value through the validating function, or make the field private and move this write into the type's module",
+                    )
+                }
+            };
+            emit_with_note(cx, BYPASSED_VALIDATOR, site.span, msg, check, note, help);
         }
     }
 }

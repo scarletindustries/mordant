@@ -7,7 +7,7 @@ use rustc_middle::ty;
 
 use crate::adt_facts::impl_self_adt;
 use crate::baseline::emit;
-use crate::enum_facts::{arm_variant, ctor_literal_variant, private_enum_of};
+use crate::enum_facts::{arm_variant, private_enum_of};
 
 rustc_session::declare_lint! {
     /// Flags a crate-private enum variant that is constructed somewhere but
@@ -69,10 +69,11 @@ fn inside_own_trait_impl(cx: &LateContext<'_>, hir_id: rustc_hir::HirId, enum_di
     }
 }
 
-/// The private-enum variant `expr` constructs, if it is a variant path, call
-/// or struct expression, as `(enum, variant)`.
+/// The private-enum variant `expr` constructs, if it is a variant path
+/// (including a bare tuple constructor passed as a function), call or struct
+/// expression, as `(enum, variant)`.
 fn constructed_variant(cx: &LateContext<'_>, expr: &Expr<'_>) -> Option<(DefId, DefId)> {
-    let variant = ctor_literal_variant(cx, expr)?;
+    let variant = crate::enum_facts::constructed_variant(cx, expr)?;
     Some((private_enum_of(cx, variant)?, variant))
 }
 
