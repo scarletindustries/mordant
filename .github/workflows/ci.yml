@@ -6,28 +6,70 @@ on:
   pull_request:
   schedule:
     # Weekly: surface clippy_utils / rustc_private drift within a week even
-    # with no commits.
+    # with no commits. Also the only run that includes macOS: the lints are
+    # platform independent and the mac runners are slower, so PRs get Linux.
     - cron: "0 6 * * 1"
 
+env:
+  DYLINT_VERSION: 6.0.3
+
 jobs:
-  test:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+  linux:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       # rust-toolchain pins the nightly; rustup resolves it on first cargo use.
       - run: rustup show
-      # .cargo/config.toml names dylint-link as the linker, and the ui tests
-      # build a dylint driver, so both binaries have to exist on the runner.
-      - run: cargo install cargo-dylint dylint-link --locked
+      # .cargo/config.toml names dylint-link as the linker and the ui tests
+      # need cargo-dylint. Compiling them takes a minute and a half, so the
+      # binaries are cached per dylint version and rebuilt only on a bump;
+      # nothing prebuilt is downloaded.
+      - uses: actions/cache@v4
+        id: dylint
+        with:
+          path: |
+            ~/.cargo/bin/cargo-dylint
+            ~/.cargo/bin/dylint-link
+          key: dylint-${{ runner.os }}-${{ env.DYLINT_VERSION }}
+      - if: steps.dylint.outputs.cache-hit != 'true'
+        run: cargo install cargo-dylint dylint-link --locked --version "$DYLINT_VERSION"
+      - uses: Swatinem/rust-cache@v2
+      # The ui tests build a rustc driver for the pinned nightly into
+      # ~/.dylint_drivers; it only changes when the toolchain or dylint does.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.dylint_drivers
+          key: dylint-driver-${{ runner.os }}-${{ hashFiles('rust-toolchain') }}-${{ env.DYLINT_VERSION }}
       - run: cargo fmt --check
-      - run: cargo build
       - run: cargo test
       - run: cargo clippy --all-targets -- -D warnings
       # Mordant lints itself: the workspace metadata points the library at
       # its own source tree.
+      - run: cargo dylint --all
+        env:
+          DYLINT_RUSTFLAGS: -D warnings
+
+  macos:
+    if: github.event_name == 'schedule'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - uses: actions/cache@v4
+        id: dylint
+        with:
+          path: |
+            ~/.cargo/bin/cargo-dylint
+            ~/.cargo/bin/dylint-link
+          key: dylint-${{ runner.os }}-${{ env.DYLINT_VERSION }}
+      - if: steps.dylint.outputs.cache-hit != 'true'
+        run: cargo install cargo-dylint dylint-link --locked --version "$DYLINT_VERSION"
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: ~/.dylint_drivers
+          key: dylint-driver-${{ runner.os }}-${{ hashFiles('rust-toolchain') }}-${{ env.DYLINT_VERSION }}
+      - run: cargo test
       - run: cargo dylint --all
         env:
           DYLINT_RUSTFLAGS: -D warnings
