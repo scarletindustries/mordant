@@ -7,9 +7,9 @@
 //! for each name.
 
 use std::cell::OnceCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-use rustc_hir::def_id::{DefId, DefIndex, LocalDefId};
+use rustc_hir::def_id::{DefId, DefIndex};
 use rustc_lint::LateContext;
 use rustc_metadata::creader::CStore;
 use rustc_span::{BytePos, Span};
@@ -135,20 +135,20 @@ pub(crate) fn word_in(haystack: &str, ident: &str) -> bool {
 /// locally never needs it, so it is built on the first lookup that misses
 /// locally.
 pub(crate) struct DefNames {
-    local: HashMap<String, Option<LocalDefId>>,
+    local: HashSet<String>,
     upstream: OnceCell<HashSet<String>>,
 }
 
 impl DefNames {
     pub(crate) fn collect(cx: &LateContext<'_>) -> Self {
         Self {
-            local: crate_def_index(cx),
+            local: crate_def_names(cx),
             upstream: OnceCell::new(),
         }
     }
 
     pub(crate) fn contains(&self, cx: &LateContext<'_>, ident: &str) -> bool {
-        self.local.contains_key(ident)
+        self.local.contains(ident)
             || self
                 .upstream
                 .get_or_init(|| upstream_def_names(cx))
@@ -185,23 +185,12 @@ fn upstream_def_names(cx: &LateContext<'_>) -> HashSet<String> {
 }
 
 /// Every name this crate defines: each item, and every variant and field of
-/// each local ADT, since a claim usually names the field it guards. A name
-/// with exactly one owning item maps to that item; a name several defs share,
-/// and every variant and field, maps to `None`. [`DefNames::contains`] only
-/// asks whether the name is present.
-fn crate_def_index(cx: &LateContext<'_>) -> HashMap<String, Option<LocalDefId>> {
-    let mut index: HashMap<String, Option<LocalDefId>> = HashMap::new();
-    let mut insert = |name: String, def: Option<LocalDefId>| match index.entry(name) {
-        std::collections::hash_map::Entry::Vacant(e) => {
-            e.insert(def);
-        }
-        std::collections::hash_map::Entry::Occupied(mut e) => {
-            e.insert(None);
-        }
-    };
+/// each local ADT, since a claim usually names the field it guards.
+fn crate_def_names(cx: &LateContext<'_>) -> HashSet<String> {
+    let mut names = HashSet::new();
     for def_id in cx.tcx.hir_crate_items(()).definitions() {
         if let Some(name) = cx.tcx.opt_item_name(def_id.to_def_id()) {
-            insert(name.to_string(), Some(def_id));
+            names.insert(name.to_string());
         }
         if let rustc_hir::def::DefKind::Struct
         | rustc_hir::def::DefKind::Enum
@@ -209,12 +198,10 @@ fn crate_def_index(cx: &LateContext<'_>) -> HashMap<String, Option<LocalDefId>> 
         {
             let adt = cx.tcx.adt_def(def_id);
             for v in adt.variants() {
-                insert(v.name.to_string(), None);
-                for f in &v.fields {
-                    insert(f.name.to_string(), None);
-                }
+                names.insert(v.name.to_string());
+                names.extend(v.fields.iter().map(|f| f.name.to_string()));
             }
         }
     }
-    index
+    names
 }
