@@ -607,7 +607,13 @@ fn walk_slice<S>(
                         (rem[0] == *i).then(|| a.extended(&rem[1..]))
                     }
                     Read::AggField(_, a) => Some(a.clone()),
-                    _ => other(&s, r),
+                    Read::Derived(_)
+                    | Read::Payload(_)
+                    | Read::Discr(_)
+                    | Read::Index(_)
+                    | Read::CallArg(_)
+                    | Read::CallArgMut
+                    | Read::ViaMut(_) => other(&s, r),
                 });
             }
         }
