@@ -154,20 +154,12 @@ fn fallible_call<'tcx>(cx: &LateContext<'tcx>, call: &Expr<'tcx>) -> Option<Fall
         .then_some(FallibleCall { callee, wrapper })
 }
 
-fn peel<'h>(mut e: &'h Expr<'h>) -> &'h Expr<'h> {
-    loop {
-        match e.kind {
-            ExprKind::DropTemps(inner) => e = inner,
-            ExprKind::Block(
-                Block {
-                    stmts: [],
-                    expr: Some(tail),
-                    ..
-                },
-                None,
-            ) => e = tail,
-            _ => return e,
-        }
+fn peel<'h>(e: &'h Expr<'h>) -> &'h Expr<'h> {
+    let e = clippy_utils::peel_blocks(e);
+    if let ExprKind::DropTemps(inner) = e.kind {
+        peel(inner)
+    } else {
+        e
     }
 }
 

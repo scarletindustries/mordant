@@ -1,9 +1,10 @@
+use clippy_utils::peel_blocks;
+use clippy_utils::res::MaybeResPath;
 use clippy_utils::source::snippet_opt;
 use rustc_ast::LitKind;
 use rustc_errors::Applicability;
-use rustc_hir::def::Res;
 use rustc_hir::def_id::DefId;
-use rustc_hir::{Arm, Expr, ExprKind, HirId, MatchSource, Pat, PatKind, QPath, StmtKind, UnOp};
+use rustc_hir::{Arm, Expr, ExprKind, HirId, MatchSource, Pat, PatKind, StmtKind, UnOp};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::Span;
@@ -93,23 +94,13 @@ fn is_negative_extractor(cx: &LateContext<'_>, body: &Expr<'_>) -> bool {
 /// the dispatch on; the inner match is where the variants are or are not
 /// listed, and this lint judges it on its own.
 fn redispatches(body: &Expr<'_>, binding: HirId) -> bool {
-    let mut body = body;
-    while let ExprKind::Block(block, None) = body.kind
-        && block.stmts.is_empty()
-        && let Some(tail) = block.expr
-    {
-        body = tail;
-    }
-    let ExprKind::Match(mut scrut, _, MatchSource::Normal) = body.kind else {
+    let ExprKind::Match(mut scrut, _, MatchSource::Normal) = peel_blocks(body).kind else {
         return false;
     };
     while let ExprKind::AddrOf(_, _, inner) | ExprKind::Unary(UnOp::Deref, inner) = scrut.kind {
         scrut = inner;
     }
-    matches!(
-        scrut.kind,
-        ExprKind::Path(QPath::Resolved(None, path)) if path.res == Res::Local(binding)
-    )
+    scrut.res_local_id() == Some(binding)
 }
 
 /// Every variant the non-catch-all arms cover, or None when an arm's shape is

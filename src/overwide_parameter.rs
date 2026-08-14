@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
+use clippy_utils::res::MaybeResPath;
 use clippy_utils::visitors::for_each_expr;
 use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::DefId;
 use rustc_hir::intravisit::FnKind;
-use rustc_hir::{Body, Expr, ExprKind, FnDecl, HirId, PatKind, QPath};
+use rustc_hir::{Body, Expr, ExprKind, FnDecl, HirId, PatKind};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::Span;
@@ -106,8 +107,7 @@ impl<'tcx> LateLintPass<'tcx> for OverwideParameter {
         let fn_def = def_id.to_def_id();
         for_each_expr(cx, body.value, |e: &Expr<'tcx>| {
             if let ExprKind::Match(scrut, arms, _) = e.kind
-                && let ExprKind::Path(QPath::Resolved(None, path)) = &scrut.kind
-                && let Res::Local(scrut_local) = path.res
+                && let Some(scrut_local) = scrut.res_local_id()
                 && let Some(idx) = params.iter().position(|p| *p == Some(scrut_local))
             {
                 for arm in arms {

@@ -1,10 +1,10 @@
-use clippy_utils::visitors::{for_each_expr, for_each_expr_without_closures};
-use rustc_hir::def::Res;
+use clippy_utils::res::MaybeResPath;
+use clippy_utils::visitors::{for_each_expr, for_each_expr_without_closures, is_local_used};
 use rustc_hir::def_id::DefId;
 use rustc_hir::intravisit::{Visitor, walk_expr};
 use rustc_hir::{
     BinOpKind, Block, Expr, ExprKind, HirId, ImplicitSelfKind, MatchSource, Mutability, PatKind,
-    QPath, Stmt, StmtKind, UnOp,
+    Stmt, StmtKind, UnOp,
 };
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
@@ -442,21 +442,6 @@ fn hands_out<'tcx>(cx: &LateContext<'tcx>, arg: &'tcx Expr<'tcx>, t: &Tracked) -
     }
 }
 
-fn is_binding(e: &Expr<'_>, binding: HirId) -> bool {
-    matches!(&e.kind, ExprKind::Path(QPath::Resolved(None, p)) if p.res == Res::Local(binding))
-}
-
-fn mentions<'tcx>(cx: &LateContext<'tcx>, e: &'tcx Expr<'tcx>, binding: HirId) -> bool {
-    for_each_expr(cx, e, |inner: &Expr<'tcx>| {
-        if is_binding(inner, binding) {
-            std::ops::ControlFlow::Break(())
-        } else {
-            std::ops::ControlFlow::Continue(())
-        }
-    })
-    .is_some()
-}
-
 /// How an expression gives control away.
 enum Exit<'tcx> {
     /// A configured callee: the project says it re-enters, and re-entry
@@ -626,7 +611,7 @@ fn refreshes<'tcx>(
                 self_place(recv).is_some_and(|p| p == t.place)
             }
             ExprKind::Assign(lhs, _, _) | ExprKind::AssignOp(_, lhs, _) => {
-                is_binding(lhs, t.binding)
+                lhs.res_local_id() == Some(t.binding)
                     || self_place(lhs).is_some_and(|p| t.place.starts_with(&p))
             }
             _ => false,
@@ -650,7 +635,10 @@ struct Reuse<'a, 'tcx> {
 
 impl<'a, 'tcx> Reuse<'a, 'tcx> {
     fn depends(&self, args: &'tcx [Expr<'tcx>]) -> bool {
-        self.gated > 0 || args.iter().any(|a| mentions(self.cx, a, self.t.binding))
+        self.gated > 0
+            || args
+                .iter()
+                .any(|a| is_local_used(self.cx, a, self.t.binding))
     }
 
     fn access(&self, e: &'tcx Expr<'tcx>) -> bool {
@@ -689,7 +677,7 @@ impl<'tcx> Visitor<'tcx> for Reuse<'_, 'tcx> {
             return;
         }
         if self.t.fact == Fact::Pointer {
-            if is_binding(e, self.t.binding) {
+            if e.res_local_id() == Some(self.t.binding) {
                 self.found = Some(e.span);
             } else {
                 walk_expr(self, e);
@@ -704,7 +692,7 @@ impl<'tcx> Visitor<'tcx> for Reuse<'_, 'tcx> {
         // (`if self.items[n] > 0`, `match self.items.remove(n)`); if it does
         // not, the branches under it are gated on the number.
         match &e.kind {
-            ExprKind::If(cond, then, els) if mentions(self.cx, cond, self.t.binding) => {
+            ExprKind::If(cond, then, els) if is_local_used(self.cx, *cond, self.t.binding) => {
                 self.visit_expr(cond);
                 self.gated += 1;
                 self.visit_expr(then);
@@ -713,7 +701,7 @@ impl<'tcx> Visitor<'tcx> for Reuse<'_, 'tcx> {
                 }
                 self.gated -= 1;
             }
-            ExprKind::Match(scrut, arms, _) if mentions(self.cx, scrut, self.t.binding) => {
+            ExprKind::Match(scrut, arms, _) if is_local_used(self.cx, *scrut, self.t.binding) => {
                 self.visit_expr(scrut);
                 self.gated += 1;
                 for arm in *arms {
