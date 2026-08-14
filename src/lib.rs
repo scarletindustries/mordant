@@ -86,17 +86,13 @@ pub struct MordantConfig {
     /// with one of these is never treated as validating a field.
     pub validator_resource_errors: Vec<String>,
     /// Minimum Option fields for `exclusive_options` to consider a struct.
-    #[serde(default = "default_min_fields")]
     pub exclusive_options_min_fields: usize,
     /// `wildcard_local_enum` stays silent above this many variants.
-    #[serde(default = "default_max_variants")]
     pub wildcard_local_enum_max_variants: usize,
     /// Bool fields at which `flag_cluster` fires.
-    #[serde(default = "default_min_bools")]
     pub flag_cluster_min_bools: usize,
     /// Construction sites at which `stored_projection` will read a
     /// correspondence between two fields.
-    #[serde(default = "default_min_sites")]
     pub stored_projection_min_sites: usize,
     /// Ratchet file name, resolved upward from each crate's manifest dir. Runs
     /// suppress up to the recorded count per (lint, file) and surface only new
@@ -141,26 +137,9 @@ pub struct MordantConfig {
     pub unchecked_input_len_enabled: bool,
 }
 
-fn default_min_fields() -> usize {
-    2
-}
-
-fn default_max_variants() -> usize {
-    12
-}
-
-fn default_min_bools() -> usize {
-    3
-}
-
-fn default_min_sites() -> usize {
-    2
-}
-
 /// `dylint_linting::config_or_default` returns this when the linted
-/// workspace has no `dylint.toml`. Field-level `serde(default = ...)` covers
-/// a present file that omits a key; both paths call the same fns, so the
-/// two cannot disagree.
+/// workspace has no `dylint.toml`; the container-level `serde(default)`
+/// fills any omitted key from it too.
 impl Default for MordantConfig {
     fn default() -> Self {
         Self {
@@ -171,10 +150,10 @@ impl Default for MordantConfig {
             nonidentity_key_composite: false,
             nonidentity_key_fixes: Vec::new(),
             validator_resource_errors: Vec::new(),
-            exclusive_options_min_fields: default_min_fields(),
-            wildcard_local_enum_max_variants: default_max_variants(),
-            flag_cluster_min_bools: default_min_bools(),
-            stored_projection_min_sites: default_min_sites(),
+            exclusive_options_min_fields: 2,
+            wildcard_local_enum_max_variants: 12,
+            flag_cluster_min_bools: 3,
+            stored_projection_min_sites: 2,
             baseline: None,
             forbidden_reach: Vec::new(),
             stale_across_reentry_callees: Vec::new(),
@@ -326,8 +305,7 @@ fn config_default_thresholds_match_docs() {
 }
 
 /// An empty table (file present, keys omitted) must not drift from
-/// `Default`. Field-level `serde(default = ...)` and this impl share the
-/// same fns.
+/// `Default`.
 #[test]
 fn config_omitted_toml_keys_use_the_same_thresholds() {
     let parsed: MordantConfig = toml::from_str("").expect("empty document is an empty table");
