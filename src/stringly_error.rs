@@ -1,3 +1,4 @@
+use crate::adt_facts::result_err_ty;
 use crate::baseline::emit;
 use clippy_utils::ty::ty_from_hir_ty;
 use rustc_hir::def_id::LocalDefId;
@@ -39,7 +40,7 @@ impl StringlyError {
             return;
         };
         let output = ty_from_hir_ty(cx, ret_hir_ty);
-        let Some(err_ty) = result_err_ty(cx, output) else {
+        let Some(err_ty) = result_err_ty(cx.tcx, output) else {
             return;
         };
         if let Some(desc) = self.stringy_desc(cx, err_ty) {
@@ -71,16 +72,6 @@ impl StringlyError {
             ty::Ref(_, inner, _) if inner.is_str() => Some("&str"),
             _ => None,
         }
-    }
-}
-
-fn result_err_ty<'tcx>(cx: &LateContext<'tcx>, output: Ty<'tcx>) -> Option<Ty<'tcx>> {
-    if let ty::Adt(adt, args) = output.kind()
-        && cx.tcx.is_diagnostic_item(sym::Result, adt.did())
-    {
-        Some(args.type_at(1))
-    } else {
-        None
     }
 }
 

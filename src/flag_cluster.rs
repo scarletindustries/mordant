@@ -1,3 +1,4 @@
+use crate::adt_facts::{field_ty, has_fixed_repr, has_positional_fields};
 use crate::baseline::emit;
 use rustc_hir::{Item, ItemKind};
 use rustc_lint::{LateContext, LateLintPass};
@@ -39,30 +40,17 @@ impl<'tcx> LateLintPass<'tcx> for FlagCluster {
         };
         let did = item.owner_id.to_def_id();
         let adt = cx.tcx.adt_def(did);
-        let repr = adt.repr();
-        // An explicit repr means something outside Rust fixes the layout.
-        if repr.c() || repr.packed() || repr.transparent() || repr.simd() || repr.int.is_some() {
+        if has_fixed_repr(adt) {
             return;
         }
         let variant = adt.non_enum_variant();
-        // Tuple-struct fields are named "0", "1", …; the message wants names.
-        if variant
-            .fields
-            .iter()
-            .any(|f| f.name.as_str().starts_with(|c: char| c.is_ascii_digit()))
-        {
+        if has_positional_fields(variant) {
             return;
         }
         let bools: Vec<_> = variant
             .fields
             .iter()
-            .filter(|f| {
-                cx.tcx
-                    .type_of(f.did)
-                    .instantiate_identity()
-                    .skip_normalization()
-                    .is_bool()
-            })
+            .filter(|f| field_ty(cx, f).is_bool())
             .map(|f| f.name)
             .collect();
         if bools.len() < self.min_bools {

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::adt_facts::{field_ty, private_local_struct, struct_field};
 use crate::baseline::emit;
 use clippy_utils::get_enclosing_block;
 use rustc_hir::def_id::DefId;
@@ -37,31 +38,14 @@ impl ParallelBools {
 
 /// The crate-private local struct behind `ty`, if it has 2+ bool fields.
 fn relevant_struct<'tcx>(cx: &LateContext<'tcx>, ty: ty::Ty<'tcx>) -> Option<ty::AdtDef<'tcx>> {
-    let ty::Adt(adt, _) = ty.peel_refs().kind() else {
-        return None;
-    };
-    if !adt.is_struct() || !adt.did().is_local() {
-        return None;
-    }
-    if cx
-        .effective_visibilities
-        .is_exported(adt.did().expect_local())
-    {
-        return None;
-    }
+    let adt = private_local_struct(cx, ty)?;
     let bools = adt
         .non_enum_variant()
         .fields
         .iter()
-        .filter(|f| {
-            cx.tcx
-                .type_of(f.did)
-                .instantiate_identity()
-                .skip_normalization()
-                .is_bool()
-        })
+        .filter(|f| field_ty(cx, f).is_bool())
         .count();
-    (bools >= 2).then_some(*adt)
+    (bools >= 2).then_some(adt)
 }
 
 impl<'tcx> LateLintPass<'tcx> for ParallelBools {
@@ -75,15 +59,8 @@ impl<'tcx> LateLintPass<'tcx> for ParallelBools {
         let Some(adt) = relevant_struct(cx, cx.typeck_results().expr_ty(base)) else {
             return;
         };
-        let field_is_bool = adt.non_enum_variant().fields.iter().any(|f| {
-            f.name == ident.name
-                && cx
-                    .tcx
-                    .type_of(f.did)
-                    .instantiate_identity()
-                    .skip_normalization()
-                    .is_bool()
-        });
+        let field_is_bool =
+            struct_field(adt, ident.name).is_some_and(|f| field_ty(cx, f).is_bool());
         if !field_is_bool {
             return;
         }

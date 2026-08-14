@@ -1,11 +1,49 @@
-//! Shared analysis for the panic-elimination lints: which variant a
-//! constructor literal builds, which variant a pattern head names, and
-//! whether a match arm is a panic rather than any other divergence.
+//! Shared analysis for the enum lints: which variant a resolution, a
+//! constructor literal or a pattern head names, which of those variants
+//! belong to a crate-private enum, and whether a match arm is a panic rather
+//! than any other divergence. Every lint that asks "which variant is this"
+//! goes through here, so the answer is the same in all of them.
 
 use rustc_hir::def::{CtorOf, DefKind, Res};
 use rustc_hir::def_id::DefId;
-use rustc_hir::{Expr, ExprKind, Pat, PatExpr, PatExprKind, PatKind};
+use rustc_hir::{Expr, ExprKind, Pat, PatExpr, PatExprKind, PatKind, QPath};
 use rustc_lint::LateContext;
+
+/// The variant `res` names, whether spelled as the variant itself (unit and
+/// struct variants) or as its constructor (tuple variants).
+pub(crate) fn variant_of_res(cx: &LateContext<'_>, res: Res) -> Option<DefId> {
+    match res {
+        Res::Def(DefKind::Variant, id) => Some(id),
+        Res::Def(DefKind::Ctor(CtorOf::Variant, _), id) => Some(cx.tcx.parent(id)),
+        _ => None,
+    }
+}
+
+/// The path at the head of a pattern that names something: `E::V`,
+/// `E::V(..)` or `E::V { .. }`. Bindings, wildcards, literals, ranges, ors,
+/// tuples and the rest have no head path.
+pub(crate) fn pat_head_qpath<'h>(pat: &'h Pat<'h>) -> Option<&'h QPath<'h>> {
+    match &pat.kind {
+        PatKind::TupleStruct(qpath, ..) | PatKind::Struct(qpath, ..) => Some(qpath),
+        PatKind::Expr(PatExpr {
+            kind: PatExprKind::Path(qpath),
+            ..
+        }) => Some(qpath),
+        _ => None,
+    }
+}
+
+/// The enum owning `variant`, when that enum is defined in this crate and not
+/// reachable from outside it; a variant an outside crate could name is not
+/// this crate's to account for.
+pub(crate) fn private_enum_of(cx: &LateContext<'_>, variant: DefId) -> Option<DefId> {
+    let enum_did = cx.tcx.parent(variant);
+    let local = enum_did.as_local()?;
+    if cx.effective_visibilities.is_exported(local) {
+        return None;
+    }
+    Some(enum_did)
+}
 
 /// The variant a constructor-literal argument passes, or None for anything
 /// short of a literal constructor.
@@ -21,28 +59,13 @@ pub(crate) fn ctor_literal_variant(cx: &LateContext<'_>, e: &Expr<'_>) -> Option
         ExprKind::Struct(qpath, ..) => cx.qpath_res(qpath, e.hir_id),
         _ => return None,
     };
-    match res {
-        Res::Def(DefKind::Variant, id) => Some(id),
-        Res::Def(DefKind::Ctor(CtorOf::Variant, _), id) => Some(cx.tcx.parent(id)),
-        _ => None,
-    }
+    variant_of_res(cx, res)
 }
 
 /// The variant a match-arm pattern names at its head.
 pub(crate) fn arm_variant(cx: &LateContext<'_>, pat: &Pat<'_>) -> Option<DefId> {
-    let qpath = match &pat.kind {
-        PatKind::TupleStruct(qpath, ..) | PatKind::Struct(qpath, ..) => qpath,
-        PatKind::Expr(PatExpr {
-            kind: PatExprKind::Path(qpath),
-            ..
-        }) => qpath,
-        _ => return None,
-    };
-    match cx.qpath_res(qpath, pat.hir_id) {
-        Res::Def(DefKind::Variant, id) => Some(id),
-        Res::Def(DefKind::Ctor(CtorOf::Variant, _), id) => Some(cx.tcx.parent(id)),
-        _ => None,
-    }
+    let qpath = pat_head_qpath(pat)?;
+    variant_of_res(cx, cx.qpath_res(qpath, pat.hir_id))
 }
 
 /// A diverging arm that is a panic, not a `return`/`continue`: never-typed

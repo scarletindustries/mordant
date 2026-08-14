@@ -11,6 +11,7 @@ use rustc_span::Span;
 use rustc_span::def_id::LocalDefId;
 
 use crate::baseline::emit;
+use crate::hir_shapes::{Callee, callee_of};
 
 rustc_session::declare_lint! {
     /// Flags a panicking match arm for an enum variant that no existing call
@@ -129,14 +130,8 @@ impl<'tcx> LateLintPass<'tcx> for OverwideParameter {
     }
 
     fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
-        match &expr.kind {
-            ExprKind::Call(callee, args) => {
-                let ExprKind::Path(qpath) = &callee.kind else {
-                    return;
-                };
-                let Some(def) = cx.qpath_res(qpath, callee.hir_id).opt_def_id() else {
-                    return;
-                };
+        match callee_of(cx, expr) {
+            Some(Callee::Path { def, args }) => {
                 if !def.is_local()
                     || !matches!(cx.tcx.def_kind(def), DefKind::Fn | DefKind::AssocFn)
                 {
@@ -153,10 +148,7 @@ impl<'tcx> LateLintPass<'tcx> for OverwideParameter {
                     }
                 }
             }
-            ExprKind::MethodCall(_, _, args, _) => {
-                let Some(def) = cx.typeck_results().type_dependent_def_id(expr.hir_id) else {
-                    return;
-                };
+            Some(Callee::Method { def, args, .. }) => {
                 if !def.is_local() {
                     return;
                 }
@@ -177,7 +169,10 @@ impl<'tcx> LateLintPass<'tcx> for OverwideParameter {
             // A bare reference to a local fn (fn pointer, higher-order use):
             // its future call sites are invisible. The callee position of a
             // direct call is not a bare reference; that call is counted above.
-            ExprKind::Path(qpath) => {
+            None => {
+                let ExprKind::Path(qpath) = &expr.kind else {
+                    return;
+                };
                 let is_direct_callee =
                     cx.tcx
                         .hir_parent_iter(expr.hir_id)
@@ -201,7 +196,6 @@ impl<'tcx> LateLintPass<'tcx> for OverwideParameter {
                     self.poisoned.insert(def);
                 }
             }
-            _ => {}
         }
     }
 

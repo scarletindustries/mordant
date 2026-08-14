@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
+use crate::adt_facts::{field_ty, is_option_ty, private_local_struct};
 use crate::baseline::emit;
 use rustc_hir::def_id::DefId;
 use rustc_hir::{Expr, ExprKind, StructTailExpr};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
-use rustc_span::{Symbol, sym};
+use rustc_span::Symbol;
 
 use crate::MordantConfig;
 
@@ -50,20 +51,8 @@ fn option_fields(cx: &LateContext<'_>, adt: ty::AdtDef<'_>) -> Vec<Symbol> {
     adt.non_enum_variant()
         .fields
         .iter()
-        .filter_map(|f| {
-            let ty = cx
-                .tcx
-                .type_of(f.did)
-                .instantiate_identity()
-                .skip_normalization();
-            if let ty::Adt(fadt, _) = ty.kind()
-                && cx.tcx.is_diagnostic_item(sym::Option, fadt.did())
-            {
-                Some(f.name)
-            } else {
-                None
-            }
-        })
+        .filter(|f| is_option_ty(cx, field_ty(cx, f)))
+        .map(|f| f.name)
         .collect()
 }
 
@@ -74,18 +63,9 @@ fn relevant_adt<'tcx>(
     ty: ty::Ty<'tcx>,
     min_fields: usize,
 ) -> Option<(ty::AdtDef<'tcx>, Vec<Symbol>)> {
-    let ty::Adt(adt, _) = ty.peel_refs().kind() else {
-        return None;
-    };
-    if !adt.is_struct() || !adt.did().is_local() {
-        return None;
-    }
-    let local = adt.did().expect_local();
-    if cx.effective_visibilities.is_exported(local) {
-        return None;
-    }
-    let opts = option_fields(cx, *adt);
-    (opts.len() >= min_fields).then_some((*adt, opts))
+    let adt = private_local_struct(cx, ty)?;
+    let opts = option_fields(cx, adt);
+    (opts.len() >= min_fields).then_some((adt, opts))
 }
 
 enum Init {

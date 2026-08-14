@@ -1,7 +1,10 @@
-//! Shared machinery for lints that treat prose as checkable claims: comment
-//! harvesting, backticked-name extraction, and the scopes a name can
-//! legitimately live in (the file's code, this crate's definitions, and the
-//! definitions of every crate it links).
+//! Shared machinery for lints that treat prose as checkable claims
+//! (`stale_safety_comment`, `stale_panic_message`). A claim is a backticked
+//! name in a comment or message; it holds if the name occurs in the file's
+//! code with comments removed, or is defined by this crate or any crate it
+//! links. Both callers run the same check: [`backticked_idents`] over the
+//! text, then [`word_in`] against [`file_code_only`] and [`DefNames::contains`]
+//! for each name.
 
 use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
@@ -11,6 +14,8 @@ use rustc_lint::LateContext;
 use rustc_metadata::creader::CStore;
 use rustc_span::{BytePos, Span};
 
+/// Keywords, primitives, and prelude names. Every one of them is defined
+/// everywhere, so a claim naming one can never go stale and is not extracted.
 pub(crate) const IDENT_STOPLIST: &[&str] = &[
     "self", "Self", "mut", "true", "false", "None", "Some", "Ok", "Err", "Vec", "Box", "drop",
     "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize", "f32",
@@ -24,9 +29,11 @@ const FILE_EXTENSIONS: &[&str] = &[
     "js", "ts", "py", "go",
 ];
 
-/// Backticked mentions in text, reduced to their final identifier:
-/// `` `self.frames` `` and `` `VM::wake()` `` both yield their last segment,
-/// and anything that is not identifier-shaped after that reduction is skipped.
+/// Backticked mentions in `text`, reduced to their final identifier:
+/// `` `self.frames` `` and `` `VM::wake()` `` yield `frames` and `wake`.
+/// Skipped: file paths and names with a [`FILE_EXTENSIONS`] suffix, anything
+/// not identifier-shaped after the reduction, and the [`IDENT_STOPLIST`].
+/// Duplicates are kept.
 pub(crate) fn backticked_idents(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut rest = text;
@@ -60,8 +67,10 @@ pub(crate) fn backticked_idents(text: &str) -> Vec<String> {
     out
 }
 
-/// The contiguous run of `//` comment lines directly above `span`'s first
-/// line, joined, with the span covering those lines.
+/// The contiguous run of `//` lines directly above `span`'s first line (a
+/// blank line or code ends the run; nothing directly above means `None`),
+/// with the slashes stripped and the lines joined by `\n`, plus the span
+/// covering exactly those lines, which is what the callers report on.
 pub(crate) fn comment_above(cx: &LateContext<'_>, span: Span) -> Option<(String, Span)> {
     let sm = cx.tcx.sess.source_map();
     let lines = sm.span_to_lines(span).ok()?;
@@ -91,8 +100,10 @@ pub(crate) fn comment_above(cx: &LateContext<'_>, span: Span) -> Option<(String,
     ))
 }
 
-/// The source of `span`'s whole file with every `//` comment stripped, so a
-/// comment can never vouch for its own claims.
+/// The source of `span`'s whole file with the rest of every line cut at its
+/// first `//`, so a comment can never vouch for its own claims. The cut is
+/// textual: a `//` inside a string literal loses the rest of that line too,
+/// and `/* */` comments are left in.
 pub(crate) fn file_code_only(cx: &LateContext<'_>, span: Span) -> String {
     let file_src = cx
         .tcx
@@ -109,6 +120,8 @@ pub(crate) fn file_code_only(cx: &LateContext<'_>, span: Span) -> String {
         .join("\n")
 }
 
+/// Whether `ident` occurs in `haystack` as a whole identifier token, so
+/// `frame` does not match `frames` or `frame_count`.
 pub(crate) fn word_in(haystack: &str, ident: &str) -> bool {
     haystack
         .split(|c: char| !(c.is_alphanumeric() || c == '_'))
@@ -116,9 +129,11 @@ pub(crate) fn word_in(haystack: &str, ident: &str) -> bool {
 }
 
 /// The definition names a claim may point at beyond its own file: everything
-/// this crate defines, and everything any linked crate defines. The upstream
-/// set is large (std alone is tens of thousands of names) and most crates
-/// never need it, so it is built on the first lookup that misses locally.
+/// this crate defines, and everything any linked crate defines. Built once
+/// per crate in the callers' `check_crate`. The upstream set is large (std
+/// alone is tens of thousands of names) and a crate whose claims all resolve
+/// locally never needs it, so it is built on the first lookup that misses
+/// locally.
 pub(crate) struct DefNames {
     local: HashMap<String, Option<LocalDefId>>,
     upstream: OnceCell<HashSet<String>>,
@@ -141,7 +156,8 @@ impl DefNames {
     }
 }
 
-/// Every named definition in every crate this one links, std included. A
+/// Every named definition in every crate this one links, std included:
+/// items, variants, and fields alike, since all have a `def_key` name. A
 /// SAFETY comment in a workspace member routinely names the sibling crate or
 /// std type that owns the invariant, and none of those are in the local HIR.
 fn upstream_def_names(cx: &LateContext<'_>) -> HashSet<String> {
@@ -168,9 +184,11 @@ fn upstream_def_names(cx: &LateContext<'_>) -> HashSet<String> {
     names
 }
 
-/// Every definition name in the crate, mapped to one owning def. Names that
-/// several defs share map to `None`, so a consumer needing THE definition
-/// (fingerprinting, spans) skips ambiguous names instead of guessing.
+/// Every name this crate defines: each item, and every variant and field of
+/// each local ADT, since a claim usually names the field it guards. A name
+/// with exactly one owning item maps to that item; a name several defs share,
+/// and every variant and field, maps to `None`. [`DefNames::contains`] only
+/// asks whether the name is present.
 fn crate_def_index(cx: &LateContext<'_>) -> HashMap<String, Option<LocalDefId>> {
     let mut index: HashMap<String, Option<LocalDefId>> = HashMap::new();
     let mut insert = |name: String, def: Option<LocalDefId>| match index.entry(name) {

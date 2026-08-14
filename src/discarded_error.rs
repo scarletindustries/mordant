@@ -1,8 +1,7 @@
+use crate::adt_facts::result_err_ty;
 use crate::baseline::emit;
 use rustc_hir::{ExprKind, Stmt, StmtKind};
 use rustc_lint::{LateContext, LateLintPass};
-use rustc_middle::ty;
-use rustc_span::sym;
 
 rustc_session::declare_lint! {
     /// Flags `.ok();` in statement position: the `Result` becomes an `Option`
@@ -27,15 +26,8 @@ impl<'tcx> LateLintPass<'tcx> for DiscardedError {
         if seg.ident.as_str() != "ok" {
             return;
         }
-        let ty::Adt(adt, _) = cx
-            .typeck_results()
-            .expr_ty_adjusted(recv)
-            .peel_refs()
-            .kind()
-        else {
-            return;
-        };
-        if !cx.tcx.is_diagnostic_item(sym::Result, adt.did()) {
+        let recv_ty = cx.typeck_results().expr_ty_adjusted(recv).peel_refs();
+        if result_err_ty(cx.tcx, recv_ty).is_none() {
             return;
         }
         emit(

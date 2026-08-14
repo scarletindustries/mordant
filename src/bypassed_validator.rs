@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::adt_facts::impl_self_adt;
 use crate::baseline::emit_with_note;
 use crate::ctor_flow::{self, FieldCheck};
 use clippy_utils::ty::ty_from_hir_ty;
@@ -61,19 +62,8 @@ impl BypassedValidator {
 
 /// The struct an impl block is for, when it is a crate-local struct.
 fn impl_self_struct(cx: &LateContext<'_>, impl_did: DefId) -> Option<DefId> {
-    let self_ty = cx
-        .tcx
-        .type_of(impl_did)
-        .instantiate_identity()
-        .skip_normalization();
-    if let ty::Adt(adt, _) = self_ty.kind()
-        && adt.is_struct()
-        && adt.did().is_local()
-    {
-        Some(adt.did())
-    } else {
-        None
-    }
+    let adt = impl_self_adt(cx, impl_did)?;
+    (adt.is_struct() && adt.did().is_local()).then(|| adt.did())
 }
 
 impl<'tcx> LateLintPass<'tcx> for BypassedValidator {

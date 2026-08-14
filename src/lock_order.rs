@@ -7,9 +7,9 @@ use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::Span;
 use rustc_span::def_id::LocalDefId;
-use rustc_span::symbol::kw;
 
 use crate::baseline::emit;
+use crate::hir_shapes::is_self_path;
 
 rustc_session::declare_lint! {
     /// Flags two lock acquisitions the crate performs in both orders: one
@@ -73,11 +73,7 @@ fn field_path(e: &Expr<'_>) -> Option<String> {
                 Some(format!("{prefix}.{}", ident.name))
             }
         }
-        ExprKind::Path(QPath::Resolved(None, p))
-            if p.segments.len() == 1 && p.segments[0].ident.name == kw::SelfLower =>
-        {
-            Some(String::new())
-        }
+        ExprKind::Path(_) if is_self_path(e) => Some(String::new()),
         ExprKind::AddrOf(_, _, inner) | ExprKind::Unary(_, inner) => field_path(inner),
         _ => None,
     }

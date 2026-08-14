@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
-use rustc_hir::def::{CtorOf, DefKind, Res};
 use rustc_hir::def_id::DefId;
-use rustc_hir::{BinOpKind, Expr, ExprKind, Pat, PatExpr, PatExprKind, PatKind, UnOp};
+use rustc_hir::{BinOpKind, Expr, ExprKind, Pat, UnOp};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 
+use crate::adt_facts::impl_self_adt;
 use crate::baseline::emit;
+use crate::enum_facts::{arm_variant, ctor_literal_variant, private_enum_of};
 
 rustc_session::declare_lint! {
     /// Flags a crate-private enum variant that is constructed somewhere but
@@ -46,21 +47,6 @@ impl UnreadErrorVariant {
     }
 }
 
-/// The crate-private local enum owning `variant_res`, with the variant.
-fn variant_of_private_enum(cx: &LateContext<'_>, res: Res) -> Option<(DefId, DefId)> {
-    let variant = match res {
-        Res::Def(DefKind::Variant, id) => id,
-        Res::Def(DefKind::Ctor(CtorOf::Variant, _), id) => cx.tcx.parent(id),
-        _ => return None,
-    };
-    let enum_did = cx.tcx.parent(variant);
-    let local = enum_did.as_local()?;
-    if cx.effective_visibilities.is_exported(local) {
-        return None;
-    }
-    Some((enum_did, variant))
-}
-
 /// True when `hir_id` sits inside a TRAIT impl whose self type is `enum_did`.
 /// `Display`, `Debug`, `From` and derive expansions must match every variant
 /// to exist, so their patterns prove nothing. Inherent methods are not
@@ -72,17 +58,9 @@ fn inside_own_trait_impl(cx: &LateContext<'_>, hir_id: rustc_hir::HirId, enum_di
         if matches!(
             cx.tcx.def_kind(cur),
             rustc_hir::def::DefKind::Impl { of_trait: true }
-        ) {
-            let self_ty = cx
-                .tcx
-                .type_of(cur)
-                .instantiate_identity()
-                .skip_normalization();
-            if let ty::Adt(adt, _) = self_ty.kind()
-                && adt.did() == enum_did
-            {
-                return true;
-            }
+        ) && impl_self_adt(cx, cur).is_some_and(|adt| adt.did() == enum_did)
+        {
+            return true;
         }
         match cx.tcx.opt_parent(cur) {
             Some(p) => cur = p,
@@ -92,20 +70,10 @@ fn inside_own_trait_impl(cx: &LateContext<'_>, hir_id: rustc_hir::HirId, enum_di
 }
 
 /// The private-enum variant `expr` constructs, if it is a variant path, call
-/// or struct expression.
+/// or struct expression, as `(enum, variant)`.
 fn constructed_variant(cx: &LateContext<'_>, expr: &Expr<'_>) -> Option<(DefId, DefId)> {
-    let res = match expr.kind {
-        ExprKind::Call(callee, _) => {
-            let ExprKind::Path(qpath) = &callee.kind else {
-                return None;
-            };
-            cx.qpath_res(qpath, callee.hir_id)
-        }
-        ExprKind::Path(ref qpath) => cx.qpath_res(qpath, expr.hir_id),
-        ExprKind::Struct(qpath, ..) => cx.qpath_res(qpath, expr.hir_id),
-        _ => return None,
-    };
-    variant_of_private_enum(cx, res)
+    let variant = ctor_literal_variant(cx, expr)?;
+    Some((private_enum_of(cx, variant)?, variant))
 }
 
 fn peel_operand<'tcx>(mut e: &'tcx Expr<'tcx>) -> &'tcx Expr<'tcx> {
@@ -168,16 +136,10 @@ impl<'tcx> LateLintPass<'tcx> for UnreadErrorVariant {
     }
 
     fn check_pat(&mut self, cx: &LateContext<'tcx>, pat: &'tcx Pat<'tcx>) {
-        let qpath = match &pat.kind {
-            PatKind::TupleStruct(qpath, ..) | PatKind::Struct(qpath, ..) => qpath,
-            PatKind::Expr(PatExpr {
-                kind: PatExprKind::Path(qpath),
-                ..
-            }) => qpath,
-            _ => return,
+        let Some(variant) = arm_variant(cx, pat) else {
+            return;
         };
-        let res = cx.qpath_res(qpath, pat.hir_id);
-        let Some((enum_did, variant)) = variant_of_private_enum(cx, res) else {
+        let Some(enum_did) = private_enum_of(cx, variant) else {
             return;
         };
         if inside_own_trait_impl(cx, pat.hir_id, enum_did) {

@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use rustc_hir::def_id::DefId;
 use rustc_hir::{Expr, ExprKind, Node};
 use rustc_lint::{LateContext, LateLintPass};
-use rustc_middle::ty;
-use rustc_span::{Symbol, sym};
+use rustc_span::Symbol;
 
+use crate::adt_facts::{field_ty, is_option_ty, private_local_struct, struct_field};
 use crate::baseline::emit;
 
 rustc_session::declare_lint! {
@@ -47,34 +47,8 @@ fn option_field_of<'tcx>(
     base: &Expr<'tcx>,
     field: Symbol,
 ) -> Option<DefId> {
-    let ty::Adt(adt, _) = cx
-        .typeck_results()
-        .expr_ty_adjusted(base)
-        .peel_refs()
-        .kind()
-    else {
-        return None;
-    };
-    if !adt.is_struct() || !adt.did().is_local() {
-        return None;
-    }
-    if cx
-        .effective_visibilities
-        .is_exported(adt.did().expect_local())
-    {
-        return None;
-    }
-    let is_option = adt.non_enum_variant().fields.iter().any(|f| {
-        f.name == field
-            && matches!(
-                cx.tcx
-                    .type_of(f.did)
-                    .instantiate_identity()
-                    .skip_normalization()
-                    .kind(),
-                ty::Adt(fadt, _) if cx.tcx.is_diagnostic_item(sym::Option, fadt.did())
-            )
-    });
+    let adt = private_local_struct(cx, cx.typeck_results().expr_ty_adjusted(base))?;
+    let is_option = struct_field(adt, field).is_some_and(|f| is_option_ty(cx, field_ty(cx, f)));
     is_option.then(|| adt.did())
 }
 
@@ -140,14 +114,7 @@ impl<'tcx> LateLintPass<'tcx> for UnreadNone {
             if facts.handled > 0 || facts.panicking.len() < 2 {
                 continue;
             }
-            let Some(fdef) = cx
-                .tcx
-                .adt_def(*adt)
-                .non_enum_variant()
-                .fields
-                .iter()
-                .find(|f| f.name == *field)
-            else {
+            let Some(fdef) = struct_field(cx.tcx.adt_def(*adt), *field) else {
                 continue;
             };
             emit(

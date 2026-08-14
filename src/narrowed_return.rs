@@ -11,6 +11,7 @@ use rustc_span::def_id::LocalDefId;
 
 use crate::baseline::emit;
 use crate::enum_facts::{arm_variant, is_panic_arm};
+use crate::hir_shapes::{Callee, callee_of};
 use crate::variant_flow::returned_variants;
 
 rustc_session::declare_lint! {
@@ -78,13 +79,7 @@ impl<'tcx> LateLintPass<'tcx> for NarrowedReturn {
         let ExprKind::Match(scrut, arms, _) = expr.kind else {
             return;
         };
-        let ExprKind::Call(callee, _) = &scrut.kind else {
-            return;
-        };
-        let ExprKind::Path(qpath) = &callee.kind else {
-            return;
-        };
-        let Some(def) = cx.qpath_res(qpath, callee.hir_id).opt_def_id() else {
+        let Some(Callee::Path { def, .. }) = callee_of(cx, scrut) else {
             return;
         };
         if !def.is_local() || !matches!(cx.tcx.def_kind(def), DefKind::Fn | DefKind::AssocFn) {

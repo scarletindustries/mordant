@@ -2,11 +2,12 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use rustc_hir::def::{CtorKind, CtorOf, DefKind, Res};
 use rustc_hir::def_id::DefId;
-use rustc_hir::{Expr, ExprKind};
+use rustc_hir::{Expr, ExprKind, StructTailExpr};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_span::Symbol;
 
 use crate::MordantConfig;
+use crate::adt_facts::{has_fixed_repr, has_positional_fields, struct_literal};
 use crate::baseline::emit;
 
 rustc_session::declare_lint! {
@@ -196,47 +197,29 @@ impl<'tcx> LateLintPass<'tcx> for StoredProjection {
             self.note_assignment(cx, place);
             return;
         }
-        let ExprKind::Struct(qpath, fields, _) = expr.kind else {
+        let Some(lit) = struct_literal(cx, expr) else {
             return;
         };
         // A `..base` literal overrides part of a value that already exists, so
         // the fields written are the ones deliberately being made to differ.
-        if !matches!(
-            expr.kind,
-            ExprKind::Struct(_, _, rustc_hir::StructTailExpr::None)
-        ) {
+        if !matches!(lit.tail, StructTailExpr::None) {
             return;
         }
-        let Some(adt) = cx.typeck_results().expr_ty(expr).ty_adt_def() else {
-            return;
-        };
-        if !adt.did().is_local() {
+        if !lit.adt.did().is_local() {
             return;
         }
-        // An explicit repr means something outside Rust fixes the layout, and
-        // a wire record legitimately restates what a sibling implies.
-        let repr = adt.repr();
-        if repr.c() || repr.packed() || repr.transparent() || repr.simd() || repr.int.is_some() {
-            return;
-        }
-        let res = cx.qpath_res(qpath, expr.hir_id);
-        let variant = adt.variant_of_res(res);
-        // Tuple fields are named "0", "1", …; the message wants names.
-        if variant
-            .fields
-            .iter()
-            .any(|f| f.name.as_str().starts_with(|c: char| c.is_ascii_digit()))
-        {
+        // A wire record legitimately restates what a sibling implies.
+        if has_fixed_repr(lit.adt) || has_positional_fields(lit.variant) {
             return;
         }
         let mut vals = BTreeMap::new();
-        for f in fields {
+        for f in lit.fields {
             if let Some(v) = classify(cx, f.expr) {
                 vals.insert(f.ident.name, v);
             }
         }
         self.seen
-            .entry(variant.def_id)
+            .entry(lit.variant.def_id)
             .or_default()
             .push(Site { fields: vals });
     }

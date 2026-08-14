@@ -1,15 +1,15 @@
-use clippy_utils::diagnostics::span_lint_hir_and_then;
 use clippy_utils::source::snippet_opt;
 use rustc_ast::LitKind;
 use rustc_errors::Applicability;
-use rustc_hir::def::{CtorOf, DefKind, Res};
 use rustc_hir::def_id::DefId;
-use rustc_hir::{Arm, Expr, ExprKind, MatchSource, Pat, PatExpr, PatExprKind, PatKind, QPath};
+use rustc_hir::{Arm, Expr, ExprKind, MatchSource, Pat, PatKind};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::Span;
 
 use crate::MordantConfig;
+use crate::baseline::emit_hir_then;
+use crate::enum_facts::{pat_head_qpath, variant_of_res};
 
 rustc_session::declare_lint! {
     /// Flags `_` (or a catch-all binding) matching over a small crate-local
@@ -63,18 +63,6 @@ fn is_negative_extractor(cx: &LateContext<'_>, body: &Expr<'_>) -> bool {
     }
 }
 
-/// The variant a pattern head names, resolved through either the variant path
-/// or its constructor.
-fn pat_variant(cx: &LateContext<'_>, pat: &Pat<'_>, qpath: &QPath<'_>) -> Option<(DefId, Span)> {
-    let res = cx.qpath_res(qpath, pat.hir_id);
-    let variant = match res {
-        Res::Def(DefKind::Variant, id) => id,
-        Res::Def(DefKind::Ctor(CtorOf::Variant, _), id) => cx.tcx.parent(id),
-        _ => return None,
-    };
-    Some((variant, qpath.span()))
-}
-
 /// Every variant the non-catch-all arms cover, or None when an arm's shape is
 /// beyond this analysis (then no fix is offered). `qspan` is a variant path
 /// span to copy the file's path style from.
@@ -104,26 +92,19 @@ fn covered_variants(
         covered: &mut Vec<DefId>,
         qspan: &mut Option<Span>,
     ) -> Option<()> {
-        match &pat.kind {
-            PatKind::Expr(PatExpr {
-                kind: PatExprKind::Path(qpath),
-                ..
-            })
-            | PatKind::TupleStruct(qpath, ..)
-            | PatKind::Struct(qpath, ..) => {
-                let (variant, span) = pat_variant(cx, pat, qpath)?;
-                covered.push(variant);
-                qspan.get_or_insert(span);
-                Some(())
-            }
-            PatKind::Or(pats) => {
-                for p in *pats {
-                    collect(cx, p, covered, qspan)?;
-                }
-                Some(())
-            }
-            _ => None,
+        if let Some(qpath) = pat_head_qpath(pat) {
+            let variant = variant_of_res(cx, cx.qpath_res(qpath, pat.hir_id))?;
+            covered.push(variant);
+            qspan.get_or_insert(qpath.span());
+            return Some(());
         }
+        let PatKind::Or(pats) = pat.kind else {
+            return None;
+        };
+        for p in pats {
+            collect(cx, p, covered, qspan)?;
+        }
+        Some(())
     }
 }
 
@@ -188,9 +169,6 @@ impl<'tcx> LateLintPass<'tcx> for WildcardLocalEnum {
             if !catch_all {
                 continue;
             }
-            if crate::baseline::suppressed(cx, WILDCARD_LOCAL_ENUM, arm.pat.span) {
-                continue;
-            }
             // The fix replaces the catch-all with the uncovered variants,
             // spelled with the same path prefix the sibling arms use. Offered
             // only when every sibling arm's coverage is provable.
@@ -223,7 +201,7 @@ impl<'tcx> LateLintPass<'tcx> for WildcardLocalEnum {
             // Emitted against the ARM's hir id, so an #[allow] placed on the
             // arm itself is honored; a plain span emission would only see the
             // enclosing match's lint level.
-            span_lint_hir_and_then(
+            emit_hir_then(
                 cx,
                 WILDCARD_LOCAL_ENUM,
                 arm.hir_id,
