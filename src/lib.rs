@@ -1,4 +1,5 @@
 #![feature(rustc_private)]
+#![feature(default_field_values)]
 #![warn(unused_extern_crates)]
 
 extern crate rustc_abi;
@@ -60,7 +61,11 @@ mod wildcard_local_enum;
 /// gate reads these field names out of the pinned source to decide which keys
 /// it may set — so grouping them into sub-structs would rename user-visible
 /// keys to satisfy a lint about internal invariants.
-#[derive(serde::Deserialize)]
+///
+/// `dylint_linting::config_or_default` returns `Default` when the linted
+/// workspace has no `dylint.toml`; the container-level `serde(default)`
+/// fills any omitted key from it too.
+#[derive(Default, serde::Deserialize)]
 #[cfg_attr(test, derive(Debug, PartialEq))]
 #[serde(rename_all = "kebab-case", default)]
 #[cfg_attr(dylint_lib = "mordant", allow(flag_cluster))]
@@ -87,14 +92,14 @@ pub struct MordantConfig {
     /// with one of these is never treated as validating a field.
     pub validator_resource_errors: Vec<String>,
     /// Minimum Option fields for `exclusive_options` to consider a struct.
-    pub exclusive_options_min_fields: usize,
+    pub exclusive_options_min_fields: usize = 2,
     /// `wildcard_local_enum` stays silent above this many variants.
-    pub wildcard_local_enum_max_variants: usize,
+    pub wildcard_local_enum_max_variants: usize = 12,
     /// Bool fields at which `flag_cluster` fires.
-    pub flag_cluster_min_bools: usize,
+    pub flag_cluster_min_bools: usize = 3,
     /// Construction sites at which `stored_projection` will read a
     /// correspondence between two fields.
-    pub stored_projection_min_sites: usize,
+    pub stored_projection_min_sites: usize = 2,
     /// Ratchet file name, resolved upward from each crate's manifest dir. Runs
     /// suppress up to the recorded count per (lint, file) and surface only new
     /// findings. Regenerate with `MORDANT_BASELINE_WRITE=1`.
@@ -136,35 +141,6 @@ pub struct MordantConfig {
     /// which nothing inside the function tells from a missed check; run it
     /// once over parsing code and read the list.
     pub unchecked_input_len_enabled: bool,
-}
-
-/// `dylint_linting::config_or_default` returns this when the linted
-/// workspace has no `dylint.toml`; the container-level `serde(default)`
-/// fills any omitted key from it too.
-impl Default for MordantConfig {
-    fn default() -> Self {
-        Self {
-            nonidentity_key_types: Vec::new(),
-            nonidentity_key_forms: Vec::new(),
-            stringly_error_include_box_dyn: false,
-            nonidentity_key_methods: Vec::new(),
-            nonidentity_key_composite: false,
-            nonidentity_key_fixes: Vec::new(),
-            validator_resource_errors: Vec::new(),
-            exclusive_options_min_fields: 2,
-            wildcard_local_enum_max_variants: 12,
-            flag_cluster_min_bools: 3,
-            stored_projection_min_sites: 2,
-            baseline: None,
-            forbidden_reach: Vec::new(),
-            stale_across_reentry_callees: Vec::new(),
-            defaulted_failure_callees: Vec::new(),
-            flag_cluster_enabled: false,
-            stale_safety_comment_enabled: false,
-            defaulted_failure_ignored_errors: Vec::new(),
-            unchecked_input_len_enabled: false,
-        }
-    }
 }
 
 #[expect(clippy::no_mangle_with_rust_abi)]
@@ -291,7 +267,7 @@ fn ui_opt_in_lints_are_off_without_their_key() {
 }
 
 /// `config_or_default` returns `Default` when the linted workspace has no
-/// `dylint.toml`. A derived `Default` yields 0 for every `usize`, which
+/// `dylint.toml`. A threshold that lost its `= N` would default to 0, which
 /// turns `wildcard_local_enum` off (`n > 0` for every enum) and makes
 /// `exclusive_options` consider every struct.
 #[test]
