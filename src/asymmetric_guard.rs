@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use clippy_utils::visitors::for_each_expr;
+use clippy_utils::visitors::{Descend, for_each_expr};
 use rustc_hir::def_id::DefId;
 use rustc_hir::intravisit::FnKind;
 use rustc_hir::{Block, Body, Expr, ExprKind, FnDecl, QPath, Stmt, StmtKind, UnOp};
@@ -19,6 +19,11 @@ rustc_session::declare_lint! {
     /// state its action manipulates answers a different question than the one
     /// being asked. The guard/mutator pair drifting apart is how a live
     /// connection gets evicted by a donation its guard approved.
+    ///
+    /// Only calls at the guard's own level count as its actions. A call
+    /// nested under a further `if`, `match` or loop is gated by that
+    /// condition; typically it is a state transition of its own that happens
+    /// to sit in a method the guard opened.
     pub ASYMMETRIC_GUARD,
     Warn,
     "guarded call touches state its guard never reads"
@@ -136,6 +141,14 @@ impl AsymmetricGuard {
     ) {
         let mut gates = Vec::new();
         for_each_expr(cx, scope, |e: &Expr<'_>| {
+            // Anything below its own condition answers to that condition. (The
+            // then-branch form hands in the guard's own block, which is not one.)
+            if matches!(
+                e.kind,
+                ExprKind::If(..) | ExprKind::Match(..) | ExprKind::Loop(..) | ExprKind::Closure(..)
+            ) {
+                return std::ops::ControlFlow::<(), Descend>::Continue(Descend::No);
+            }
             if let Some((m, m_adt)) = self_method_call(cx, e)
                 && m_adt == adt
                 && m != guard
@@ -146,7 +159,7 @@ impl AsymmetricGuard {
                     span: e.span,
                 });
             }
-            std::ops::ControlFlow::<()>::Continue(())
+            std::ops::ControlFlow::<(), Descend>::Continue(Descend::Yes)
         });
         self.gates.extend(gates);
     }
