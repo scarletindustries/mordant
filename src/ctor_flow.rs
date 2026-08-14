@@ -269,20 +269,20 @@ fn mentions_self(ty: Ty<'_>, self_did: DefId) -> bool {
         .any(|arg| arg.as_type().is_some_and(|t| is_self_ty(t, self_did)))
 }
 
-/// Reads of one operand/place in value position.
-fn reads_of_place(place: Place<'_>, same: bool, out: &mut Vec<Read>) {
+/// Reads of one operand/place in value position; `exact` tags the Exact case.
+fn reads_of_place(place: Place<'_>, exact: impl FnOnce(Atom) -> Read, out: &mut Vec<Read>) {
     let info = place_info(place);
     out.extend(info.index_locals.iter().map(|l| Read::Index(*l)));
-    match info.exactness {
-        Exactness::VariantPayload => out.push(Read::Payload(info.atom)),
-        Exactness::Exact if same => out.push(Read::Same(info.atom)),
-        Exactness::Exact | Exactness::Inexact => out.push(Read::Derived(info.atom)),
-    }
+    out.push(match info.exactness {
+        Exactness::VariantPayload => Read::Payload(info.atom),
+        Exactness::Exact => exact(info.atom),
+        Exactness::Inexact => Read::Derived(info.atom),
+    });
 }
 
-fn reads_of_operand(op: &Operand<'_>, same: bool, out: &mut Vec<Read>) {
+fn reads_of_operand(op: &Operand<'_>, exact: impl FnOnce(Atom) -> Read, out: &mut Vec<Read>) {
     if let Some(p) = op.place() {
-        reads_of_place(p, same, out);
+        reads_of_place(p, exact, out);
     }
 }
 
@@ -328,12 +328,14 @@ fn gather<'tcx>(
                             payload_alias[dest.local].push(p.local);
                         }
                     }
-                    reads_of_operand(op, true, &mut reads);
+                    reads_of_operand(op, Read::Same, &mut reads);
                 }
                 Rvalue::Repeat(op, _)
                 | Rvalue::Cast(_, op, _)
                 | Rvalue::UnaryOp(_, op)
-                | Rvalue::WrapUnsafeBinder(op, _) => reads_of_operand(op, false, &mut reads),
+                | Rvalue::WrapUnsafeBinder(op, _) => {
+                    reads_of_operand(op, Read::Derived, &mut reads)
+                }
                 Rvalue::Ref(_, _, place)
                 | Rvalue::RawPtr(_, place)
                 | Rvalue::Reborrow(_, _, place) => {
@@ -346,13 +348,13 @@ fn gather<'tcx>(
                     if is_mut && dest.projection.is_empty() {
                         mut_ref_to.insert(dest.local, place_info(*place).atom);
                     }
-                    reads_of_place(*place, true, &mut reads);
+                    reads_of_place(*place, Read::Same, &mut reads);
                 }
-                Rvalue::CopyForDeref(place) => reads_of_place(*place, true, &mut reads),
+                Rvalue::CopyForDeref(place) => reads_of_place(*place, Read::Same, &mut reads),
                 Rvalue::BinaryOp(_, ops) => {
                     let (a, b) = &**ops;
-                    reads_of_operand(a, false, &mut reads);
-                    reads_of_operand(b, false, &mut reads);
+                    reads_of_operand(a, Read::Derived, &mut reads);
+                    reads_of_operand(b, Read::Derived, &mut reads);
                 }
                 Rvalue::Discriminant(place) => {
                     let info = place_info(*place);
@@ -362,19 +364,7 @@ fn gather<'tcx>(
                 Rvalue::Aggregate(kind, ops) => {
                     let kind = &**kind;
                     for (i, op) in ops.iter().enumerate() {
-                        if let Some(p) = op.place() {
-                            let info = place_info(p);
-                            reads.extend(info.index_locals.iter().map(|l| Read::Index(*l)));
-                            match info.exactness {
-                                Exactness::VariantPayload => {
-                                    reads.push(Read::Payload(info.atom));
-                                }
-                                Exactness::Exact => {
-                                    reads.push(Read::AggField(i as u32, info.atom));
-                                }
-                                Exactness::Inexact => reads.push(Read::Derived(info.atom)),
-                            }
-                        }
+                        reads_of_operand(op, |a| Read::AggField(i as u32, a), &mut reads);
                     }
                     match kind {
                         AggregateKind::Adt(did, vidx, _, _, None)
@@ -738,6 +728,15 @@ fn helper_summary<'tcx>(
     Some(out)
 }
 
+fn root_fields(roots: &mut HashMap<FieldIdx, Vec<Atom>>, base: &Atom, nfields: usize) {
+    for f in 0..nfields {
+        roots
+            .entry(FieldIdx::from_usize(f))
+            .or_default()
+            .push(base.extended(&[f as u32]));
+    }
+}
+
 /// field -> root atoms: `carrier.f` for every `Self`-typed local the returned
 /// value passes through, plus helper-call arguments the helper stores in `f`.
 fn field_roots<'tcx>(
@@ -760,25 +759,12 @@ fn field_roots<'tcx>(
             }));
         } else {
             // `Ok(pair.1)`-style: the self value is a sub-place; root there.
-            for f in 0..nfields {
-                roots
-                    .entry(FieldIdx::from_usize(f))
-                    .or_default()
-                    .push(r.extended(&[f as u32]));
-            }
+            root_fields(&mut roots, r, nfields);
         }
     }
     for &c in &carriers {
         if is_self_ty(body.local_decls[c].ty, self_did) {
-            for f in 0..nfields {
-                roots
-                    .entry(FieldIdx::from_usize(f))
-                    .or_default()
-                    .push(Atom {
-                        local: c,
-                        path: vec![f as u32],
-                    });
-            }
+            root_fields(&mut roots, &Atom::whole(c), nfields);
         }
         if let Some(calls) = facts.local_calls.get(&c) {
             for (callee, args) in calls {
