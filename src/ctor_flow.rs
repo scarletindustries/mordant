@@ -51,7 +51,7 @@ use rustc_middle::mir::{
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_span::{Span, sym};
 
-use crate::adt_facts::result_err_ty;
+use crate::adt_facts::{matches_config_path, result_err_ty};
 use crate::mir_flow::{
     ANY_ELEM, Atom, Exactness, build_cfg, control_deps, direct_control_deps, is_prefix, mir_for,
     operand_place, place_info, post_dominators, switch_operand_atoms,
@@ -228,24 +228,11 @@ fn is_resource_error(tcx: TyCtxt<'_>, ty: Ty<'_>, extra: &[String]) -> bool {
     let ty::Adt(adt, _) = ty.peel_refs().kind() else {
         return false;
     };
-    let path = tcx.def_path_str(adt.did());
-    let name = tcx.item_name(adt.did());
-    let krate = tcx.crate_name(adt.did().krate);
-    RESOURCE_ERRORS
+    let entries = RESOURCE_ERRORS
         .iter()
         .copied()
-        .chain(extra.iter().map(String::as_str))
-        .any(|e| {
-            // Full def path, bare name, or `crate::Name` for a re-export whose
-            // def path runs through a private module (`bun_sys::error::Error`
-            // configured as `bun_sys::Error`).
-            path == e
-                || path.ends_with(&format!("::{e}"))
-                || match e.rsplit_once("::") {
-                    None => name.as_str() == e,
-                    Some((k, n)) => !k.contains("::") && krate.as_str() == k && name.as_str() == n,
-                }
-        })
+        .chain(extra.iter().map(String::as_str));
+    matches_config_path(tcx, adt.did(), entries)
 }
 
 /// Trait methods whose result is the receiver's value seen differently.
@@ -347,20 +334,14 @@ fn gather<'tcx>(
                 | Rvalue::Cast(_, op, _)
                 | Rvalue::UnaryOp(_, op)
                 | Rvalue::WrapUnsafeBinder(op, _) => reads_of_operand(op, false, &mut reads),
-                Rvalue::Ref(_, kind, place) => {
-                    if matches!(kind, BorrowKind::Mut { .. }) && dest.projection.is_empty() {
-                        mut_ref_to.insert(dest.local, place_info(*place).atom);
-                    }
-                    reads_of_place(*place, true, &mut reads);
-                }
-                Rvalue::RawPtr(kind, place) => {
-                    if matches!(kind, RawPtrKind::Mut) && dest.projection.is_empty() {
-                        mut_ref_to.insert(dest.local, place_info(*place).atom);
-                    }
-                    reads_of_place(*place, true, &mut reads);
-                }
-                Rvalue::Reborrow(_, m, place) => {
-                    if m.is_mut() && dest.projection.is_empty() {
+                Rvalue::Ref(_, _, place) | Rvalue::RawPtr(_, place) | Rvalue::Reborrow(_, _, place) => {
+                    let is_mut = matches!(
+                        rvalue,
+                        Rvalue::Ref(_, BorrowKind::Mut { .. }, _)
+                            | Rvalue::RawPtr(RawPtrKind::Mut, _)
+                            | Rvalue::Reborrow(_, Mutability::Mut, _)
+                    );
+                    if is_mut && dest.projection.is_empty() {
                         mut_ref_to.insert(dest.local, place_info(*place).atom);
                     }
                     reads_of_place(*place, true, &mut reads);
@@ -591,43 +572,16 @@ fn closure_over(start: Local, mut succ: impl FnMut(Local) -> Vec<Local>) -> Hash
 /// arithmetically combined) in a root. Returns the slice and the atoms whose
 /// variant payload was consumed on the way (produced, not inspected).
 fn storage_slice(defs: &IndexVec<Local, Vec<Def>>, roots: &[Atom]) -> (Vec<Atom>, Vec<Atom>) {
-    let mut seen: HashSet<Atom> = HashSet::new();
     let mut produced: Vec<Atom> = Vec::new();
-    let mut q: VecDeque<Atom> = roots.iter().cloned().collect();
-    while let Some(at) = q.pop_front() {
-        if !seen.insert(at.clone()) {
-            continue;
+    let slice = walk_slice(defs, roots, |_, r| match r {
+        Read::Derived(a) => Some(a.clone()),
+        Read::Payload(a) => {
+            produced.push(a.clone());
+            None
         }
-        for def in &defs[at.local] {
-            let (below, rem): (bool, &[u32]) = if is_prefix(&def.dest, &at.path) {
-                (true, &at.path[def.dest.len()..])
-            } else if is_prefix(&at.path, &def.dest) {
-                (false, &[])
-            } else {
-                continue;
-            };
-            for r in &def.reads {
-                match r {
-                    Read::Same(a) => q.push_back(if below { a.extended(rem) } else { a.clone() }),
-                    Read::Derived(a) => q.push_back(a.clone()),
-                    Read::AggField(i, a) => {
-                        if !below || rem.is_empty() {
-                            q.push_back(a.clone());
-                        } else if rem[0] == *i {
-                            q.push_back(a.extended(&rem[1..]));
-                        }
-                    }
-                    Read::Payload(a) => produced.push(a.clone()),
-                    Read::Discr(_)
-                    | Read::Index(_)
-                    | Read::CallArg(_)
-                    | Read::CallArgMut
-                    | Read::ViaMut(_) => {}
-                }
-            }
-        }
-    }
-    (seen.into_iter().collect(), produced)
+        _ => None,
+    });
+    (slice, produced)
 }
 
 /// Decision slice from a branch operand. `opaque` holds atoms whose defining
@@ -636,13 +590,27 @@ fn storage_slice(defs: &IndexVec<Local, Vec<Def>>, roots: &[Atom]) -> (Vec<Atom>
 /// method failing on a stored value implicates that value, not everything
 /// its constructor was handed).
 fn decision_slice(defs: &IndexVec<Local, Vec<Def>>, roots: &[Atom], opaque: &[Atom]) -> Vec<Atom> {
+    walk_slice(defs, roots, |at, r| match r {
+        Read::Derived(a) | Read::Payload(a) | Read::Discr(a) | Read::ViaMut(a) => Some(a.clone()),
+        Read::Index(l) => Some(Atom::whole(*l)),
+        Read::CallArg(a) => (!opaque.iter().any(|p| p.overlaps(at))).then(|| a.clone()),
+        Read::Same(_) | Read::AggField(..) | Read::CallArgMut => None,
+    })
+}
+
+/// Worklist closure of `roots` over `defs`. `Same` and `AggField` compose
+/// paths here; any other read is followed to whatever atom `other` names.
+fn walk_slice(
+    defs: &IndexVec<Local, Vec<Def>>,
+    roots: &[Atom],
+    mut other: impl FnMut(&Atom, &Read) -> Option<Atom>,
+) -> Vec<Atom> {
     let mut seen: HashSet<Atom> = HashSet::new();
     let mut q: VecDeque<Atom> = roots.iter().cloned().collect();
     while let Some(at) = q.pop_front() {
         if !seen.insert(at.clone()) {
             continue;
         }
-        let is_produced = opaque.iter().any(|p| p.overlaps(&at));
         for def in &defs[at.local] {
             let (below, rem): (bool, &[u32]) = if is_prefix(&def.dest, &at.path) {
                 (true, &at.path[def.dest.len()..])
@@ -652,26 +620,14 @@ fn decision_slice(defs: &IndexVec<Local, Vec<Def>>, roots: &[Atom], opaque: &[At
                 continue;
             };
             for r in &def.reads {
-                match r {
-                    Read::Same(a) => q.push_back(if below { a.extended(rem) } else { a.clone() }),
-                    Read::AggField(i, a) => {
-                        if !below || rem.is_empty() {
-                            q.push_back(a.clone());
-                        } else if rem[0] == *i {
-                            q.push_back(a.extended(&rem[1..]));
-                        }
+                q.extend(match r {
+                    Read::Same(a) => Some(if below { a.extended(rem) } else { a.clone() }),
+                    Read::AggField(i, a) if below && !rem.is_empty() => {
+                        (rem[0] == *i).then(|| a.extended(&rem[1..]))
                     }
-                    Read::Derived(a) | Read::Payload(a) | Read::Discr(a) | Read::ViaMut(a) => {
-                        q.push_back(a.clone())
-                    }
-                    Read::Index(l) => q.push_back(Atom::whole(*l)),
-                    Read::CallArg(a) => {
-                        if !is_produced {
-                            q.push_back(a.clone());
-                        }
-                    }
-                    Read::CallArgMut => {}
-                }
+                    Read::AggField(_, a) => Some(a.clone()),
+                    _ => other(&at, r),
+                });
             }
         }
     }

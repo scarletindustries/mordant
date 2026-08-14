@@ -1,5 +1,5 @@
 use crate::baseline::emit;
-use rustc_hir::def_id::LOCAL_CRATE;
+use rustc_hir::def_id::{DefId, LOCAL_CRATE};
 use rustc_hir::{Expr, ExprKind};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty::{self, Ty};
@@ -77,34 +77,13 @@ impl NonidentityKey {
     }
 
     fn is_denied<'tcx>(&self, cx: &LateContext<'tcx>, ty: Ty<'tcx>) -> Option<String> {
-        let ty::Adt(adt, _) = ty.peel_refs().kind() else {
-            return None;
-        };
-        let path = cx.tcx.def_path_str(adt.did());
-        let with_crate = if adt.did().is_local() {
-            format!("{}::{}", cx.tcx.crate_name(LOCAL_CRATE), path)
-        } else {
-            path.clone()
-        };
-        self.deny_types
-            .iter()
-            .find(|d| **d == path || **d == with_crate)
-            .map(|_| path)
+        configured(cx, ty.peel_refs().ty_adt_def()?.did(), &self.deny_types)
     }
 
     fn is_fixing<'tcx>(&self, cx: &LateContext<'tcx>, ty: Ty<'tcx>) -> bool {
-        let ty::Adt(adt, _) = ty.peel_refs().kind() else {
-            return false;
-        };
-        let path = cx.tcx.def_path_str(adt.did());
-        let with_crate = if adt.did().is_local() {
-            format!("{}::{}", cx.tcx.crate_name(LOCAL_CRATE), path)
-        } else {
-            path.clone()
-        };
-        self.fix_types
-            .iter()
-            .any(|d| *d == path || *d == with_crate)
+        ty.peel_refs()
+            .ty_adt_def()
+            .is_some_and(|adt| configured(cx, adt.did(), &self.fix_types).is_some())
     }
 
     /// A direct hit, or (opt-in) a denied type inside a tuple or one level of
@@ -133,6 +112,18 @@ impl NonidentityKey {
         // Renders as: map keyed on `(Span, u32)` carrying `Span`, ...
         Some(format!("{key_ty}` carrying `{hit}"))
     }
+}
+
+/// `did`'s def path when `list` names it, either as that path or with the
+/// local crate's name in front.
+fn configured(cx: &LateContext<'_>, did: DefId, list: &[String]) -> Option<String> {
+    let path = cx.tcx.def_path_str(did);
+    let with_crate = did
+        .is_local()
+        .then(|| format!("{}::{path}", cx.tcx.crate_name(LOCAL_CRATE)));
+    list.iter()
+        .any(|d| *d == path || Some(d) == with_crate.as_ref())
+        .then_some(path)
 }
 
 /// The key type of a keyed std/indexmap collection, or None.
@@ -225,29 +216,18 @@ impl<'tcx> LateLintPass<'tcx> for NonidentityKey {
         if !self.deny_methods.is_empty()
             && let ExprKind::MethodCall(kseg, _, _, _) = key_expr.kind
             && let Some(mdid) = cx.typeck_results().type_dependent_def_id(key_expr.hir_id)
+            && configured(cx, mdid, &self.deny_methods).is_some()
         {
-            let path = cx.tcx.def_path_str(mdid);
-            let with_crate = if mdid.is_local() {
-                format!("{}::{}", cx.tcx.crate_name(LOCAL_CRATE), path)
-            } else {
-                path.clone()
-            };
-            if self
-                .deny_methods
-                .iter()
-                .any(|d| *d == path || *d == with_crate)
-            {
-                emit(
-                    cx,
-                    NONIDENTITY_KEY,
-                    key_expr.span,
-                    format!(
-                        "map keyed on `{}()`, which this project declares is not an identity",
-                        kseg.ident
-                    ),
-                    "key on the canonical identity of the thing this names",
-                );
-            }
+            emit(
+                cx,
+                NONIDENTITY_KEY,
+                key_expr.span,
+                format!(
+                    "map keyed on `{}()`, which this project declares is not an identity",
+                    kseg.ident
+                ),
+                "key on the canonical identity of the thing this names",
+            );
         }
         if self.forms.contains(&KeyForm::PtrCast) && is_ptr_to_int_cast(cx, key_expr) {
             emit(

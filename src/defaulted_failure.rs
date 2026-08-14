@@ -7,7 +7,7 @@ use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::{Span, sym};
 
-use crate::adt_facts::result_err_ty;
+use crate::adt_facts::{matches_config_path, result_err_ty};
 use crate::baseline::{emit, emit_with_note};
 use crate::enum_facts::{arm_variant, ctor_literal_variant};
 use crate::hir_shapes::{Callee, callee_of};
@@ -76,22 +76,8 @@ impl DefaultedFailure {
     }
 
     fn is_listed(&self, cx: &LateContext<'_>, callee: DefId) -> bool {
-        if self.listed.is_empty() {
-            return false;
-        }
-        let path = cx.tcx.def_path_str(callee);
-        let name = cx.tcx.item_name(callee);
-        let krate = cx.tcx.crate_name(callee.krate);
-        // Same spellings as `validator-resource-errors`: a full path, a bare
-        // name, or `crate::name`.
-        self.listed.iter().any(|e| {
-            path == *e
-                || path.ends_with(&format!("::{e}"))
-                || match e.rsplit_once("::") {
-                    None => name.as_str() == e,
-                    Some((k, n)) => !k.contains("::") && krate.as_str() == k && name.as_str() == n,
-                }
-        })
+        !self.listed.is_empty()
+            && matches_config_path(cx.tcx, callee, self.listed.iter().map(String::as_str))
     }
 
     /// `call` produces the `Result`/`Option` whose failure the caller

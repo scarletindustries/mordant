@@ -110,6 +110,28 @@ pub(crate) fn has_positional_fields(v: &VariantDef) -> bool {
         .any(|f| f.name.as_str().starts_with(|c: char| c.is_ascii_digit()))
 }
 
+/// Whether a configured list names `did`. An entry may be the full def path,
+/// a `::`-suffix of it, the bare item name, or `crate::Name` -- the last for
+/// a re-export whose def path runs through a private module
+/// (`bun_sys::error::Error` configured as `bun_sys::Error`).
+pub(crate) fn matches_config_path<'a>(
+    tcx: TyCtxt<'_>,
+    did: DefId,
+    mut entries: impl Iterator<Item = &'a str>,
+) -> bool {
+    let path = tcx.def_path_str(did);
+    let name = tcx.item_name(did);
+    let krate = tcx.crate_name(did.krate);
+    entries.any(|e| {
+        path == e
+            || path.ends_with(&format!("::{e}"))
+            || match e.rsplit_once("::") {
+                None => name.as_str() == e,
+                Some((k, n)) => !k.contains("::") && krate.as_str() == k && name.as_str() == n,
+            }
+    })
+}
+
 /// `Result<_, E>` -> `E`; anything else, `Option` included, is None.
 pub(crate) fn result_err_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
     let ty::Adt(adt, args) = ty.kind() else {
