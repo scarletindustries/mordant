@@ -177,7 +177,7 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
         defaulted_failure::DEFAULTED_FAILURE,
         unchecked_input_len::UNCHECKED_INPUT_LEN,
     ]);
-    lint_store.register_late_pass(move |_| Box::new(stringly_error::StringlyError::new(config)));
+    lint_store.register_late_pass(move |_| Box::new(stringly_error::StringlyError { config }));
     lint_store.register_late_pass(move |_| Box::new(nonidentity_key::NonidentityKey::new(config)));
     lint_store.register_late_pass(|_| Box::new(stringified_error::StringifiedError));
     lint_store
@@ -186,7 +186,7 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
     // The opt-in lints stay registered above so `allow(..)` / `-A` of them
     // still resolve; only their passes are skipped.
     if config.flag_cluster_enabled {
-        lint_store.register_late_pass(move |_| Box::new(flag_cluster::FlagCluster::new(config)));
+        lint_store.register_late_pass(move |_| Box::new(flag_cluster::FlagCluster { config }));
     }
     lint_store
         .register_late_pass(move |_| Box::new(bypassed_validator::BypassedValidator::new(config)));
@@ -207,13 +207,12 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
     lint_store.register_late_pass(|_| Box::new(overwide_parameter::OverwideParameter::default()));
     lint_store.register_late_pass(|_| Box::new(narrowed_return::NarrowedReturn::default()));
     lint_store
-        .register_late_pass(move |_| Box::new(wildcard_local_enum::WildcardLocalEnum::new(config)));
+        .register_late_pass(move |_| Box::new(wildcard_local_enum::WildcardLocalEnum { config }));
     lint_store.register_late_pass(|_| Box::new(discarded_error::DiscardedError));
     lint_store
         .register_late_pass(move |_| Box::new(stored_projection::StoredProjection::new(config)));
-    lint_store.register_late_pass(move |_| {
-        Box::new(stale_across_reentry::StaleAcrossReentry::new(config))
-    });
+    lint_store
+        .register_late_pass(move |_| Box::new(stale_across_reentry::StaleAcrossReentry { config }));
     lint_store
         .register_late_pass(move |_| Box::new(defaulted_failure::DefaultedFailure::new(config)));
     if config.unchecked_input_len_enabled {

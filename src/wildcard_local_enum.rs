@@ -30,20 +30,12 @@ rustc_session::declare_lint! {
 }
 
 pub struct WildcardLocalEnum {
-    max_variants: usize,
+    pub config: &'static MordantConfig,
 }
 
 rustc_session::impl_lint_pass!(WildcardLocalEnum => [WILDCARD_LOCAL_ENUM]);
 
-impl WildcardLocalEnum {
-    pub fn new(config: &MordantConfig) -> Self {
-        Self {
-            max_variants: config.wildcard_local_enum_max_variants,
-        }
-    }
-}
-
-fn is_negative_extractor(cx: &LateContext<'_>, body: &Expr<'_>) -> bool {
+fn is_negative_extractor<'tcx>(cx: &LateContext<'tcx>, body: &Expr<'tcx>) -> bool {
     match body.kind {
         // `""` and `b""` are the empty-slice answer spelled as a literal.
         ExprKind::Lit(lit) => match lit.node {
@@ -58,18 +50,12 @@ fn is_negative_extractor(cx: &LateContext<'_>, body: &Expr<'_>) -> bool {
         ExprKind::Array(elems) => elems.is_empty(),
         // `Vec::new()` / `String::new()`: an empty collection, constructed
         // fresh, is an answer with no content, not behavior.
-        ExprKind::Call(callee, []) => {
-            if let ExprKind::Path(qpath) = &callee.kind
-                && let Some(def) = cx.qpath_res(qpath, callee.hir_id).opt_def_id()
-            {
-                let path = cx.tcx.def_path_str(def);
-                path.ends_with("Vec::<T>::new")
-                    || path.ends_with("Vec::new")
-                    || path.ends_with("String::new")
-            } else {
-                false
-            }
-        }
+        ExprKind::Call(_, []) => callee_of(cx, body).is_some_and(|c| {
+            let path = cx.tcx.def_path_str(c.def());
+            path.ends_with("Vec::<T>::new")
+                || path.ends_with("Vec::new")
+                || path.ends_with("String::new")
+        }),
         // `return None` / `return false`: the early-exit spelling of the same
         // empty answers.
         ExprKind::Ret(Some(inner)) => is_negative_extractor(cx, inner),
@@ -189,7 +175,7 @@ impl<'tcx> LateLintPass<'tcx> for WildcardLocalEnum {
         // every match the lint sees, and it silenced the lint on exactly the
         // enums annotated *because* the author expects new variants.
         let n = adt.variants().len();
-        if n > self.max_variants {
+        if n > self.config.wildcard_local_enum_max_variants {
             return;
         }
         for arm in arms {

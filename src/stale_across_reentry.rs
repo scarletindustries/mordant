@@ -61,18 +61,12 @@ rustc_session::declare_lint! {
 }
 
 pub struct StaleAcrossReentry {
-    callees: Vec<String>,
+    pub config: &'static MordantConfig,
 }
 
 rustc_session::impl_lint_pass!(StaleAcrossReentry => [STALE_ACROSS_REENTRY]);
 
 impl StaleAcrossReentry {
-    pub fn new(config: &MordantConfig) -> Self {
-        Self {
-            callees: config.stale_across_reentry_callees.clone(),
-        }
-    }
-
     /// Whether the call to `def` with `args` is one the config names, under
     /// any spelling of either the item typeck resolved or the impl item the
     /// receiver type sends it to.
@@ -82,14 +76,15 @@ impl StaleAcrossReentry {
         def: DefId,
         args: ty::GenericArgsRef<'tcx>,
     ) -> bool {
-        if self.callees.is_empty() {
+        let callees = &self.config.stale_across_reentry_callees;
+        if callees.is_empty() {
             return false;
         }
         std::iter::once(def)
             .chain(impl_item_of(cx, def, args))
             .flat_map(|def| callee_names(cx, def))
             .any(|[name, with_crate]| {
-                self.callees
+                callees
                     .iter()
                     .any(|p| matches_pattern(&name, p) || matches_pattern(&with_crate, p))
             })

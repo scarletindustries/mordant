@@ -39,10 +39,7 @@ impl KeyForm {
 }
 
 pub struct NonidentityKey {
-    deny_types: Vec<String>,
-    deny_methods: Vec<String>,
-    fix_types: Vec<String>,
-    composite: bool,
+    config: &'static MordantConfig,
     /// The opted-in forms. Membership, not one flag per form: a form the
     /// project did not name is absent rather than false.
     forms: Vec<KeyForm>,
@@ -62,12 +59,9 @@ const KEY_METHODS: &[&str] = &[
 ];
 
 impl NonidentityKey {
-    pub fn new(config: &MordantConfig) -> Self {
+    pub fn new(config: &'static MordantConfig) -> Self {
         Self {
-            deny_types: config.nonidentity_key_types.clone(),
-            deny_methods: config.nonidentity_key_methods.clone(),
-            fix_types: config.nonidentity_key_fixes.clone(),
-            composite: config.nonidentity_key_composite,
+            config,
             forms: config
                 .nonidentity_key_forms
                 .iter()
@@ -77,13 +71,17 @@ impl NonidentityKey {
     }
 
     fn is_denied<'tcx>(&self, cx: &LateContext<'tcx>, ty: Ty<'tcx>) -> Option<String> {
-        configured(cx, ty.peel_refs().ty_adt_def()?.did(), &self.deny_types)
+        configured(
+            cx,
+            ty.peel_refs().ty_adt_def()?.did(),
+            &self.config.nonidentity_key_types,
+        )
     }
 
     fn is_fixing<'tcx>(&self, cx: &LateContext<'tcx>, ty: Ty<'tcx>) -> bool {
-        ty.peel_refs()
-            .ty_adt_def()
-            .is_some_and(|adt| configured(cx, adt.did(), &self.fix_types).is_some())
+        ty.peel_refs().ty_adt_def().is_some_and(|adt| {
+            configured(cx, adt.did(), &self.config.nonidentity_key_fixes).is_some()
+        })
     }
 
     /// A direct hit, or (opt-in) a denied type inside a tuple or one level of
@@ -92,7 +90,7 @@ impl NonidentityKey {
         if let Some(path) = self.is_denied(cx, key_ty) {
             return Some(path);
         }
-        if !self.composite {
+        if !self.config.nonidentity_key_composite {
             return None;
         }
         let components: Vec<Ty<'_>> = match key_ty.peel_refs().kind() {
@@ -213,10 +211,11 @@ impl<'tcx> LateLintPass<'tcx> for NonidentityKey {
         }
         // Project-declared methods whose result is not an identity (e.g. a
         // NaN-boxing `Value::to_bits`, where boxed values yield pointer bits).
-        if !self.deny_methods.is_empty()
+        let deny_methods = &self.config.nonidentity_key_methods;
+        if !deny_methods.is_empty()
             && let ExprKind::MethodCall(kseg, _, _, _) = key_expr.kind
             && let Some(mdid) = cx.typeck_results().type_dependent_def_id(key_expr.hir_id)
-            && configured(cx, mdid, &self.deny_methods).is_some()
+            && configured(cx, mdid, deny_methods).is_some()
         {
             emit(
                 cx,
