@@ -7,7 +7,7 @@ on:
   schedule:
     # Weekly: surface clippy_utils / rustc_private drift within a week even
     # with no commits. Also the only run that includes macOS: the lints are
-    # platform independent, so PRs get the Linux job alone.
+    # platform independent and the mac runners are slower, so PRs get Linux.
     - cron: "0 6 * * 1"
 
 env:
@@ -21,21 +21,18 @@ jobs:
       # rust-toolchain pins the nightly; rustup resolves it on first cargo use.
       - run: rustup show
       # .cargo/config.toml names dylint-link as the linker and the ui tests
-      # need cargo-dylint. dylint publishes both as binaries; installing those
-      # takes seconds where compiling them took a minute and a half.
-      - name: install dylint
-        run: |
-          set -eu
-          base="https://github.com/trailofbits/dylint/releases/download/v$DYLINT_VERSION"
-          for tool in cargo-dylint dylint-link; do
-            name="$tool-x86_64-unknown-linux-gnu-v$DYLINT_VERSION"
-            curl -sSfLO "$base/$name.tar.gz"
-            curl -sSfLO "$base/$name.tar.gz.sha256"
-            sha256sum -c "$name.tar.gz.sha256"
-            tar xzf "$name.tar.gz"
-            install -m 755 "$name/$tool" "$HOME/.cargo/bin/$tool"
-          done
-          cargo dylint --version
+      # need cargo-dylint. Compiling them takes a minute and a half, so the
+      # binaries are cached per dylint version and rebuilt only on a bump;
+      # nothing prebuilt is downloaded.
+      - uses: actions/cache@v4
+        id: dylint
+        with:
+          path: |
+            ~/.cargo/bin/cargo-dylint
+            ~/.cargo/bin/dylint-link
+          key: dylint-${{ runner.os }}-${{ env.DYLINT_VERSION }}
+      - if: steps.dylint.outputs.cache-hit != 'true'
+        run: cargo install cargo-dylint dylint-link --locked --version "$DYLINT_VERSION"
       - uses: Swatinem/rust-cache@v2
       # The ui tests build a rustc driver for the pinned nightly into
       # ~/.dylint_drivers; it only changes when the toolchain or dylint does.
@@ -58,7 +55,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: rustup show
-      - run: cargo install cargo-dylint dylint-link --locked --version "$DYLINT_VERSION"
+      - uses: actions/cache@v4
+        id: dylint
+        with:
+          path: |
+            ~/.cargo/bin/cargo-dylint
+            ~/.cargo/bin/dylint-link
+          key: dylint-${{ runner.os }}-${{ env.DYLINT_VERSION }}
+      - if: steps.dylint.outputs.cache-hit != 'true'
+        run: cargo install cargo-dylint dylint-link --locked --version "$DYLINT_VERSION"
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: ~/.dylint_drivers
+          key: dylint-driver-${{ runner.os }}-${{ hashFiles('rust-toolchain') }}-${{ env.DYLINT_VERSION }}
       - run: cargo test
       - run: cargo dylint --all
         env:
