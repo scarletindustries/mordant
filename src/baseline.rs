@@ -139,18 +139,23 @@ fn status_file(root: &Path, target_dir: Option<&Path>) -> PathBuf {
     target.join("mordant").join("over-baseline.txt")
 }
 
-/// Sums every crate section of the file, since a (lint, file) key can appear
-/// under more than one crate (a file shared by a lib and a bin target).
 fn read_recorded(path: &Path) -> HashMap<Key, usize> {
-    let doc = std::fs::read_to_string(path)
-        .map(|s| read_doc(&s))
-        .unwrap_or_default();
+    std::fs::read_to_string(path)
+        .map(|s| sum_recorded(&read_doc(&s)))
+        .unwrap_or_default()
+}
+
+/// Sums every crate section of the file, since a (lint, file) key can appear
+/// under more than one crate (a file shared by a lib and a bin target). A
+/// lint recorded under its old name counts toward its current one, so a
+/// baseline written before a rename still holds.
+fn sum_recorded(doc: &Doc) -> HashMap<Key, usize> {
     let mut counts: HashMap<Key, usize> = HashMap::new();
     for section in doc.values() {
         for (key, n) in section {
             if let Some((lint, file)) = key.split_once(':') {
                 *counts
-                    .entry((lint.to_string(), file.to_string()))
+                    .entry((crate::names::current(lint).to_string(), file.to_string()))
                     .or_default() += *n as usize;
             }
         }
@@ -419,8 +424,29 @@ fn write_section(cx: &LateContext<'_>, path: &Path, recorded: &Mutex<Vec<Key>>) 
 
 #[cfg(test)]
 mod tests {
-    use super::status_file;
+    use super::{read_doc, status_file, sum_recorded};
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn a_lint_recorded_under_its_old_name_counts_toward_the_new_one() {
+        let doc = read_doc(
+            "[lib]\n\
+             \"guard_flag:src/a.rs\" = 2\n\
+             \"runtime_typestate:src/a.rs\" = 1\n\
+             \"lock_order:src/a.rs\" = 4\n\
+             [\"lib (bin main)\"]\n\
+             \"guard_flag:src/a.rs\" = 3\n",
+        );
+        let counts = sum_recorded(&doc);
+        let at = |lint: &str| {
+            counts
+                .get(&(lint.to_string(), "src/a.rs".to_string()))
+                .copied()
+        };
+        assert_eq!(at("runtime_typestate"), Some(6));
+        assert_eq!(at("guard_flag"), None);
+        assert_eq!(at("lock_order"), Some(4));
+    }
 
     #[test]
     fn status_file_defaults_to_target_under_the_workspace_root() {

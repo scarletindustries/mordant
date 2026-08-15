@@ -1,0 +1,29 @@
+warning: lint `exclusive_options` has been renamed to `options_as_enum`
+  --> $DIR/old_names.rs:4:10
+   |
+LL | #![allow(exclusive_options)]
+   |          ^^^^^^^^^^^^^^^^^ help: use the new name: `options_as_enum`
+   |
+   = note: `#[warn(renamed_and_removed_lints)]` on by default
+
+warning: lint `wildcard_local_enum` has been renamed to `wildcard_over_own_enum`
+  --> $DIR/old_names.rs:41:9
+   |
+LL | #[allow(wildcard_local_enum)]
+   |         ^^^^^^^^^^^^^^^^^^^ help: use the new name: `wildcard_over_own_enum`
+
+warning: this arm absorbs every future variant of `Op` (3 variants today)
+  --> $DIR/old_names.rs:36:9
+   |
+LL |         _ => 0,
+   |         ^
+   |
+   = note: `#[warn(wildcard_over_own_enum)]` on by default
+help: list the remaining variants; the compiler then flags every new one added
+   |
+LL -         _ => 0,
+LL +         Op::Sub | Op::Mul => 0,
+   |
+
+warning: 3 warnings emitted
+
