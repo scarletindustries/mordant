@@ -53,6 +53,7 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 | `bool_beside_option`   | a bool field written only beside an `Option` field, `true` with `Some(..)` and `false` with `None`: it is that field's `is_some()` stored twice, kept equal only by habit |
 | `sentinel_int`         | an integer field one function tests against `MAX`, `-1` or an `INVALID` constant and another indexes with or offsets a pointer by untested: `Option` spelled as an int    |
 | `stringly_state`       | a string field or local only ever storing one of a closed set of literals and then compared against them: an undeclared enum, so a misspelt state still compiles          |
+| `parallel_params`      | opt-in via `parallel-params-enabled`: parameters several functions declare alike and hand each other unchanged in one call: one value with no type, passable by halves    |
 
 Each diagnostic states what the lint found, why the type is wrong, and the type that replaces it.
 
@@ -95,18 +96,21 @@ exclusive-options-min-fields = 2
 flag-cluster-min-bools = 3
 stored-projection-min-sites = 2
 reimplemented-helper-min-nodes = 12
+parallel-params-min-fns = 3
 
 # Opt-in: also count `Box<dyn Error>` as a stringly error type.
 stringly-error-include-box-dyn = true
 
-# Opt-in: `flag_cluster`, `stale_safety_comment` and `unchecked_input_len` are
-# surveys to run once over a codebase (most of what they name is legitimate
-# once the real cases are fixed; for the last, a length the caller vouches for
-# that the function also uses as some other value's limit), so they are off
-# until turned on here.
+# Opt-in: `flag_cluster`, `stale_safety_comment`, `unchecked_input_len` and
+# `parallel_params` are surveys to run once over a codebase (most of what they
+# name is legitimate once the real cases are fixed; for the third, a length the
+# caller vouches for that the function also uses as some other value's limit;
+# for the last, a context and the position it reports at, passed along together
+# by design), so they are off until turned on here.
 flag-cluster-enabled = true
 stale-safety-comment-enabled = true
 unchecked-input-len-enabled = true
+parallel-params-enabled = true
 
 # Opt-in: flag composite keys (tuples, structs one level deep) that carry a
 # denied type unless one of the fixing types sits beside it. With these two

@@ -1,0 +1,19 @@
+warning: parameters `w: u32` and `h: u32` pass unchanged between `decode`, `scale` and `checksum` (`decode` hands them to `scale` in one call): one value travelling as 2 parameters
+  --> $DIR/parallel_params.rs:5:23
+   |
+LL | fn decode(src: &[u8], w: u32, h: u32) -> Vec<u8> {
+   |                       ^^^^^^
+   |
+   = help: a struct with these fields names the value; each function then takes, checks and forwards one parameter
+   = note: `#[warn(parallel_params)]` on by default
+
+warning: parameters `host: &str`, `port: u16` and `sink: &mut Vec<String>` pass unchanged between `send`, `dial` and `log_target` (`send` hands them to `dial` in one call): one value travelling as 3 parameters
+  --> $DIR/parallel_params.rs:30:20
+   |
+LL |     fn send(&self, host: &str, port: u16, sink: &mut Vec<String>) {
+   |                    ^^^^^^^^^^
+   |
+   = help: a struct with these fields names the value; each function then takes, checks and forwards one parameter
+
+warning: 2 warnings emitted
+

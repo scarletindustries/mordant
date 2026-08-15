@@ -46,6 +46,7 @@ mod narrowed_return;
 mod nonidentity_key;
 mod overwide_parameter;
 mod parallel_bools;
+mod parallel_params;
 mod parallel_vecs;
 mod reimplemented_helper;
 mod same_match_twice;
@@ -159,6 +160,15 @@ pub struct MordantConfig {
     /// which nothing inside the function tells from a missed check; run it
     /// once over parsing code and read the list.
     pub unchecked_input_len_enabled: bool,
+    /// Opt-in: run `parallel_params`. Off by default because a context and
+    /// the position it reports at, or a pointer and its length before a slice
+    /// exists, pass between functions together by design, and nothing in the
+    /// signatures tells those from a value nobody declared; run it once and
+    /// read the list.
+    pub parallel_params_enabled: bool,
+    /// Functions a parameter group must pass between, unchanged, before
+    /// `parallel_params` names it.
+    pub parallel_params_min_fns: usize = 3,
 }
 
 #[expect(clippy::no_mangle_with_rust_abi)]
@@ -174,7 +184,7 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
         insert_then_unwrap::InsertThenUnwrap, lock_order::LockOrder, misbound_arg::MisboundArg,
         narrowed_return::NarrowedReturn, nonidentity_key::NonidentityKey,
         overwide_parameter::OverwideParameter, parallel_bools::ParallelBools,
-        parallel_vecs::ParallelVecs, sentinel_int::SentinelInt,
+        parallel_params::ParallelParams, parallel_vecs::ParallelVecs, sentinel_int::SentinelInt,
         stale_across_reentry::StaleAcrossReentry, stale_panic_message::StalePanicMessage,
         stale_safety_comment::StaleSafetyComment, stored_projection::StoredProjection,
         stringified_error::StringifiedError, stringly_error::StringlyError,
@@ -232,6 +242,9 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
     add(s, true, bool_beside_option::BoolBesideOption::default);
     add(s, true, SentinelInt::default);
     add(s, true, StringlyState::default);
+    add(s, config.parallel_params_enabled, move || {
+        ParallelParams::new(config)
+    });
     // Last, so its check_crate_post flushes after every lint has recorded.
     add(s, true, || BaselineWriter);
 }
@@ -266,6 +279,7 @@ fn ui() {
             flag-cluster-enabled = true
             stale-safety-comment-enabled = true
             unchecked-input-len-enabled = true
+            parallel-params-enabled = true
 
             [[mordant.forbidden-reach]]
             from = "hot_path"
@@ -307,6 +321,8 @@ fn config_default_thresholds_match_docs() {
     assert!(!c.flag_cluster_enabled);
     assert!(!c.stale_safety_comment_enabled);
     assert!(!c.unchecked_input_len_enabled);
+    assert!(!c.parallel_params_enabled);
+    assert_eq!(c.parallel_params_min_fns, 3);
 }
 
 /// An empty table (file present, keys omitted) must not drift from
