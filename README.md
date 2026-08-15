@@ -24,8 +24,8 @@ The lints come in families, and each family is a lint group whose name is in its
 | `parallel_bools`             | bool fields only ever assigned as a pair, which together encode a state machine                                                                                           |
 | `bool_cluster`               | opt-in via `bool-cluster-enabled`: a named-field struct with several independent bools, 2^n representable states; if fewer are legal an enum names the ones that are      |
 | `runtime_typestate`          | a bool field that several methods test and bail on at entry, enforcing an ordering invariant at runtime                                                                   |
-| `always_unwrapped_option`    | an `Option` field every reader unwraps and no reader handles: a state nobody survives, usually a two-phase object wanting two types                                       |
-| `derived_field`              | two fields whose constant values agree one-for-one at every construction site: one is a projection of the other, so the type admits pairings the constructors never make  |
+| `always_unwrapped_option`    | an `Option` field unwrapped at every read while nothing handles `None`, so `None` only exists to crash on: usually a two-phase object wanting two types                   |
+| `derived_field`              | a field that always holds the same value for a given sibling wherever the type is built: a copy of something the sibling decides, and a mismatched pair still compiles    |
 | `field_valid_only_when`      | a field every reader tests a sibling for one value before touching, and every other construction fills with a placeholder: an enum payload stored flat beside its tag     |
 | `bool_beside_option`         | a bool field written only beside an `Option` field, `true` with `Some(..)` and `false` with `None`: it is that field's `is_some()` stored twice, kept equal only by habit |
 | `parallel_vecs`              | sequence fields of one struct that only change length side by side and are read at one index: element `i` of each is one record, so the type lets the lengths differ      |
@@ -41,7 +41,7 @@ The lints come in families, and each family is a lint group whose name is in its
 | `unchecked_construction`     | a literal, a write to a checked field, or `mem::zeroed`/`transmute` outside a validated type's module and impls, none of which runs the constructor's check               |
 | `defaulted_failure`          | `f(x).unwrap_or(0)` or `let Ok(v) = f(x) else { return Ok(()) }` where `f`'s own body rejects some of `x`: the rejection becomes a value and processing carries on        |
 | `unchecked_input_len`        | opt-in via `unchecked-input-len-enabled`: a received integer bounded on one path and turned into memory (`split_at`, `set_len`, `ptr.add`) on a path no check dominates   |
-| `guard_blind_to_action`      | `self.can_x()` gating a mutation that touches state the guard never reads, so the guard cannot be sound                                                                   |
+| `guard_blind_to_action`      | `self.can_x()` gating a mutation that changes state `can_x` never looks at, so the check cannot know whether the action is safe                                           |
 | `stale_across_reentry`       | a length, flag, or pointer read off a field of `self`, then a call that can re-enter (closure, fn pointer, `dyn`, `.await`, configured), then the field used through it   |
 | `error_collapsed_to_bool`    | `f(x);` or `let _ = f(x)` on a crate fn whose `false`/`None` is the bare `Err` arm of a `Result` it held: the typed error became one bit, and this call drops the bit     |
 | `narrowed_two_ways`          | an integer field or local converted with `try_from` at one site and a bare `as` at another: the check says the value may not fit, and `as` wraps silently when it doesn't |
@@ -54,7 +54,7 @@ The lints come in families, and each family is a lint group whose name is in its
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `stringly_error`             | `Result<T, String>` in a public signature, where a caller has no variants to match on                                                                                     |
 | `stringified_error`          | the destruction site: `.map_err(\|e\| e.to_string())` on a typed error                                                                                                    |
-| `discarded_error`            | `.ok();` in statement position, which reads like handling and makes the error unobservable                                                                                |
+| `discarded_error`            | `.ok();` as a statement, which reads like handling and throws the error away on the spot                                                                                  |
 | `unread_error_variant`       | a private enum variant that is constructed but never named by a pattern outside the enum's own impls, so its structure is never read                                      |
 
 ### Enums (`mordant_enums`)
@@ -103,7 +103,7 @@ The lints come in families, and each family is a lint group whose name is in its
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `forbidden_reach`            | a config-declared ban ("from `sched::pick`, never reach `Vec::push`") violated by a concrete call path, printed as a witness chain                                        |
 
-Each diagnostic states what the lint found, why the type is wrong, and the type that replaces it.
+Each diagnostic says what is wrong at the place it points at, shows the other place that proves it when there is one, and ends with an edit that fixes it.
 
 ## Run
 
