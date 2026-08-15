@@ -12,8 +12,9 @@ use rustc_hir::{
     StmtKind,
 };
 use rustc_lint::{LateContext, LateLintPass};
+use rustc_middle::ty::Ty;
+use rustc_middle::ty::layout::LayoutOf;
 use rustc_middle::ty::print::with_no_trimmed_paths;
-use rustc_middle::ty::{self, Ty};
 use rustc_span::Span;
 
 use crate::adt_facts::{is_option_ty, result_err_ty};
@@ -35,7 +36,9 @@ rustc_session::declare_lint! {
     ///
     /// Silent when the `Err` arm or `else` block does anything besides exit
     /// (logs, stores or converts the error: it was looked at); when the error
-    /// type is `()`, `!` or a bare number (`binary_search`'s `Err(idx)` is an
+    /// type had no kind to lose -- zero-sized (`()`, `AllocError`,
+    /// `TryFromIntError`, a lone unit variant), where `false` says as much as
+    /// the error did, or a bare number (`binary_search`'s `Err(idx)` is an
     /// answer, not a failure); on trait methods and non-Rust-ABI functions
     /// (the signature is not the function's to choose); on collapses inside
     /// closures; on callees in other crates; on calls in tests or produced
@@ -90,18 +93,14 @@ pub struct CollapsedError {
 
 rustc_session::impl_lint_pass!(CollapsedError => [COLLAPSED_ERROR]);
 
-/// The error type of `e`'s `Result`, when it is one worth calling an error:
-/// not `()`, `!`, a bare primitive or an uninhabited enum.
+/// The error type of `e`'s `Result`, when it has a kind that `false` loses:
+/// not a bare primitive, and not zero-sized (`()`, `!`, a unit struct, a
+/// lone unit variant), which distinguishes nothing a `bool` does not. A type
+/// whose layout is unknown here (generic) is given the benefit of the doubt.
 fn err_of<'tcx>(cx: &LateContext<'tcx>, e: &Expr<'tcx>) -> Option<Ty<'tcx>> {
     let ty = cx.typeck_results().expr_ty(e).peel_refs();
     let err = result_err_ty(cx.tcx, ty)?.peel_refs();
-    if err.is_unit() || err.is_never() || err.is_primitive() || err.is_str() {
-        return None;
-    }
-    if let ty::Adt(adt, _) = err.kind()
-        && adt.is_enum()
-        && adt.variants().is_empty()
-    {
+    if err.is_primitive() || err.is_str() || cx.layout_of(err).is_ok_and(|l| l.is_zst()) {
         return None;
     }
     Some(err)

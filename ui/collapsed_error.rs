@@ -158,6 +158,21 @@ fn ping_discarded() {
     let _ = pinged(true);
 }
 
+// Fine: a zero-sized error has one value, so `false` already says all it did.
+struct Full;
+
+fn alloc_slot(n: usize) -> Result<usize, Full> {
+    if n > 8 { Err(Full) } else { Ok(n) }
+}
+
+fn try_alloc(n: usize) -> bool {
+    alloc_slot(n).is_ok()
+}
+
+fn alloc_discarded() {
+    let _ = try_alloc(9);
+}
+
 // Fine: a trait method's signature is the trait's, not the impl's.
 trait Sink {
     fn put(&mut self, byte: u8) -> bool;
@@ -227,6 +242,7 @@ fn main() {
     let _ = mark_checked(&mut buf);
     sorted_discarded(&[1, 2, 3]);
     ping_discarded();
+    alloc_discarded();
     put_dropped(&mut buf);
     exported_discarded();
     folded_discarded(&mut buf);
