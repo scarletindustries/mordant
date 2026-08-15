@@ -29,7 +29,6 @@
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
-use std::ffi::OsString;
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -111,7 +110,7 @@ fn init(file_name: &str) -> Option<Baseline> {
                     recorded: read_recorded(&cand),
                     seen: Mutex::new(HashMap::new()),
                     over: AtomicUsize::new(0),
-                    status_file: status_file(&dir, std::env::var_os("CARGO_TARGET_DIR")),
+                    status_file: status_file(&dir, cargo_target_dir().as_deref()),
                 }
             };
             return Some(Baseline { root: dir, mode });
@@ -122,12 +121,20 @@ fn init(file_name: &str) -> Option<Baseline> {
     }
 }
 
+/// `CARGO_TARGET_DIR` when it names a directory; cargo treats an empty
+/// value as unset, so that is `None` here too.
+fn cargo_target_dir() -> Option<PathBuf> {
+    std::env::var_os("CARGO_TARGET_DIR")
+        .filter(|d| !d.is_empty())
+        .map(PathBuf::from)
+}
+
 /// `${CARGO_TARGET_DIR or <root>/target}/mordant/over-baseline.txt`, a
 /// relative `CARGO_TARGET_DIR` taken from the workspace root as cargo does.
-fn status_file(root: &Path, target_dir: Option<OsString>) -> PathBuf {
+fn status_file(root: &Path, target_dir: Option<&Path>) -> PathBuf {
     let target = match target_dir {
-        Some(dir) if !dir.is_empty() => root.join(dir),
-        _ => root.join("target"),
+        Some(dir) => root.join(dir),
+        None => root.join("target"),
     };
     target.join("mordant").join("over-baseline.txt")
 }
@@ -413,7 +420,6 @@ fn write_section(cx: &LateContext<'_>, path: &Path, recorded: &Mutex<Vec<Key>>) 
 #[cfg(test)]
 mod tests {
     use super::status_file;
-    use std::ffi::OsString;
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -422,20 +428,16 @@ mod tests {
             status_file(Path::new("/ws"), None),
             PathBuf::from("/ws/target/mordant/over-baseline.txt"),
         );
-        assert_eq!(
-            status_file(Path::new("/ws"), Some(OsString::new())),
-            PathBuf::from("/ws/target/mordant/over-baseline.txt"),
-        );
     }
 
     #[test]
     fn status_file_follows_cargo_target_dir() {
         assert_eq!(
-            status_file(Path::new("/ws"), Some("/elsewhere/tgt".into())),
+            status_file(Path::new("/ws"), Some(Path::new("/elsewhere/tgt"))),
             PathBuf::from("/elsewhere/tgt/mordant/over-baseline.txt"),
         );
         assert_eq!(
-            status_file(Path::new("/ws"), Some("build/cargo".into())),
+            status_file(Path::new("/ws"), Some(Path::new("build/cargo"))),
             PathBuf::from("/ws/build/cargo/mordant/over-baseline.txt"),
         );
     }
