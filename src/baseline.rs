@@ -12,6 +12,15 @@
 //! files consumes allowance in one file and overflows in the other, which is
 //! the desired ratchet behavior.
 //!
+//! Severity: with a baseline configured, the baseline decides what fails the
+//! run, not the lint level. A finding over the recorded count is printed as a
+//! plain warning through the session's diagnostic context rather than as a
+//! lint, so `-D warnings`, `[lints] warnings = "deny"` and `--cap-lints`
+//! cannot turn it into an error that stops the crate and hides every finding
+//! after it. `#[allow]` and `#[expect]` are still read, at the same node the
+//! lint path reads them. Without a baseline nothing here applies and findings
+//! are ordinary lints at their ordinary levels.
+//!
 //! Every diagnostic a mordant lint produces goes through one of the three
 //! entry points here (`emit`, `emit_with_note`, `emit_hir_then`), so each
 //! finding is weighed against the baseline exactly once.
@@ -25,7 +34,7 @@ use std::sync::{Mutex, OnceLock};
 use clippy_utils::diagnostics::{span_lint_and_help, span_lint_and_then, span_lint_hir_and_then};
 use rustc_errors::Diag;
 use rustc_hir::HirId;
-use rustc_lint::{LateContext, LateLintPass, Lint};
+use rustc_lint::{LateContext, LateLintPass, Lint, LintContext};
 use rustc_span::{FileName, Span};
 
 /// (lint, file relative to the workspace root): the unit the baseline counts.
@@ -35,10 +44,12 @@ type Key = (String, String);
 /// `setup`, since the environment variable that selects it cannot change
 /// while rustc is running.
 enum Mode {
-    /// Consume the accepted count for each key and let the overflow through.
+    /// Stay silent up to the recorded count for each key and report the
+    /// overflow as warnings.
     Ratchet {
-        /// Remaining suppressions this run.
-        allowance: Mutex<HashMap<Key, usize>>,
+        recorded: HashMap<Key, usize>,
+        /// Findings weighed so far this run, per key.
+        seen: Mutex<HashMap<Key, usize>>,
     },
     /// Emit nothing; collect every finding and rewrite this crate's section of
     /// the file at `path` from `BaselineWriter::check_crate_post`.
@@ -54,6 +65,10 @@ pub struct Baseline {
 }
 
 static STATE: OnceLock<Option<Baseline>> = OnceLock::new();
+
+fn state() -> Option<&'static Baseline> {
+    STATE.get().and_then(Option::as_ref)
+}
 
 fn write_mode() -> bool {
     std::env::var_os("MORDANT_BASELINE_WRITE").is_some()
@@ -85,7 +100,8 @@ fn init(file_name: &str) -> Option<Baseline> {
                 }
             } else {
                 Mode::Ratchet {
-                    allowance: Mutex::new(read_allowance(&cand)),
+                    recorded: read_recorded(&cand),
+                    seen: Mutex::new(HashMap::new()),
                 }
             };
             return Some(Baseline { root: dir, mode });
@@ -98,7 +114,7 @@ fn init(file_name: &str) -> Option<Baseline> {
 
 /// Sums every crate section of the file, since a (lint, file) key can appear
 /// under more than one crate (a file shared by a lib and a bin target).
-fn read_allowance(path: &Path) -> HashMap<Key, usize> {
+fn read_recorded(path: &Path) -> HashMap<Key, usize> {
     let doc = std::fs::read_to_string(path)
         .map(|s| read_doc(&s))
         .unwrap_or_default();
@@ -124,29 +140,87 @@ fn rel_file(cx: &LateContext<'_>, b: &Baseline, span: Span) -> Option<String> {
     Some(rel.to_string_lossy().into_owned())
 }
 
-/// True when this finding is consumed by the baseline (or recorded, in write
-/// mode) and must not be emitted. Consumes one unit of allowance, so each
-/// finding must pass through here exactly once.
-fn suppressed(cx: &LateContext<'_>, lint: &'static Lint, span: Span) -> bool {
-    let Some(Some(b)) = STATE.get().map(Option::as_ref) else {
-        return false;
+/// What the baseline decided about one finding.
+enum Verdict {
+    /// No baseline governs it: an ordinary lint at its ordinary level.
+    Lint,
+    /// Allowed or expected at its node, recorded in write mode, or within
+    /// the recorded count: nothing is printed.
+    Silent,
+    /// Over the recorded count: printed as a warning no lint level can raise.
+    Over(Over),
+}
+
+struct Over {
+    lint: &'static Lint,
+    recorded: usize,
+    file: String,
+}
+
+impl Over {
+    fn report(
+        self,
+        cx: &LateContext<'_>,
+        span: Span,
+        msg: String,
+        decorate: impl FnOnce(&mut Diag<'_, ()>),
+    ) {
+        let mut diag = cx.tcx.dcx().struct_span_warn(span, msg);
+        decorate(&mut diag);
+        diag.note(format!(
+            "`{}` over the mordant baseline ({} recorded for {})",
+            self.lint.name_lower(),
+            self.recorded,
+            self.file,
+        ));
+        diag.emit();
+    }
+}
+
+/// Weighs one finding against the baseline; each finding must pass through
+/// here exactly once, since it counts. `hir_id` is the node the lint path
+/// would read the level at, so the baseline honours exactly the `#[allow]` /
+/// `#[expect]` the lint would have: a finding allowed there prints nothing
+/// without a baseline, so it is neither recorded nor counted with one, and
+/// an expectation there is fulfilled whatever the count says, as the lint did
+/// fire under it.
+fn weigh(cx: &LateContext<'_>, lint: &'static Lint, span: Span, hir_id: HirId) -> Verdict {
+    let Some(b) = state() else {
+        return Verdict::Lint;
     };
     let Some(file) = rel_file(cx, b, span) else {
-        return false;
+        return Verdict::Lint;
     };
+    let spec = cx.tcx.lint_level_spec_at_node(lint, hir_id);
+    if let Some(expectation) = spec.lint_id() {
+        cx.fulfill_expectation(expectation);
+    }
+    if spec.is_allow() || spec.is_expect() || span.in_external_macro(cx.tcx.sess.source_map()) {
+        return Verdict::Silent;
+    }
     let key = (lint.name_lower(), file);
     match &b.mode {
         Mode::Record { recorded, .. } => {
             recorded.lock().unwrap().push(key);
-            true
+            Verdict::Silent
         }
-        Mode::Ratchet { allowance } => match allowance.lock().unwrap().get_mut(&key) {
-            Some(n) if *n > 0 => {
-                *n -= 1;
-                true
+        Mode::Ratchet { recorded, seen } => {
+            let limit = recorded.get(&key).copied().unwrap_or(0);
+            let within = {
+                let mut seen = seen.lock().unwrap();
+                let n = seen.entry(key.clone()).or_default();
+                *n += 1;
+                *n <= limit
+            };
+            if within {
+                return Verdict::Silent;
             }
-            _ => false,
-        },
+            Verdict::Over(Over {
+                lint,
+                recorded: limit,
+                file: key.1,
+            })
+        }
     }
 }
 
@@ -158,10 +232,13 @@ pub fn emit(
     msg: impl Into<String>,
     help: &'static str,
 ) {
-    if suppressed(cx, lint, span) {
-        return;
+    match weigh(cx, lint, span, cx.last_node_with_lint_attrs) {
+        Verdict::Silent => {}
+        Verdict::Lint => span_lint_and_help(cx, lint, span, msg.into(), None, help),
+        Verdict::Over(over) => over.report(cx, span, msg.into(), |diag| {
+            diag.help(help);
+        }),
     }
-    span_lint_and_help(cx, lint, span, msg.into(), None, help);
 }
 
 /// `emit` with a secondary span: the finding is at `span`, the evidence for
@@ -175,13 +252,15 @@ pub fn emit_with_note(
     note: &'static str,
     help: &'static str,
 ) {
-    if suppressed(cx, lint, span) {
-        return;
-    }
-    span_lint_and_then(cx, lint, span, msg.into(), |diag| {
+    let decorate = |diag: &mut Diag<'_, ()>| {
         diag.span_note(note_span, note);
         diag.help(help);
-    });
+    };
+    match weigh(cx, lint, span, cx.last_node_with_lint_attrs) {
+        Verdict::Silent => {}
+        Verdict::Lint => span_lint_and_then(cx, lint, span, msg.into(), decorate),
+        Verdict::Over(over) => over.report(cx, span, msg.into(), decorate),
+    }
 }
 
 /// `emit` for a finding whose lint level is read at `hir_id` rather than at
@@ -195,10 +274,24 @@ pub fn emit_hir_then(
     msg: impl Into<String>,
     decorate: impl FnOnce(&mut Diag<'_, ()>),
 ) {
-    if suppressed(cx, lint, span) {
-        return;
+    match weigh(cx, lint, span, hir_id) {
+        Verdict::Silent => {}
+        Verdict::Lint => span_lint_hir_and_then(cx, lint, hir_id, span, msg.into(), decorate),
+        Verdict::Over(over) => over.report(cx, span, msg.into(), decorate),
     }
-    span_lint_hir_and_then(cx, lint, hir_id, span, msg.into(), decorate);
+}
+
+/// The baseline section name for this compilation: the crate, with the bin
+/// target appended, since one crate name can cover a lib and several bins.
+fn section_name(cx: &LateContext<'_>) -> String {
+    let name = cx
+        .tcx
+        .crate_name(rustc_hir::def_id::LOCAL_CRATE)
+        .to_string();
+    match std::env::var_os("CARGO_BIN_NAME") {
+        Some(bin) => format!("{name} (bin {})", bin.to_string_lossy()),
+        None => name,
+    }
 }
 
 // Registered last: flushes write-mode recordings for this crate into the
@@ -208,54 +301,49 @@ rustc_session::declare_lint_pass!(BaselineWriter => []);
 
 impl<'tcx> LateLintPass<'tcx> for BaselineWriter {
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
-        let Some(Some(Baseline {
+        if let Some(Baseline {
             mode: Mode::Record { path, recorded },
             ..
-        })) = STATE.get().map(Option::as_ref)
-        else {
-            return;
-        };
-        let recorded: Vec<Key> = std::mem::take(&mut *recorded.lock().unwrap());
-        let mut section: BTreeMap<String, u64> = BTreeMap::new();
-        for (lint, file) in recorded {
-            *section.entry(format!("{lint}:{file}")).or_default() += 1;
+        }) = state()
+        {
+            write_section(cx, path, recorded);
         }
-        // One crate name can cover several targets (lib + bin); suffix bins so
-        // sections never clobber each other.
-        let mut name = cx
-            .tcx
-            .crate_name(rustc_hir::def_id::LOCAL_CRATE)
-            .to_string();
-        if let Some(bin) = std::env::var_os("CARGO_BIN_NAME") {
-            name = format!("{name} (bin {})", bin.to_string_lossy());
-        }
-        let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            // Not `truncate`: the file is read first, then rewritten in place
-            // under the lock via `set_len(0)`.
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(path)
-        else {
-            return;
-        };
-        // Parallel rustc processes write concurrently; the lock serializes the
-        // read-modify-write.
-        let _ = f.lock();
-        let mut existing = String::new();
-        let _ = f.read_to_string(&mut existing);
-        let mut doc = read_doc(&existing);
-        if section.is_empty() {
-            doc.remove(&name);
-        } else {
-            doc.insert(name, section);
-        }
-        if let Ok(out) = toml::to_string_pretty(&doc) {
-            let _ = f.set_len(0);
-            let _ = f.rewind();
-            let _ = f.write_all(out.as_bytes());
-        }
-        let _ = f.unlock();
     }
+}
+
+fn write_section(cx: &LateContext<'_>, path: &Path, recorded: &Mutex<Vec<Key>>) {
+    let recorded: Vec<Key> = std::mem::take(&mut *recorded.lock().unwrap());
+    let mut section: BTreeMap<String, u64> = BTreeMap::new();
+    for (lint, file) in recorded {
+        *section.entry(format!("{lint}:{file}")).or_default() += 1;
+    }
+    let name = section_name(cx);
+    let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        // Not `truncate`: the file is read first, then rewritten in place
+        // under the lock via `set_len(0)`.
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path)
+    else {
+        return;
+    };
+    // Parallel rustc processes write concurrently; the lock serializes the
+    // read-modify-write.
+    let _ = f.lock();
+    let mut existing = String::new();
+    let _ = f.read_to_string(&mut existing);
+    let mut doc = read_doc(&existing);
+    if section.is_empty() {
+        doc.remove(&name);
+    } else {
+        doc.insert(name, section);
+    }
+    if let Ok(out) = toml::to_string_pretty(&doc) {
+        let _ = f.set_len(0);
+        let _ = f.rewind();
+        let _ = f.write_all(out.as_bytes());
+    }
+    let _ = f.unlock();
 }
