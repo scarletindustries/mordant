@@ -56,6 +56,7 @@ mod stale_safety_comment;
 mod stored_projection;
 mod stringified_error;
 mod stringly_error;
+mod stringly_state;
 mod unchecked_input_len;
 mod uneven_narrowing;
 mod unit_mismatch;
@@ -177,9 +178,10 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
         stale_across_reentry::StaleAcrossReentry, stale_panic_message::StalePanicMessage,
         stale_safety_comment::StaleSafetyComment, stored_projection::StoredProjection,
         stringified_error::StringifiedError, stringly_error::StringlyError,
-        unchecked_input_len::UncheckedInputLen, uneven_narrowing::UnevenNarrowing,
-        unit_mismatch::UnitMismatch, unread_error_variant::UnreadErrorVariant,
-        unread_none::UnreadNone, wildcard_local_enum::WildcardLocalEnum,
+        stringly_state::StringlyState, unchecked_input_len::UncheckedInputLen,
+        uneven_narrowing::UnevenNarrowing, unit_mismatch::UnitMismatch,
+        unread_error_variant::UnreadErrorVariant, unread_none::UnreadNone,
+        wildcard_local_enum::WildcardLocalEnum,
     };
     dylint_linting::init_config(sess);
     let config: MordantConfig = dylint_linting::config_or_default(env!("CARGO_PKG_NAME"));
@@ -229,6 +231,7 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
     add(s, true, ParallelVecs::default);
     add(s, true, bool_beside_option::BoolBesideOption::default);
     add(s, true, SentinelInt::default);
+    add(s, true, StringlyState::default);
     // Last, so its check_crate_post flushes after every lint has recorded.
     add(s, true, || BaselineWriter);
 }

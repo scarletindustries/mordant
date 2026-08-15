@@ -52,6 +52,7 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 | `parallel_vecs`        | sequence fields of one struct that only change length side by side and are read at one index: element `i` of each is one record, so the type lets the lengths differ      |
 | `bool_beside_option`   | a bool field written only beside an `Option` field, `true` with `Some(..)` and `false` with `None`: it is that field's `is_some()` stored twice, kept equal only by habit |
 | `sentinel_int`         | an integer field one function tests against `MAX`, `-1` or an `INVALID` constant and another indexes with or offsets a pointer by untested: `Option` spelled as an int    |
+| `stringly_state`       | a string field or local only ever storing one of a closed set of literals and then compared against them: an undeclared enum, so a misspelt state still compiles          |
 
 Each diagnostic states what the lint found, why the type is wrong, and the type that replaces it.
 

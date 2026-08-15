@@ -1,0 +1,51 @@
+warning: every value stored in `kind` is one of `"download"`, `"extract"` (3 stores across the crate), and it is read by comparing against literals
+  --> $DIR/stringly_state.rs:5:5
+   |
+LL |     kind: &'static str,
+   |     ^^^^^^^^^^^^^^^^^^
+   |
+   = help: these strings are the variants of an enum; store the enum and keep the text in an `as_str` method, so a misspelt state is a compile error
+   = note: `#[warn(stringly_state)]` on by default
+
+warning: every value stored in `name` is one of `"link"`, `"resolve"` (2 stores across the crate), and it is read by comparing against literals
+  --> $DIR/stringly_state.rs:25:5
+   |
+LL |     name: Vec<u8>,
+   |     ^^^^^^^^^^^^^
+   |
+   = help: these strings are the variants of an enum; store the enum and keep the text in an `as_str` method, so a misspelt state is a compile error
+
+warning: every value stored in `label` is one of `"fast"`, `"slow"` (2 stores across the crate), and it is read by comparing against literals
+  --> $DIR/stringly_state.rs:48:5
+   |
+LL |     label: String,
+   |     ^^^^^^^^^^^^^
+   |
+   = help: these strings are the variants of an enum; store the enum and keep the text in an `as_str` method, so a misspelt state is a compile error
+
+warning: every value stored in `scheme` is one of `"ws"`, `"wss"` (2 stores across the crate), and it is read by comparing against literals
+  --> $DIR/stringly_state.rs:69:5
+   |
+LL |     scheme: &'static [u8],
+   |     ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: these strings are the variants of an enum; store the enum and keep the text in an `as_str` method, so a misspelt state is a compile error
+
+warning: every value stored in `color` is one of `"green"`, `"red"`, `"yellow"` (3 stores), and it is read by comparing against literals
+  --> $DIR/stringly_state.rs:93:9
+   |
+LL |     let mut color = "green";
+   |         ^^^^^^^^^
+   |
+   = help: these strings are the variants of an enum; store the enum and keep the text in an `as_str` method, so a misspelt state is a compile error
+
+warning: every value stored in `level` is one of `"hi"`, `"lo"` (1 store), and it is read by comparing against literals
+  --> $DIR/stringly_state.rs:110:9
+   |
+LL |     let level = if n > 9 { "hi" } else { "lo" };
+   |         ^^^^^
+   |
+   = help: these strings are the variants of an enum; store the enum and keep the text in an `as_str` method, so a misspelt state is a compile error
+
+warning: 6 warnings emitted
+
