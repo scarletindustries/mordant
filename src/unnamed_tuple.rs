@@ -1,17 +1,18 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::ControlFlow;
 
-use clippy_utils::visitors::for_each_expr;
+use clippy_utils::visitors::for_each_expr_without_closures;
 use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::DefId;
 use rustc_hir::intravisit::FnKind;
 use rustc_hir::{
-    Body, Expr, ExprKind, FnDecl, LangItem, MatchSource, Node, Pat, PatKind, QPath, StmtKind,
+    Body, Expr, ExprKind, FnDecl, HirId, LangItem, LetStmt, LocalSource, MatchSource, Node, Pat,
+    PatKind, QPath, StmtKind,
 };
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty::{self, AssocContainer, Ty, TyCtxt};
 use rustc_span::def_id::LocalDefId;
-use rustc_span::{Span, Symbol, sym};
+use rustc_span::{Ident, Span, Symbol, sym};
 
 use crate::baseline::{emit, emit_with_note};
 use crate::hir_shapes::{callee_of, peel_blocks_unsafe};
@@ -19,8 +20,9 @@ use crate::hir_shapes::{callee_of, peel_blocks_unsafe};
 rustc_session::declare_lint! {
     /// Flags a crate-private function returning a tuple (bare, or inside an
     /// `Option`/`Result`) with two members of one type, when every call site
-    /// in the crate destructures it on the spot and all of them, across at
-    /// least two functions, bind the members to the same names. Those names
+    /// in the crate destructures it on the spot (`let (a, b) = f()`, an
+    /// `if let`/`match` arm, or `(a, self.b) = f()`) and all of them, across
+    /// at least two functions, give the members the same names. Those names
     /// are the members' real names: written at every use, missing only from
     /// the type, which is the one place the compiler could keep them attached.
     /// As a tuple, `(r, g, b)` and `(r, b, g)` are the same type, so a
@@ -135,8 +137,9 @@ fn is_lang_ctor(cx: &LateContext<'_>, variant: Option<DefId>, items: &[LangItem]
 }
 
 /// The expressions a body evaluates to: every `return e` and every tail,
-/// through blocks, `if` and `match`.
-fn return_values<'tcx>(cx: &LateContext<'tcx>, body: &'tcx Body<'tcx>) -> Vec<&'tcx Expr<'tcx>> {
+/// through blocks, `if` and `match`. A closure or `async` block's `return`
+/// is that closure's value, not the body's.
+fn return_values<'tcx>(body: &'tcx Body<'tcx>) -> Vec<&'tcx Expr<'tcx>> {
     fn tails<'h>(e: &'h Expr<'h>, out: &mut Vec<&'h Expr<'h>>) {
         match e.kind {
             ExprKind::Block(b, _) => {
@@ -161,7 +164,7 @@ fn return_values<'tcx>(cx: &LateContext<'tcx>, body: &'tcx Body<'tcx>) -> Vec<&'
         }
     }
     let mut out = Vec::new();
-    for_each_expr(cx, body.value, |e| {
+    for_each_expr_without_closures(body.value, |e| {
         if let ExprKind::Ret(Some(v)) = e.kind {
             out.push(v);
         }
@@ -191,13 +194,7 @@ fn returned_names(cx: &LateContext<'_>, e: &Expr<'_>, wrapped: bool) -> Option<R
     };
     let names = elems
         .iter()
-        .map(|el| match peel_blocks_unsafe(el).kind {
-            ExprKind::Path(QPath::Resolved(None, p)) if matches!(p.res, Res::Local(_)) => {
-                Some(p.segments[0].ident.name)
-            }
-            ExprKind::Field(_, ident) => Some(ident.name),
-            _ => None,
-        })
+        .map(|el| place_name(peel_blocks_unsafe(el)))
         .collect::<Option<Vec<_>>>()?;
     Some(Returned {
         names,
@@ -205,30 +202,93 @@ fn returned_names(cx: &LateContext<'_>, e: &Expr<'_>, wrapped: bool) -> Option<R
     })
 }
 
-fn pat_use(cx: &LateContext<'_>, pat: &Pat<'_>, wrapped: bool) -> Use {
+/// A bare local `a` or a field `self.b`, as that name.
+fn place_name(e: &Expr<'_>) -> Option<Symbol> {
+    match e.kind {
+        ExprKind::Path(QPath::Resolved(None, p)) if matches!(p.res, Res::Local(_)) => {
+            Some(p.segments[0].ident.name)
+        }
+        ExprKind::Field(_, ident) => Some(ident.name),
+        _ => None,
+    }
+}
+
+/// Where a pattern's bindings get their names. rustc lowers
+/// `(a, self.b) = f()` to `let (lhs, lhs) = f(); a = lhs; self.b = lhs;`:
+/// there each binding is called `lhs` and its name is what it is assigned
+/// on to.
+#[derive(Clone, Copy)]
+enum Naming<'a> {
+    Bound,
+    Assigned(&'a HashMap<HirId, Symbol>),
+}
+
+impl Naming<'_> {
+    fn name(self, binding: HirId, ident: Ident) -> Option<Symbol> {
+        match self {
+            Naming::Bound => Some(ident.name),
+            Naming::Assigned(targets) => targets.get(&binding).copied(),
+        }
+    }
+}
+
+/// The left-hand sides of a lowered `(a, self.b) = f()`, keyed by the `lhs`
+/// binding each is assigned from; `None` when one of them is more than a
+/// local or a field.
+fn assign_targets(cx: &LateContext<'_>, desugared: &LetStmt<'_>) -> Option<HashMap<HirId, Symbol>> {
+    let block = cx
+        .tcx
+        .hir_parent_iter(desugared.hir_id)
+        .find_map(|(_, node)| match node {
+            Node::Block(b) => Some(b),
+            _ => None,
+        })?;
+    let mut targets = HashMap::new();
+    for stmt in block.stmts {
+        let (StmtKind::Expr(e) | StmtKind::Semi(e)) = stmt.kind else {
+            continue;
+        };
+        let ExprKind::Assign(target, value, _) = e.kind else {
+            continue;
+        };
+        let ExprKind::Path(QPath::Resolved(None, p)) = value.kind else {
+            continue;
+        };
+        let Res::Local(binding) = p.res else {
+            continue;
+        };
+        targets.insert(binding, place_name(target)?);
+    }
+    Some(targets)
+}
+
+fn pat_use(cx: &LateContext<'_>, pat: &Pat<'_>, wrapped: bool, naming: Naming<'_>) -> Use {
     match pat.kind {
         PatKind::Wild => Use::Neutral,
-        PatKind::Ref(inner, _, _) => pat_use(cx, inner, wrapped),
+        PatKind::Ref(inner, _, _) => pat_use(cx, inner, wrapped, naming),
         PatKind::Tuple(pats, dotdot) if !wrapped => {
             if dotdot.as_opt_usize().is_some() {
                 return Use::Opaque;
             }
             let mut names = Vec::with_capacity(pats.len());
             for p in pats {
-                let PatKind::Binding(_, _, ident, None) = p.kind else {
+                let PatKind::Binding(_, id, ident, None) = p.kind else {
                     return Use::Opaque;
                 };
-                if ident.as_str().starts_with('_') {
+                let Some(name) = naming.name(id, ident) else {
+                    return Use::Opaque;
+                };
+                if name.as_str().starts_with('_') {
                     return Use::Opaque;
                 }
-                names.push(ident.name);
+                names.push(name);
             }
             Use::Names(names)
         }
         PatKind::TupleStruct(_, [inner], _) if wrapped => {
             let variant = crate::enum_facts::arm_variant(cx, pat);
             if is_lang_ctor(cx, variant, &[LangItem::OptionSome, LangItem::ResultOk]) {
-                pat_use(cx, inner, false)
+                pat_use(cx, inner, false, naming)
             } else if is_lang_ctor(cx, variant, &[LangItem::ResultErr]) {
                 Use::Neutral
             } else {
@@ -272,7 +332,14 @@ fn use_of_call<'tcx>(cx: &LateContext<'tcx>, call: &'tcx Expr<'tcx>, mut wrapped
     for (parent_id, node) in cx.tcx.hir_parent_iter(call.hir_id) {
         match node {
             Node::LetStmt(l) if l.init.is_some_and(|i| i.hir_id == current) => {
-                return pat_use(cx, l.pat, wrapped);
+                return match l.source {
+                    LocalSource::Normal => pat_use(cx, l.pat, wrapped, Naming::Bound),
+                    LocalSource::AssignDesugar => match assign_targets(cx, l) {
+                        Some(targets) => pat_use(cx, l.pat, wrapped, Naming::Assigned(&targets)),
+                        None => Use::Opaque,
+                    },
+                    _ => Use::Opaque,
+                };
             }
             // `f();`: the value is dropped unread.
             Node::Stmt(s) if matches!(s.kind, StmtKind::Semi(e) if e.hir_id == current) => {
@@ -305,9 +372,14 @@ fn use_of_call<'tcx>(cx: &LateContext<'tcx>, call: &'tcx Expr<'tcx>, mut wrapped
                 ExprKind::Match(scrut, arms, MatchSource::Normal | MatchSource::Postfix)
                     if scrut.hir_id == current =>
                 {
-                    return merge(arms.iter().map(|arm| pat_use(cx, arm.pat, wrapped)));
+                    return merge(
+                        arms.iter()
+                            .map(|arm| pat_use(cx, arm.pat, wrapped, Naming::Bound)),
+                    );
                 }
-                ExprKind::Let(l) if l.init.hir_id == current => return pat_use(cx, l.pat, wrapped),
+                ExprKind::Let(l) if l.init.hir_id == current => {
+                    return pat_use(cx, l.pat, wrapped, Naming::Bound);
+                }
                 _ => return Use::Opaque,
             },
             _ => return Use::Opaque,
@@ -373,7 +445,7 @@ impl<'tcx> LateLintPass<'tcx> for UnnamedTuple {
         let Some(same) = same_typed_pair(ret.members) else {
             return;
         };
-        let returns = return_values(cx, body)
+        let returns = return_values(body)
             .into_iter()
             .filter_map(|e| returned_names(cx, e, ret.wrapped))
             .collect();

@@ -45,6 +45,44 @@ fn clamped_ratio(n: &Node) -> u32 {
     depth / width.max(1)
 }
 
+// Flagged, without the evidence: the only `(width, depth)` is a closure's
+// return, which is the closure's value and not this function's.
+fn folded(n: &Node) -> (u32, u32) {
+    let clamp = |width: u32, depth: u32| {
+        if width > depth {
+            return (width, depth);
+        }
+        (depth, depth)
+    };
+    let depth = clamp(n.width, n.depth).1;
+    (depth, n.width)
+}
+
+fn folded_area(n: &Node) -> u32 {
+    let (depth, width) = folded(n);
+    depth * width
+}
+
+fn folded_ratio(n: &Node) -> u32 {
+    let (depth, width) = folded(n);
+    depth / width.max(1)
+}
+
+// Flagged: a destructuring assignment names the members by what it assigns
+// them to, `(depth, width)` like the `let` in the other caller.
+fn grown(n: &Node) -> (u32, u32) {
+    (n.depth + 2, n.width + 2)
+}
+
+fn grow(n: &mut Node) {
+    (n.depth, n.width) = grown(n);
+}
+
+fn grown_area(n: &Node) -> u32 {
+    let (depth, width) = grown(n);
+    depth * width
+}
+
 // Flagged: the `Option` around the tuple is read through `?`, `if let`,
 // `match` and `.unwrap()`, and every pattern that reaches the tuple names it
 // `(key, value)`; `None` arms and `is_none()` never reach it.
@@ -131,6 +169,25 @@ fn range_lo(n: u32) -> u32 {
 fn range_start(n: u32) -> u32 {
     let (start, end) = range(n);
     start.max(end)
+}
+
+// Fine: the callers disagree through destructuring assignments, `(near, far)`
+// here and `(low, high)` there; the `lhs` rustc binds them to on the way is
+// nobody's name for them.
+fn assigned(n: u32) -> (u32, u32) {
+    (n, n + 2)
+}
+
+fn assigned_near(n: u32) -> u32 {
+    let (near, far);
+    (near, far) = assigned(n);
+    far - near
+}
+
+fn assigned_low(n: u32) -> u32 {
+    let (low, high);
+    (low, high) = assigned(n);
+    low * high
 }
 
 // Fine: one caller keeps the tuple whole (`.0`), so the type is used as one.
@@ -234,12 +291,15 @@ fn extent_b(n: usize) -> usize {
 }
 
 fn main() {
-    let n = Node { depth: 1, width: 2 };
+    let mut n = Node { depth: 1, width: 2 };
+    grow(&mut n);
     let t = Table { rows: vec![(1, 2)] };
     let _ = (taller(&n, &n), wider(&n), clamped_area(&n), clamped_ratio(&n));
+    let _ = (folded_area(&n), folded_ratio(&n), grown_area(&n));
     let _ = (key_len("a=b"), has_value("a=b"), value_of("a=b"));
     let _ = (t.span(), t.low());
     let _ = range_lo(1) + range_start(2) + halves_sum(3) + halves_left(4) + indexed_sum(5) as u32;
+    let _ = assigned_near(3) + assigned_low(4);
     let _ = indexed_gap(9);
     let _ = corners_twice(5) + parts_head(6) + parts_both(7) + pair_a(8) + pair_b(9);
     let _ = line_of(&t) + column_of(&t) + extent_a(1) + extent_b(2);
