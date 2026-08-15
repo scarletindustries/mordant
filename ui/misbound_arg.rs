@@ -45,6 +45,10 @@ impl Canvas {
     }
 }
 
+fn with_alias(from: &str, version: &str) -> usize {
+    from.len() + version.len()
+}
+
 fn under(url: &str, registry: &str) -> bool {
     url.starts_with(registry)
 }
@@ -123,9 +127,15 @@ fn unnamed_args_are_fine(d: &Daemon) -> bool {
     spawn(true, d.detached)
 }
 
-fn symmetric_pair_is_fine(url: &str, registry: &str) -> bool {
+fn symmetric_pair_is_fine(url: &str, scope_registry: &str) -> bool {
     // Fine: both orders in one condition is an equality test, not a slip.
-    !(under(url, registry) && under(registry, url))
+    !(under(url, scope_registry) && under(scope_registry, url))
+}
+
+fn literal_namesake_is_fine(version: &str) -> usize {
+    // Fine: `version` fills `from`, but the `version` slot holds a literal,
+    // so there is no second value it could have been transposed with.
+    with_alias(version, "latest")
 }
 
 fn pseudo_receiver_is_fine(str: &[u8]) -> bool {
@@ -159,5 +169,6 @@ fn main() {
     let _ = lone_reversal_is_flagged("u", "r");
     let _ = symmetric_pair_is_fine("u", "r");
     let _ = pseudo_receiver_is_fine(b"s");
+    let _ = literal_namesake_is_fine("v");
     let _ = Span(1, 2).encloses(&Span(0, 3));
 }

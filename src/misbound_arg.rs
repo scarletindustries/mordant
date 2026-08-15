@@ -26,11 +26,13 @@ rustc_session::declare_lint! {
     /// dropping a leading `is_`/`has_`/`_` and a trailing `_`, when the
     /// parameter the name points at already receives an argument of that
     /// name, when the bound parameter's name contains the argument's as a
-    /// word (`from_index` receiving `index`), when the same condition also
-    /// calls the callee the other way round (`sub(a, b) && sub(b, a)` is a
-    /// symmetric use), for `self`/`this` on either side (a receiver slot is
-    /// a grammatical position, not a role), for one-character names, and
-    /// for calls through closures or fn pointers.
+    /// word (`from_index` receiving `index`), when the parameter the name
+    /// points at receives a literal or constant (no second value is there
+    /// to have been transposed with), when the same condition also calls
+    /// the callee with the two values the other way round (`sub(a, b) &&
+    /// sub(b, a)` is a symmetric use), for `self`/`this` on either side (a
+    /// receiver slot is a grammatical position, not a role), for
+    /// one-character names, and for calls through closures or fn pointers.
     pub MISBOUND_ARG,
     Warn,
     "argument named as a different same-typed parameter of the callee"
@@ -78,6 +80,29 @@ fn received(args: &[Expr<'_>], offset: usize, slot: usize) -> Option<Symbol> {
     role(arg_name(arg)?)
 }
 
+/// A literal or a named constant: spelled out at the call, so it cannot be
+/// the value a neighbouring argument was confused with.
+fn is_constant(cx: &LateContext<'_>, mut e: &Expr<'_>) -> bool {
+    while let ExprKind::Cast(inner, _)
+    | ExprKind::AddrOf(_, _, inner)
+    | ExprKind::Unary(UnOp::Neg, inner)
+    | ExprKind::DropTemps(inner) = e.kind
+    {
+        e = inner;
+    }
+    match &e.kind {
+        ExprKind::Lit(_) => true,
+        ExprKind::Path(qpath) => matches!(
+            cx.qpath_res(qpath, e.hir_id),
+            Res::Def(
+                DefKind::Const { .. } | DefKind::AssocConst { .. } | DefKind::ConstParam,
+                _
+            )
+        ),
+        _ => false,
+    }
+}
+
 fn args_of<'tcx>(callee: &Callee<'tcx>) -> (&'tcx [Expr<'tcx>], usize) {
     match *callee {
         Callee::Path { args, .. } => (args, 0),
@@ -87,8 +112,8 @@ fn args_of<'tcx>(callee: &Callee<'tcx>) -> (&'tcx [Expr<'tcx>], usize) {
 }
 
 /// `f(a, b) && f(b, a)`: the condition `expr` sits in also calls `def`
-/// with slots `slot` and `other` receiving their own names, so the crossed
-/// call is the deliberate other half of a symmetric test.
+/// with the same two names in slots `slot` and `other` the other way round,
+/// so the crossed call is the deliberate second half of a symmetric test.
 fn mirrored_in_condition<'tcx>(
     cx: &LateContext<'tcx>,
     expr: &'tcx Expr<'tcx>,
@@ -192,8 +217,15 @@ impl<'tcx> LateLintPass<'tcx> for MisboundArg {
             };
             // `f(name, name)`: the namesake parameter already gets its name,
             // so nothing is transposed, one value fills two roles.
-            if received(args, offset, other) == Some(an)
-                || mirrored_in_condition(cx, expr, def, (slot, bn), (other, an))
+            let at_other = received(args, offset, other);
+            if at_other == Some(an)
+                || other
+                    .checked_sub(offset)
+                    .and_then(|i| args.get(i))
+                    .is_some_and(|a| is_constant(cx, a))
+                || at_other.is_some_and(|there| {
+                    mirrored_in_condition(cx, expr, def, (slot, there), (other, an))
+                })
             {
                 continue;
             }
