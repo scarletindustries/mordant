@@ -5,11 +5,12 @@ use clippy_utils::res::MaybeResPath;
 use clippy_utils::source::snippet;
 use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::DefId;
-use rustc_hir::{BinOpKind, Expr, ExprKind, HirId, PatKind, UnOp};
+use rustc_hir::{BinOpKind, Expr, ExprKind, HirId, Pat, PatKind, UnOp};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty::{self, Ty};
 use rustc_span::{Span, Symbol, sym};
 
+use crate::adt_facts::has_fixed_repr;
 use crate::baseline::emit_with_note;
 use crate::hir_shapes::{Callee, callee_of};
 
@@ -35,8 +36,9 @@ rustc_session::declare_lint! {
     /// width, so `u64 as usize` on a 64-bit target is not a narrowing. A
     /// checked site only condemns `as` casts to a type at most as wide as
     /// its own target: `u8::try_from(c)` inside an arm that already matched
-    /// a letter says nothing about `c as u32` elsewhere. Sites inside macro
-    /// expansions are not read.
+    /// a letter says nothing about `c as u32` elsewhere. A field of a
+    /// `repr(C)`, packed or transparent struct has its width fixed by that
+    /// layout and is not read; neither are sites inside macro expansions.
     pub UNEVEN_NARROWING,
     Warn,
     "an integer place range-checked at one narrowing and truncated with `as` at another"
@@ -106,8 +108,11 @@ fn lossy(src: IntLayout, dst: IntLayout) -> bool {
 
 /// The integer place `e` reads, through `&`, `*`, HIR temporaries and inner
 /// integer-to-integer casts (which change representation, not which place is
-/// read), with its source text to show for it.
-fn place_of<'tcx>(cx: &LateContext<'tcx>, mut e: &'tcx Expr<'tcx>) -> Option<(Place, String)> {
+/// read), with the place's own layout and its source text to show for it.
+fn place_of<'tcx>(
+    cx: &LateContext<'tcx>,
+    mut e: &'tcx Expr<'tcx>,
+) -> Option<(Place, IntLayout, Ty<'tcx>, String)> {
     let typeck = cx.typeck_results();
     loop {
         match e.kind {
@@ -123,18 +128,29 @@ fn place_of<'tcx>(cx: &LateContext<'tcx>, mut e: &'tcx Expr<'tcx>) -> Option<(Pl
             _ => break,
         }
     }
-    int_layout(cx, typeck.expr_ty(e).peel_refs())?;
+    let ty = typeck.expr_ty(e).peel_refs();
+    let layout = int_layout(cx, ty)?;
     let shown = snippet(cx, e.span, "..").into_owned();
     match e.kind {
         ExprKind::Field(base, ident) => {
             let adt = typeck.expr_ty_adjusted(base).peel_refs().ty_adt_def()?;
-            Some((Place::Field(adt.did(), ident.name), shown))
+            // A layout-fixed struct cannot redeclare the field narrow.
+            if has_fixed_repr(adt) {
+                return None;
+            }
+            Some((Place::Field(adt.did(), ident.name), layout, ty, shown))
         }
         _ => {
             let local = e.res_local_id()?;
-            Some((Place::Local(local), shown))
+            Some((Place::Local(local), layout, ty, shown))
         }
     }
+}
+
+fn has_range_pat(pat: &Pat<'_>) -> bool {
+    let mut found = false;
+    pat.walk_always(|p| found |= matches!(p.kind, PatKind::Range(..)));
+    found
 }
 
 /// `T::try_from(x)` / `x.try_into()`: the operand and the `T` it is checked
@@ -216,30 +232,35 @@ impl UnevenNarrowing {
         dst_ty: Ty<'tcx>,
         checked: bool,
     ) {
-        let src_ty = cx.typeck_results().expr_ty(operand).peel_refs();
-        let (Some(src), Some(dst)) = (int_layout(cx, src_ty), int_layout(cx, dst_ty)) else {
+        let operand_ty = cx.typeck_results().expr_ty(operand).peel_refs();
+        let (Some(src), Some(dst)) = (int_layout(cx, operand_ty), int_layout(cx, dst_ty)) else {
             return;
         };
         // A conversion that cannot fail is neither a truncation nor a check.
         if !lossy(src, dst) {
             return;
         }
-        let Some((place, shown)) = place_of(cx, operand) else {
+        let Some((place, place_layout, place_ty, shown)) = place_of(cx, operand) else {
             return;
         };
+        // `x as usize as u32` on a `u32` is `x` again: what the site does to
+        // the place is a question about the place's type, not the operand's.
+        if !lossy(place_layout, dst) {
+            return;
+        }
         self.sites.entry(place).or_default().push(Site {
             span: site.span,
             body: enclosing_fn(cx, site.hir_id),
             dst_bits: dst.bits,
             checked,
             shown,
-            src: src_ty.to_string(),
+            src: place_ty.to_string(),
             dst: dst_ty.to_string(),
         });
     }
 
     fn mark_range_checked<'tcx>(&mut self, cx: &LateContext<'tcx>, at: HirId, e: &'tcx Expr<'tcx>) {
-        if let Some((place, _)) = place_of(cx, e) {
+        if let Some((place, ..)) = place_of(cx, e) {
             self.range_checked.insert((enclosing_fn(cx, at), place));
         }
     }
@@ -275,16 +296,13 @@ impl<'tcx> LateLintPass<'tcx> for UnevenNarrowing {
                     self.mark_range_checked(cx, expr.hir_id, r);
                 }
             }
-            // `match x { 0..=9 => .., _ => .. }` tests the range too.
-            ExprKind::Match(scrut, arms, _)
-                if arms.iter().any(|arm| {
-                    let mut has_range = false;
-                    arm.pat
-                        .walk_always(|p| has_range |= matches!(p.kind, PatKind::Range(..)));
-                    has_range
-                }) =>
-            {
+            // `match x { 0..=9 => .., _ => .. }` and `if let 0..=9 = x` test
+            // the range too.
+            ExprKind::Match(scrut, arms, _) if arms.iter().any(|arm| has_range_pat(arm.pat)) => {
                 self.mark_range_checked(cx, expr.hir_id, scrut);
+            }
+            ExprKind::Let(l) if has_range_pat(l.pat) => {
+                self.mark_range_checked(cx, expr.hir_id, l.init);
             }
             _ if !expr.span.from_expansion() => {
                 if let Some((operand, dst_ty)) = checked_conversion(cx, expr) {

@@ -65,6 +65,36 @@ fn matched_then_cast(n: u64) -> u8 {
     }
 }
 
+// Fine: an `if let` range pattern is the same check.
+fn if_let_then_cast(n: u64) -> u8 {
+    let narrow = u8::try_from(n).ok();
+    if let 0..=255 = n {
+        n as u8
+    } else {
+        narrow.unwrap_or(0)
+    }
+}
+
+// Fine: out through `usize` and back is `u32` again; the operand's type is not
+// the place's.
+fn round_trip(n: u32) -> (u32, bool) {
+    (n as usize as u32, i32::try_from(n).is_err())
+}
+
+// Fine: `repr(C)` fixes the field's width; it cannot be redeclared narrow.
+#[repr(C)]
+struct Header {
+    size: u64,
+}
+
+fn header_size(h: &Header) -> u32 {
+    h.size as u32
+}
+
+fn header_size_checked(h: &Header) -> u32 {
+    u32::try_from(h.size).unwrap_or(u32::MAX)
+}
+
 // Fine: widening loses nothing.
 fn widen(b: &Buf) -> u64 {
     b.small as u64 + b.len as u64
@@ -146,6 +176,11 @@ fn main() {
     let _ = local_both_ways(7);
     let _ = compared_then_cast(&b);
     let _ = matched_then_cast(8);
+    let _ = if_let_then_cast(8);
+    let _ = round_trip(3);
+    let h = Header { size: 13 };
+    let _ = header_size(&h);
+    let _ = header_size_checked(&h);
     let _ = widen(&b);
     let _ = bucket(&b);
     let _ = bucket_again(&b);
