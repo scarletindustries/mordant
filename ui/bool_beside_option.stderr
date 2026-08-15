@@ -1,0 +1,19 @@
+warning: `connected` is only ever written beside `peer` of `Conn`, `true` with `Some(..)` and `false` with `None` (3 sites): it stores `peer.is_some()` a second time
+  --> $DIR/bool_beside_option.rs:7:5
+   |
+LL |     connected: bool,
+   |     ^^^^^^^^^^^^^^^
+   |
+   = help: the `Option` already carries this state; drop the flag and ask the `Option`, so the two cannot disagree
+   = note: `#[warn(bool_beside_option)]` on by default
+
+warning: `stale` is only ever written beside `fresh` of `Cache`, `true` with `None` and `false` with `Some(..)` (2 sites): it stores `fresh.is_none()` a second time
+  --> $DIR/bool_beside_option.rs:44:5
+   |
+LL |     stale: bool,
+   |     ^^^^^^^^^^^
+   |
+   = help: the `Option` already carries this state; drop the flag and ask the `Option`, so the two cannot disagree
+
+warning: 2 warnings emitted
+

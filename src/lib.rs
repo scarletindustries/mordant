@@ -21,6 +21,7 @@ use rustc_data_structures::sync;
 mod adt_facts;
 mod asymmetric_guard;
 mod baseline;
+mod bool_beside_option;
 mod bypassed_conversion;
 mod bypassed_validator;
 mod claims;
@@ -222,6 +223,7 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
     add(s, true, CollapsedError::default);
     add(s, true, UnevenNarrowing::default);
     add(s, true, || CrossedIndex);
+    add(s, true, bool_beside_option::BoolBesideOption::default);
     // Last, so its check_crate_post flushes after every lint has recorded.
     add(s, true, || BaselineWriter);
 }
