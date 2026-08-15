@@ -173,6 +173,10 @@ pub struct MordantConfig {
     /// signatures tells those from a value nobody declared; run it once and
     /// read the list.
     pub parallel_params_enabled: bool,
+    /// Opt-in: run `some_if`. Off by default because a `Some` that fails
+    /// the check usually is meant to read as absent; the lint is a sweep for
+    /// the places where a `.filter(..)` or a narrower type says so instead.
+    pub some_if_enabled: bool,
     /// Functions a parameter group must pass between, unchanged, before
     /// `parallel_params` names it.
     pub parallel_params_min_fns: usize = 3,
@@ -257,7 +261,7 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
     r.add(true, BoolParams::default);
     r.add(true, UnnamedTuple::default);
     r.add(true, || CrossedAlias);
-    r.add(true, || some_if::SomeIf);
+    r.add(config.some_if_enabled, || some_if::SomeIf);
     // Last, so its check_crate_post flushes after every lint has recorded.
     r.add(true, || BaselineWriter);
     let unknown = unknown_names(&config.disabled, &r.known);
@@ -329,6 +333,7 @@ fn ui() {
             stale-safety-comment-enabled = true
             unchecked-input-len-enabled = true
             parallel-params-enabled = true
+            some-if-enabled = true
 
             [[mordant.forbidden-reach]]
             from = "hot_path"
@@ -371,6 +376,7 @@ fn config_default_thresholds_match_docs() {
     assert!(!c.stale_safety_comment_enabled);
     assert!(!c.unchecked_input_len_enabled);
     assert!(!c.parallel_params_enabled);
+    assert!(!c.some_if_enabled);
     assert_eq!(c.parallel_params_min_fns, 3);
 }
 
