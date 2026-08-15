@@ -35,6 +35,7 @@ mod hir_shapes;
 mod insert_then_unwrap;
 mod lock_order;
 mod mir_flow;
+mod misbound_arg;
 mod narrowed_return;
 mod nonidentity_key;
 mod overwide_parameter;
@@ -153,7 +154,7 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
         bypassed_validator::BypassedValidator, defaulted_failure::DefaultedFailure,
         discarded_error::DiscardedError, exclusive_options::ExclusiveOptions,
         flag_cluster::FlagCluster, forbidden_reach::ForbiddenReach, guard_flag::GuardFlag,
-        insert_then_unwrap::InsertThenUnwrap, lock_order::LockOrder,
+        insert_then_unwrap::InsertThenUnwrap, lock_order::LockOrder, misbound_arg::MisboundArg,
         narrowed_return::NarrowedReturn, nonidentity_key::NonidentityKey,
         overwide_parameter::OverwideParameter, parallel_bools::ParallelBools,
         stale_across_reentry::StaleAcrossReentry, stale_panic_message::StalePanicMessage,
@@ -198,6 +199,7 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
     add(s, true, move || StaleAcrossReentry { config });
     add(s, true, move || DefaultedFailure::new(config));
     add(s, config.unchecked_input_len_enabled, || UncheckedInputLen);
+    add(s, true, || MisboundArg);
     // Last, so its check_crate_post flushes after every lint has recorded.
     add(s, true, || BaselineWriter);
 }

@@ -41,6 +41,7 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 | `stale_across_reentry` | a length, flag, or pointer read off a field of `self`, then a call that can re-enter (closure, fn pointer, `dyn`, `.await`, configured), then the field used through it   |
 | `defaulted_failure`    | `f(x).unwrap_or(0)` or `let Ok(v) = f(x) else { return Ok(()) }` where `f`'s own body rejects some of `x`: the rejection becomes a value and processing carries on        |
 | `unchecked_input_len`  | opt-in via `unchecked-input-len-enabled`: a received integer bounded on one path and turned into memory (`split_at`, `set_len`, `ptr.add`) on a path no check dominates   |
+| `misbound_arg`         | `resize(height, width)` against `fn resize(width: u32, height: u32)`: an argument named as another parameter of the same type, so only its position says which it is      |
 
 Each diagnostic states what the lint found, why the type is wrong, and the type that replaces it.
 
