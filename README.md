@@ -54,6 +54,7 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 | `sentinel_int`         | an integer field one function tests against `MAX`, `-1` or an `INVALID` constant and another indexes with or offsets a pointer by untested: `Option` spelled as an int    |
 | `stringly_state`       | a string field or local only ever storing one of a closed set of literals and then compared against them: an undeclared enum, so a misspelt state still compiles          |
 | `parallel_params`      | opt-in via `parallel-params-enabled`: parameters several functions declare alike and hand each other unchanged in one call: one value with no type, passable by halves    |
+| `bool_params`          | a crate-private fn with two or more `bool` parameters that a call fills with bare `true`/`false`: `f(x, true, false)` names neither flag, and the swapped call compiles   |
 
 Each diagnostic states what the lint found, why the type is wrong, and the type that replaces it.
 

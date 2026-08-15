@@ -22,6 +22,7 @@ mod adt_facts;
 mod asymmetric_guard;
 mod baseline;
 mod bool_beside_option;
+mod bool_params;
 mod bypassed_conversion;
 mod bypassed_validator;
 mod claims;
@@ -175,7 +176,7 @@ pub struct MordantConfig {
 #[unsafe(no_mangle)]
 pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintStore) {
     use {
-        asymmetric_guard::AsymmetricGuard, baseline::BaselineWriter,
+        asymmetric_guard::AsymmetricGuard, baseline::BaselineWriter, bool_params::BoolParams,
         bypassed_conversion::BypassedConversion, bypassed_validator::BypassedValidator,
         collapsed_error::CollapsedError, crossed_index::CrossedIndex,
         defaulted_failure::DefaultedFailure, dependent_field::DependentField,
@@ -245,6 +246,7 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
     add(s, config.parallel_params_enabled, move || {
         ParallelParams::new(config)
     });
+    add(s, true, BoolParams::default);
     // Last, so its check_crate_post flushes after every lint has recorded.
     add(s, true, || BaselineWriter);
 }
