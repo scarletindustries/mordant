@@ -1,0 +1,27 @@
+warning: parallel vecs: the fields `ages`, `names` of `People` only change length together (2 blocks) and are read at one index, so element `i` of each is one record kept in 2 places
+  --> $DIR/parallel_vecs.rs:7:1
+   |
+LL | struct People {
+   | ^^^^^^^^^^^^^
+   |
+   = help: one `Vec` of a struct with these fields holds the pairing in the type and cannot let the lengths differ
+   = note: `#[warn(parallel_vecs)]` on by default
+
+warning: parallel vecs: the fields `keys`, `phases`, `values` of `Table` only change length together (1 block) and are read at one index, so element `i` of each is one record kept in 3 places
+  --> $DIR/parallel_vecs.rs:38:1
+   |
+LL | struct Table {
+   | ^^^^^^^^^^^^
+   |
+   = help: one `Vec` of a struct with these fields holds the pairing in the type and cannot let the lengths differ
+
+warning: parallel vecs: the fields `items`, `locs` of `Tape` only change length together (2 blocks) and are read at one index, so element `i` of each is one record kept in 2 places
+  --> $DIR/parallel_vecs.rs:57:1
+   |
+LL | struct Tape {
+   | ^^^^^^^^^^^
+   |
+   = help: one `Vec` of a struct with these fields holds the pairing in the type and cannot let the lengths differ
+
+warning: 3 warnings emitted
+

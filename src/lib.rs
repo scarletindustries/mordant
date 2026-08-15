@@ -46,6 +46,7 @@ mod narrowed_return;
 mod nonidentity_key;
 mod overwide_parameter;
 mod parallel_bools;
+mod parallel_vecs;
 mod reimplemented_helper;
 mod same_match_twice;
 mod stale_across_reentry;
@@ -171,12 +172,13 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
         insert_then_unwrap::InsertThenUnwrap, lock_order::LockOrder, misbound_arg::MisboundArg,
         narrowed_return::NarrowedReturn, nonidentity_key::NonidentityKey,
         overwide_parameter::OverwideParameter, parallel_bools::ParallelBools,
-        stale_across_reentry::StaleAcrossReentry, stale_panic_message::StalePanicMessage,
-        stale_safety_comment::StaleSafetyComment, stored_projection::StoredProjection,
-        stringified_error::StringifiedError, stringly_error::StringlyError,
-        unchecked_input_len::UncheckedInputLen, uneven_narrowing::UnevenNarrowing,
-        unit_mismatch::UnitMismatch, unread_error_variant::UnreadErrorVariant,
-        unread_none::UnreadNone, wildcard_local_enum::WildcardLocalEnum,
+        parallel_vecs::ParallelVecs, stale_across_reentry::StaleAcrossReentry,
+        stale_panic_message::StalePanicMessage, stale_safety_comment::StaleSafetyComment,
+        stored_projection::StoredProjection, stringified_error::StringifiedError,
+        stringly_error::StringlyError, unchecked_input_len::UncheckedInputLen,
+        uneven_narrowing::UnevenNarrowing, unit_mismatch::UnitMismatch,
+        unread_error_variant::UnreadErrorVariant, unread_none::UnreadNone,
+        wildcard_local_enum::WildcardLocalEnum,
     };
     dylint_linting::init_config(sess);
     let config: MordantConfig = dylint_linting::config_or_default(env!("CARGO_PKG_NAME"));
@@ -223,6 +225,7 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
     add(s, true, CollapsedError::default);
     add(s, true, UnevenNarrowing::default);
     add(s, true, || CrossedIndex);
+    add(s, true, ParallelVecs::default);
     add(s, true, bool_beside_option::BoolBesideOption::default);
     // Last, so its check_crate_post flushes after every lint has recorded.
     add(s, true, || BaselineWriter);

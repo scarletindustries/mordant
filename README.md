@@ -49,6 +49,7 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 | `collapsed_error`      | `f(x);` or `let _ = f(x)` on a crate fn whose `false`/`None` is the bare `Err` arm of a `Result` it held: the typed error became one bit, and this call drops the bit     |
 | `uneven_narrowing`     | an integer field or local converted with `try_from` at one site and a bare `as` at another: the check says the value may not fit, and `as` wraps silently when it doesn't |
 | `crossed_index`        | `parts[source_index]` in a function that indexes `parts` by `part_index` and `sources` by `source_index`: two index kinds cross, and both are plain integers              |
+| `parallel_vecs`        | sequence fields of one struct that only change length side by side and are read at one index: element `i` of each is one record, so the type lets the lengths differ      |
 | `bool_beside_option`   | a bool field written only beside an `Option` field, `true` with `Some(..)` and `false` with `None`: it is that field's `is_some()` stored twice, kept equal only by habit |
 
 Each diagnostic states what the lint found, why the type is wrong, and the type that replaces it.
