@@ -18,8 +18,10 @@
 //! lint, so `-D warnings`, `[lints] warnings = "deny"` and `--cap-lints`
 //! cannot turn it into an error that stops the crate and hides every finding
 //! after it. `#[allow]` and `#[expect]` are still read, at the same node the
-//! lint path reads them. Without a baseline nothing here applies and findings
-//! are ordinary lints at their ordinary levels.
+//! lint path reads them. Each crate that goes over prints one summary line and
+//! appends itself to `target/mordant/over-baseline.txt`, which is the file CI
+//! tests. Without a baseline nothing here applies and findings are ordinary
+//! lints at their ordinary levels.
 //!
 //! Every diagnostic a mordant lint produces goes through one of the three
 //! entry points here (`emit`, `emit_with_note`, `emit_hir_then`), so each
@@ -27,8 +29,10 @@
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use clippy_utils::diagnostics::{span_lint_and_help, span_lint_and_then, span_lint_hir_and_then};
@@ -50,6 +54,10 @@ enum Mode {
         recorded: HashMap<Key, usize>,
         /// Findings weighed so far this run, per key.
         seen: Mutex<HashMap<Key, usize>>,
+        /// Over-baseline findings reported (not allowed away) in this crate.
+        over: AtomicUsize,
+        /// Where a crate that went over appends its name and count.
+        status_file: PathBuf,
     },
     /// Emit nothing; collect every finding and rewrite this crate's section of
     /// the file at `path` from `BaselineWriter::check_crate_post`.
@@ -102,6 +110,8 @@ fn init(file_name: &str) -> Option<Baseline> {
                 Mode::Ratchet {
                     recorded: read_recorded(&cand),
                     seen: Mutex::new(HashMap::new()),
+                    over: AtomicUsize::new(0),
+                    status_file: status_file(&dir, std::env::var_os("CARGO_TARGET_DIR")),
                 }
             };
             return Some(Baseline { root: dir, mode });
@@ -110,6 +120,16 @@ fn init(file_name: &str) -> Option<Baseline> {
             return None;
         }
     }
+}
+
+/// `${CARGO_TARGET_DIR or <root>/target}/mordant/over-baseline.txt`, a
+/// relative `CARGO_TARGET_DIR` taken from the workspace root as cargo does.
+fn status_file(root: &Path, target_dir: Option<OsString>) -> PathBuf {
+    let target = match target_dir {
+        Some(dir) if !dir.is_empty() => root.join(dir),
+        _ => root.join("target"),
+    };
+    target.join("mordant").join("over-baseline.txt")
 }
 
 /// Sums every crate section of the file, since a (lint, file) key can appear
@@ -155,6 +175,7 @@ struct Over {
     lint: &'static Lint,
     recorded: usize,
     file: String,
+    count: &'static AtomicUsize,
 }
 
 impl Over {
@@ -165,6 +186,7 @@ impl Over {
         msg: String,
         decorate: impl FnOnce(&mut Diag<'_, ()>),
     ) {
+        self.count.fetch_add(1, Ordering::Relaxed);
         let mut diag = cx.tcx.dcx().struct_span_warn(span, msg);
         decorate(&mut diag);
         diag.note(format!(
@@ -204,7 +226,12 @@ fn weigh(cx: &LateContext<'_>, lint: &'static Lint, span: Span, hir_id: HirId) -
             recorded.lock().unwrap().push(key);
             Verdict::Silent
         }
-        Mode::Ratchet { recorded, seen } => {
+        Mode::Ratchet {
+            recorded,
+            seen,
+            over,
+            ..
+        } => {
             let limit = recorded.get(&key).copied().unwrap_or(0);
             let within = {
                 let mut seen = seen.lock().unwrap();
@@ -219,6 +246,7 @@ fn weigh(cx: &LateContext<'_>, lint: &'static Lint, span: Span, hir_id: HirId) -
                 lint,
                 recorded: limit,
                 file: key.1,
+                count: over,
             })
         }
     }
@@ -295,20 +323,54 @@ fn section_name(cx: &LateContext<'_>) -> String {
 }
 
 // Registered last: flushes write-mode recordings for this crate into the
-// baseline file, replacing only this crate's section. It declares no lint of
-// its own; rustc always runs a lintless pass, so nothing can `allow` it away.
+// baseline file, replacing only this crate's section, or in ratchet mode
+// prints the crate's over-baseline summary. It declares no lint of its own;
+// rustc always runs a lintless pass, so nothing can `allow` it away.
 rustc_session::declare_lint_pass!(BaselineWriter => []);
 
 impl<'tcx> LateLintPass<'tcx> for BaselineWriter {
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
-        if let Some(Baseline {
-            mode: Mode::Record { path, recorded },
-            ..
-        }) = state()
-        {
-            write_section(cx, path, recorded);
+        match state() {
+            None => {}
+            Some(Baseline {
+                mode: Mode::Ratchet {
+                    over, status_file, ..
+                },
+                ..
+            }) => summarize(cx, over.load(Ordering::Relaxed), status_file),
+            Some(Baseline {
+                mode: Mode::Record { path, recorded },
+                ..
+            }) => write_section(cx, path, recorded),
         }
     }
+}
+
+/// One line for the reader and one for CI. The status file is appended to,
+/// never truncated: every crate is its own rustc process, so no process knows
+/// it is the first. CI removes the file before the run and tests it is empty
+/// or absent after.
+fn summarize(cx: &LateContext<'_>, over: usize, status_file: &Path) {
+    if over == 0 {
+        return;
+    }
+    let name = section_name(cx);
+    cx.tcx.dcx().warn(format!(
+        "mordant: {over} finding(s) over the baseline in {name}"
+    ));
+    if let Some(dir) = status_file.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(status_file)
+    else {
+        return;
+    };
+    let _ = f.lock();
+    let _ = f.write_all(format!("{name} {over}\n").as_bytes());
+    let _ = f.unlock();
 }
 
 fn write_section(cx: &LateContext<'_>, path: &Path, recorded: &Mutex<Vec<Key>>) {
@@ -346,4 +408,35 @@ fn write_section(cx: &LateContext<'_>, path: &Path, recorded: &Mutex<Vec<Key>>) 
         let _ = f.write_all(out.as_bytes());
     }
     let _ = f.unlock();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::status_file;
+    use std::ffi::OsString;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn status_file_defaults_to_target_under_the_workspace_root() {
+        assert_eq!(
+            status_file(Path::new("/ws"), None),
+            PathBuf::from("/ws/target/mordant/over-baseline.txt"),
+        );
+        assert_eq!(
+            status_file(Path::new("/ws"), Some(OsString::new())),
+            PathBuf::from("/ws/target/mordant/over-baseline.txt"),
+        );
+    }
+
+    #[test]
+    fn status_file_follows_cargo_target_dir() {
+        assert_eq!(
+            status_file(Path::new("/ws"), Some("/elsewhere/tgt".into())),
+            PathBuf::from("/elsewhere/tgt/mordant/over-baseline.txt"),
+        );
+        assert_eq!(
+            status_file(Path::new("/ws"), Some("build/cargo".into())),
+            PathBuf::from("/ws/build/cargo/mordant/over-baseline.txt"),
+        );
+    }
 }
