@@ -19,60 +19,60 @@ dylint_linting::dylint_library!();
 use rustc_data_structures::sync;
 
 mod adt_facts;
-mod asymmetric_guard;
+mod always_unwrapped_option;
+mod arg_named_like_other_param;
+mod bare_bool_args;
 mod baseline;
 mod bool_beside_option;
-mod bool_params;
-mod bypassed_conversion;
-mod bypassed_validator;
+mod bool_cluster;
+mod cast_bypasses_from;
 mod claims;
-mod collapsed_error;
-mod crossed_alias;
-mod crossed_index;
 mod ctor_flow;
 mod defaulted_failure;
-mod dependent_field;
+mod derived_field;
 mod discarded_error;
 mod enum_facts;
-mod exclusive_options;
-mod flag_cluster;
+mod error_collapsed_to_bool;
+mod field_valid_only_when;
 mod forbidden_reach;
-mod guard_flag;
+mod guard_blind_to_action;
 mod hir_clone;
 mod hir_shapes;
+mod index_of_other_kind;
 mod insert_then_unwrap;
+mod interchangeable_aliases;
+mod key_not_identity;
 mod lock_order;
 mod mir_flow;
-mod misbound_arg;
-mod narrowed_return;
-mod nonidentity_key;
-mod overwide_parameter;
+mod narrowed_two_ways;
+mod options_as_enum;
 mod parallel_bools;
 mod parallel_params;
 mod parallel_vecs;
+mod param_wider_than_callers;
 mod reimplemented_helper;
+mod return_wider_than_body;
+mod runtime_typestate;
 mod same_match_twice;
-mod sentinel_int;
-mod some_if;
+mod sentinel_integer;
+mod some_still_unchecked;
 mod stale_across_reentry;
 mod stale_panic_message;
 mod stale_safety_comment;
-mod stored_projection;
 mod stringified_error;
 mod stringly_error;
 mod stringly_state;
+mod tuple_wants_struct;
+mod unchecked_construction;
 mod unchecked_input_len;
-mod uneven_narrowing;
 mod unit_mismatch;
-mod unnamed_tuple;
 mod unread_error_variant;
-mod unread_none;
 mod variant_flow;
-mod wildcard_local_enum;
+mod wildcard_over_own_enum;
 
 /// Read from `dylint.toml` under `[mordant]` in the linted workspace root.
 ///
-/// `flag_cluster` is allowed on this one struct, and it is the lawful-lattice
+/// `bool_cluster` is allowed on this one struct, and it is the lawful-lattice
 /// case the lint's own help describes rather than an exemption from it. The
 /// bools are opt-ins belonging to *different* lints: every combination is
 /// reachable from a `dylint.toml` and each means what it says, so there is no
@@ -88,41 +88,41 @@ mod wildcard_local_enum;
 #[derive(Default, serde::Deserialize)]
 #[cfg_attr(test, derive(Debug, PartialEq))]
 #[serde(rename_all = "kebab-case", default)]
-#[cfg_attr(dylint_lib = "mordant", allow(flag_cluster))]
+#[cfg_attr(dylint_lib = "mordant", allow(bool_cluster))]
 pub struct MordantConfig {
     /// Lints, by name, that stay registered (so an `allow` of one still
     /// resolves) but never run.
     pub disabled: Vec<String>,
     /// Fully qualified paths of types that are never a valid map key in this
     /// project (e.g. a span type with no file identity). Empty means silent.
-    pub nonidentity_key_types: Vec<String>,
+    pub key_not_identity_types: Vec<String>,
     /// Opt-in key-expression forms: "to-bits", "ptr-cast". Both are legitimate
     /// in interning code, so neither is on by default.
-    pub nonidentity_key_forms: Vec<String>,
+    pub key_not_identity_forms: Vec<String>,
     /// Also flag `Box<dyn Error>` as a stringly error type.
     pub stringly_error_include_box_dyn: bool,
     /// Fully qualified method paths that never produce a valid map key (e.g. a
     /// NaN-boxing `Value::to_bits`). Checked in key position of `insert`/`entry`.
-    pub nonidentity_key_methods: Vec<String>,
+    pub key_not_identity_methods: Vec<String>,
     /// Opt-in: also flag composite keys (tuples, structs one level deep) that
     /// carry a denied type without one of the fixing types beside it.
-    pub nonidentity_key_composite: bool,
+    pub key_not_identity_composite: bool,
     /// Types whose presence in a composite key restores identity (e.g. the
     /// file id that gives a span a coordinate space).
-    pub nonidentity_key_fixes: Vec<String>,
+    pub key_not_identity_fixes: Vec<String>,
     /// Error types that mean "the environment refused" (allocation, IO,
     /// syscall), added to the built-in std list. A constructor exit failing
     /// with one of these is never treated as validating a field.
     pub validator_resource_errors: Vec<String>,
-    /// Minimum Option fields for `exclusive_options` to consider a struct.
-    pub exclusive_options_min_fields: usize = 2,
-    /// `wildcard_local_enum` stays silent above this many variants.
-    pub wildcard_local_enum_max_variants: usize = 12,
-    /// Bool fields at which `flag_cluster` fires.
-    pub flag_cluster_min_bools: usize = 3,
-    /// Construction sites at which `stored_projection` will read a
+    /// Minimum Option fields for `options_as_enum` to consider a struct.
+    pub options_as_enum_min_fields: usize = 2,
+    /// `wildcard_over_own_enum` stays silent above this many variants.
+    pub wildcard_over_own_enum_max_variants: usize = 12,
+    /// Bool fields at which `bool_cluster` fires.
+    pub bool_cluster_min_bools: usize = 3,
+    /// Construction sites at which `derived_field` will read a
     /// correspondence between two fields.
-    pub stored_projection_min_sites: usize = 2,
+    pub derived_field_min_sites: usize = 2,
     /// Expression nodes below which `reimplemented_helper` does not compare
     /// a body, so one-line accessors and constructors never pair up.
     pub reimplemented_helper_min_nodes: usize = 12,
@@ -147,10 +147,10 @@ pub struct MordantConfig {
     /// name). Empty by default; the lint then reports only callees whose
     /// body it can see the check in.
     pub defaulted_failure_callees: Vec<String>,
-    /// Opt-in: run `flag_cluster`. Off by default because most structs it
+    /// Opt-in: run `bool_cluster`. Off by default because most structs it
     /// names are option bags; the state machines among them are found by
     /// running it once, not by gating on it.
-    pub flag_cluster_enabled: bool,
+    pub bool_cluster_enabled: bool,
     /// Opt-in: run `stale_safety_comment`. Off by default because a name a
     /// crate cannot see is usually defined in C++, a script, or a downstream
     /// crate; the stale ones are found by running it once.
@@ -173,10 +173,10 @@ pub struct MordantConfig {
     /// signatures tells those from a value nobody declared; run it once and
     /// read the list.
     pub parallel_params_enabled: bool,
-    /// Opt-in: run `some_if`. Off by default because a `Some` that fails
+    /// Opt-in: run `some_still_unchecked`. Off by default because a `Some` that fails
     /// the check usually is meant to read as absent; the lint is a sweep for
     /// the places where a `.filter(..)` or a narrower type says so instead.
-    pub some_if_enabled: bool,
+    pub some_still_unchecked_enabled: bool,
     /// Functions a parameter group must pass between, unchanged, before
     /// `parallel_params` names it.
     pub parallel_params_min_fns: usize = 3,
@@ -186,23 +186,26 @@ pub struct MordantConfig {
 #[unsafe(no_mangle)]
 pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintStore) {
     use {
-        asymmetric_guard::AsymmetricGuard, baseline::BaselineWriter, bool_params::BoolParams,
-        bypassed_conversion::BypassedConversion, bypassed_validator::BypassedValidator,
-        collapsed_error::CollapsedError, crossed_alias::CrossedAlias, crossed_index::CrossedIndex,
-        defaulted_failure::DefaultedFailure, dependent_field::DependentField,
-        discarded_error::DiscardedError, exclusive_options::ExclusiveOptions,
-        flag_cluster::FlagCluster, forbidden_reach::ForbiddenReach, guard_flag::GuardFlag,
-        insert_then_unwrap::InsertThenUnwrap, lock_order::LockOrder, misbound_arg::MisboundArg,
-        narrowed_return::NarrowedReturn, nonidentity_key::NonidentityKey,
-        overwide_parameter::OverwideParameter, parallel_bools::ParallelBools,
-        parallel_params::ParallelParams, parallel_vecs::ParallelVecs, sentinel_int::SentinelInt,
-        stale_across_reentry::StaleAcrossReentry, stale_panic_message::StalePanicMessage,
-        stale_safety_comment::StaleSafetyComment, stored_projection::StoredProjection,
+        always_unwrapped_option::AlwaysUnwrappedOption,
+        arg_named_like_other_param::ArgNamedLikeOtherParam, bare_bool_args::BareBoolArgs,
+        baseline::BaselineWriter, bool_cluster::BoolCluster, cast_bypasses_from::CastBypassesFrom,
+        defaulted_failure::DefaultedFailure, derived_field::DerivedField,
+        discarded_error::DiscardedError, error_collapsed_to_bool::ErrorCollapsedToBool,
+        field_valid_only_when::FieldValidOnlyWhen, forbidden_reach::ForbiddenReach,
+        guard_blind_to_action::GuardBlindToAction, index_of_other_kind::IndexOfOtherKind,
+        insert_then_unwrap::InsertThenUnwrap, interchangeable_aliases::InterchangeableAliases,
+        key_not_identity::KeyNotIdentity, lock_order::LockOrder,
+        narrowed_two_ways::NarrowedTwoWays, options_as_enum::OptionsAsEnum,
+        parallel_bools::ParallelBools, parallel_params::ParallelParams,
+        parallel_vecs::ParallelVecs, param_wider_than_callers::ParamWiderThanCallers,
+        return_wider_than_body::ReturnWiderThanBody, runtime_typestate::RuntimeTypestate,
+        sentinel_integer::SentinelInteger, stale_across_reentry::StaleAcrossReentry,
+        stale_panic_message::StalePanicMessage, stale_safety_comment::StaleSafetyComment,
         stringified_error::StringifiedError, stringly_error::StringlyError,
-        stringly_state::StringlyState, unchecked_input_len::UncheckedInputLen,
-        uneven_narrowing::UnevenNarrowing, unit_mismatch::UnitMismatch,
-        unnamed_tuple::UnnamedTuple, unread_error_variant::UnreadErrorVariant,
-        unread_none::UnreadNone, wildcard_local_enum::WildcardLocalEnum,
+        stringly_state::StringlyState, tuple_wants_struct::TupleWantsStruct,
+        unchecked_construction::UncheckedConstruction, unchecked_input_len::UncheckedInputLen,
+        unit_mismatch::UnitMismatch, unread_error_variant::UnreadErrorVariant,
+        wildcard_over_own_enum::WildcardOverOwnEnum,
     };
     dylint_linting::init_config(sess);
     let config: MordantConfig = dylint_linting::config_or_default(env!("CARGO_PKG_NAME"));
@@ -214,14 +217,14 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
         known: Vec::new(),
     };
     r.add(true, move || StringlyError { config });
-    r.add(true, move || NonidentityKey::new(config));
+    r.add(true, move || KeyNotIdentity::new(config));
     r.add(true, || StringifiedError);
-    r.add(true, move || ExclusiveOptions::new(config));
+    r.add(true, move || OptionsAsEnum::new(config));
     r.add(true, ParallelBools::default);
-    r.add(config.flag_cluster_enabled, move || FlagCluster { config });
-    r.add(true, move || BypassedValidator::new(config));
+    r.add(config.bool_cluster_enabled, move || BoolCluster { config });
+    r.add(true, move || UncheckedConstruction::new(config));
     r.add(true, UnreadErrorVariant::default);
-    r.add(true, AsymmetricGuard::default);
+    r.add(true, GuardBlindToAction::default);
     r.add(
         config.stale_safety_comment_enabled,
         StaleSafetyComment::default,
@@ -230,38 +233,40 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
     r.add(true, StalePanicMessage::default);
     r.add(true, LockOrder::default);
     r.add(true, move || ForbiddenReach::new(config));
-    r.add(true, GuardFlag::default);
-    r.add(true, UnreadNone::default);
+    r.add(true, RuntimeTypestate::default);
+    r.add(true, AlwaysUnwrappedOption::default);
     r.add(true, || InsertThenUnwrap);
-    r.add(true, OverwideParameter::default);
-    r.add(true, NarrowedReturn::default);
-    r.add(true, move || WildcardLocalEnum { config });
+    r.add(true, ParamWiderThanCallers::default);
+    r.add(true, ReturnWiderThanBody::default);
+    r.add(true, move || WildcardOverOwnEnum { config });
     r.add(true, || DiscardedError);
-    r.add(true, move || StoredProjection::new(config));
+    r.add(true, move || DerivedField::new(config));
     r.add(true, move || StaleAcrossReentry { config });
     r.add(true, move || DefaultedFailure::new(config));
     r.add(config.unchecked_input_len_enabled, || UncheckedInputLen);
-    r.add(true, || MisboundArg);
-    r.add(true, move || BypassedConversion::new(config));
+    r.add(true, || ArgNamedLikeOtherParam);
+    r.add(true, move || CastBypassesFrom::new(config));
     r.add(true, same_match_twice::SameMatchTwice::default);
     r.add(true, move || {
         reimplemented_helper::ReimplementedHelper::new(config)
     });
-    r.add(true, DependentField::default);
-    r.add(true, CollapsedError::default);
-    r.add(true, UnevenNarrowing::default);
-    r.add(true, || CrossedIndex);
+    r.add(true, FieldValidOnlyWhen::default);
+    r.add(true, ErrorCollapsedToBool::default);
+    r.add(true, NarrowedTwoWays::default);
+    r.add(true, || IndexOfOtherKind);
     r.add(true, ParallelVecs::default);
     r.add(true, bool_beside_option::BoolBesideOption::default);
-    r.add(true, SentinelInt::default);
+    r.add(true, SentinelInteger::default);
     r.add(true, StringlyState::default);
     r.add(config.parallel_params_enabled, move || {
         ParallelParams::new(config)
     });
-    r.add(true, BoolParams::default);
-    r.add(true, UnnamedTuple::default);
-    r.add(true, || CrossedAlias);
-    r.add(config.some_if_enabled, || some_if::SomeIf);
+    r.add(true, BareBoolArgs::default);
+    r.add(true, TupleWantsStruct::default);
+    r.add(true, || InterchangeableAliases);
+    r.add(config.some_still_unchecked_enabled, || {
+        some_still_unchecked::SomeStillUnchecked
+    });
     // Last, so its check_crate_post flushes after every lint has recorded.
     r.add(true, || BaselineWriter);
     let unknown = unknown_names(&config.disabled, &r.known);
@@ -321,19 +326,19 @@ fn ui() {
         .dylint_toml(
             r#"
             [mordant]
-            nonidentity-key-types = ["Span"]
-            nonidentity-key-forms = ["to-bits", "ptr-cast"]
-            nonidentity-key-methods = ["Value::to_raw"]
-            nonidentity-key-composite = true
-            nonidentity-key-fixes = ["FileId"]
+            key-not-identity-types = ["Span"]
+            key-not-identity-forms = ["to-bits", "ptr-cast"]
+            key-not-identity-methods = ["Value::to_raw"]
+            key-not-identity-composite = true
+            key-not-identity-fixes = ["FileId"]
             stale-across-reentry-callees = ["Vm::run_callback", "dispatch*", "Worker::run_job", "Runner::schedule"]
             defaulted-failure-callees = ["from_str_radix", "listed_by_config"]
             defaulted-failure-ignored-errors = ["Pending"]
-            flag-cluster-enabled = true
+            bool-cluster-enabled = true
             stale-safety-comment-enabled = true
             unchecked-input-len-enabled = true
             parallel-params-enabled = true
-            some-if-enabled = true
+            some-still-unchecked-enabled = true
 
             [[mordant.forbidden-reach]]
             from = "hot_path"
@@ -362,21 +367,21 @@ fn ui_opt_in_lints_are_off_without_their_key() {
 
 /// `config_or_default` returns `Default` when the linted workspace has no
 /// `dylint.toml`. A threshold that lost its `= N` would default to 0, which
-/// turns `wildcard_local_enum` off (`n > 0` for every enum) and makes
-/// `exclusive_options` consider every struct.
+/// turns `wildcard_over_own_enum` off (`n > 0` for every enum) and makes
+/// `options_as_enum` consider every struct.
 #[test]
 fn config_default_thresholds_match_docs() {
     let c = MordantConfig::default();
-    assert_eq!(c.exclusive_options_min_fields, 2);
-    assert_eq!(c.wildcard_local_enum_max_variants, 12);
-    assert_eq!(c.flag_cluster_min_bools, 3);
-    assert_eq!(c.stored_projection_min_sites, 2);
+    assert_eq!(c.options_as_enum_min_fields, 2);
+    assert_eq!(c.wildcard_over_own_enum_max_variants, 12);
+    assert_eq!(c.bool_cluster_min_bools, 3);
+    assert_eq!(c.derived_field_min_sites, 2);
     assert_eq!(c.reimplemented_helper_min_nodes, 12);
-    assert!(!c.flag_cluster_enabled);
+    assert!(!c.bool_cluster_enabled);
     assert!(!c.stale_safety_comment_enabled);
     assert!(!c.unchecked_input_len_enabled);
     assert!(!c.parallel_params_enabled);
-    assert!(!c.some_if_enabled);
+    assert!(!c.some_still_unchecked_enabled);
     assert_eq!(c.parallel_params_min_fns, 3);
 }
 
@@ -391,46 +396,51 @@ fn config_omitted_toml_keys_use_the_same_thresholds() {
 #[test]
 fn config_explicit_zero_thresholds_are_honored() {
     let parsed: MordantConfig = toml::from_str(
-        "exclusive-options-min-fields = 0\n\
-         wildcard-local-enum-max-variants = 0\n\
-         flag-cluster-min-bools = 0\n",
+        "options-as-enum-min-fields = 0\n\
+         wildcard-over-own-enum-max-variants = 0\n\
+         bool-cluster-min-bools = 0\n",
     )
     .expect("explicit zeros parse");
-    assert_eq!(parsed.exclusive_options_min_fields, 0);
-    assert_eq!(parsed.wildcard_local_enum_max_variants, 0);
-    assert_eq!(parsed.flag_cluster_min_bools, 0);
+    assert_eq!(parsed.options_as_enum_min_fields, 0);
+    assert_eq!(parsed.wildcard_over_own_enum_max_variants, 0);
+    assert_eq!(parsed.bool_cluster_min_bools, 0);
 }
 
 #[test]
 fn config_disabled_parses_and_defaults_empty() {
     assert!(MordantConfig::default().disabled.is_empty());
     let parsed: MordantConfig =
-        toml::from_str("disabled = [\"guard_flag\", \"lock_order\"]\n").expect("disabled parses");
-    assert_eq!(parsed.disabled, ["guard_flag", "lock_order"]);
+        toml::from_str("disabled = [\"runtime_typestate\", \"lock_order\"]\n")
+            .expect("disabled parses");
+    assert_eq!(parsed.disabled, ["runtime_typestate", "lock_order"]);
 }
 
 #[test]
 fn disabled_skips_a_pass_only_when_every_lint_it_declares_is_named() {
     let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     assert!(all_disabled(
-        &names(&["guard_flag"]),
-        &names(&["guard_flag"])
+        &names(&["runtime_typestate"]),
+        &names(&["runtime_typestate"])
     ));
     assert!(!all_disabled(
-        &names(&["guard_flag"]),
+        &names(&["runtime_typestate"]),
         &names(&["lock_order"])
     ));
     assert!(!all_disabled(&names(&["a", "b"]), &names(&["a"])));
-    assert!(!all_disabled(&[], &names(&["guard_flag"])));
+    assert!(!all_disabled(&[], &names(&["runtime_typestate"])));
 }
 
 #[test]
 fn disabled_names_that_match_no_lint_are_reported() {
     let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    let disabled = names(&["guard_flag", "gaurd_flag", "clippy::unwrap_used"]);
-    let known = names(&["guard_flag", "lock_order"]);
+    let disabled = names(&[
+        "runtime_typestate",
+        "runtime_typstate",
+        "clippy::unwrap_used",
+    ]);
+    let known = names(&["runtime_typestate", "lock_order"]);
     assert_eq!(
         unknown_names(&disabled, &known),
-        ["gaurd_flag", "clippy::unwrap_used"]
+        ["runtime_typstate", "clippy::unwrap_used"]
     );
 }

@@ -1,0 +1,172 @@
+warning: `port::Port` is constructed by literal here, but `Port::new` checks `n` before constructing one
+  --> $DIR/unchecked_construction.rs:37:5
+   |
+LL |     Port { n: 0 }
+   |     ^^^^^^^^^^^^^
+   |
+note: the check this literal never runs
+  --> $DIR/unchecked_construction.rs:13:16
+   |
+LL |             if n <= u16::MAX as u32 {
+   |                ^^^^^^^^^^^^^^^^^^^^
+   = help: construct through the validating function, or move this literal into the type's module
+   = note: `#[warn(unchecked_construction)]` on by default
+
+warning: `validators::NonZero` is constructed by literal here, but `NonZero::new` checks `n` before constructing one
+  --> $DIR/unchecked_construction.rs:299:13
+   |
+LL |     let _ = validators::NonZero { n: 0 };
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the check this literal never runs
+  --> $DIR/unchecked_construction.rs:241:13
+   |
+LL |             match n {
+   |             ^^^^^^^
+   = help: construct through the validating function, or move this literal into the type's module
+
+warning: `not_validators_2::Header::port` is written directly here, but `Header::decode` rejects some values of `port` before storing one
+  --> $DIR/unchecked_construction.rs:313:9
+   |
+LL |         h.port = 0;
+   |         ^^^^^^^^^^
+   |
+note: the check this write never runs
+  --> $DIR/unchecked_construction.rs:159:16
+   |
+LL |             if port == 0 {
+   |                ^^^^^^^^^
+   = help: change the value through the validating function, or make the field private and move this write into the type's module
+
+warning: `validators::Even::n` is written directly here, but `Even::new` rejects some values of `n` before storing one
+  --> $DIR/unchecked_construction.rs:316:9
+   |
+LL |         e.n += 1;
+   |         ^^^^^^^^
+   |
+note: the check this write never runs
+  --> $DIR/unchecked_construction.rs:201:17
+   |
+LL |             if !is_even(n) {
+   |                 ^^^^^^^^^^
+   = help: change the value through the validating function, or make the field private and move this write into the type's module
+
+warning: `validators::Small::n` is written directly here, but `Small::new` rejects some values of `n` before storing one
+  --> $DIR/unchecked_construction.rs:319:9
+   |
+LL |         s.n = 200;
+   |         ^^^^^^^^^
+   |
+note: the check this write never runs
+  --> $DIR/unchecked_construction.rs:231:31
+   |
+LL |             n.and_then(|n| if n < 10 { Some(Small { n }) } else { None })
+   |                               ^^^^^^
+   = help: change the value through the validating function, or make the field private and move this write into the type's module
+
+warning: `validators::Checked` is constructed by literal here, but `Checked::from_pairs` checks `port` before constructing one
+  --> $DIR/unchecked_construction.rs:328:13
+   |
+LL |             Checked { port: 0, ..base },
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the check this literal never runs
+  --> $DIR/unchecked_construction.rs:218:16
+   |
+LL |             if port > 65535 {
+   |                ^^^^^^^^^^^^
+   = help: construct through the validating function, or move this literal into the type's module
+
+warning: `inner::Level` is produced by `mem::zeroed` here, but `Level::new` checks `value` before constructing one
+  --> $DIR/unchecked_construction.rs:337:17
+   |
+LL |                 std::mem::zeroed::<inner::Level>(),
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the check this value never went through
+  --> $DIR/unchecked_construction.rs:257:16
+   |
+LL |             if v <= 10 { Ok(Level { value: v }) } else { Err(()) }
+   |                ^^^^^^^
+   = help: construct through the validating function
+
+warning: `gate::Gate` is produced by `mem::transmute` here, but `Gate::new` checks `v` before constructing one
+  --> $DIR/unchecked_construction.rs:338:17
+   |
+LL |                 std::mem::transmute::<u8, gate::Gate>(0),
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the check this value never went through
+  --> $DIR/unchecked_construction.rs:406:16
+   |
+LL |             if v < 2 { Some(Gate { v }) } else { None }
+   |                ^^^^^
+   = help: construct through the validating function
+
+warning: `gate::Gate` is produced by `MaybeUninit::assume_init` here, but `Gate::new` checks `v` before constructing one
+  --> $DIR/unchecked_construction.rs:339:17
+   |
+LL |                 std::mem::MaybeUninit::<gate::Gate>::zeroed().assume_init(),
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the check this value never went through
+  --> $DIR/unchecked_construction.rs:406:16
+   |
+LL |             if v < 2 { Some(Gate { v }) } else { None }
+   |                ^^^^^
+   = help: construct through the validating function
+
+warning: `widened::Tag::s` is written directly here, but `Tag::new` rejects some values of `s` before storing one
+  --> $DIR/unchecked_construction.rs:432:13
+   |
+LL |             u.s = "";
+   |             ^^^^^^^^
+   |
+note: the check this write never runs
+  --> $DIR/unchecked_construction.rs:422:16
+   |
+LL |             if s.is_empty() { None } else { Some(Tag { s }) }
+   |                ^^^^^^^^^^^^
+   = help: change the value through the validating function, or make the field private and move this write into the type's module
+
+warning: `promoted::Slot` is produced by `mem::transmute` here, but `Slot::promote` checks `n` before constructing one
+  --> $DIR/unchecked_construction.rs:465:22
+   |
+LL |             unsafe { std::mem::transmute::<Slot<Raw>, Slot<Ok>>(s) }
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the check this value never went through
+  --> $DIR/unchecked_construction.rs:451:16
+   |
+LL |             if n == 0 { None } else { Some(Slot { n, state: PhantomData }) }
+   |                ^^^^^^
+   = help: construct through the validating function
+
+warning: `two_validators::Pair` is constructed by literal here, but `Pair::parse` checks `b` before constructing one
+  --> $DIR/unchecked_construction.rs:492:13
+   |
+LL |             Pair { b: 200, ..base }
+   |             ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the check this literal never runs
+  --> $DIR/unchecked_construction.rs:482:16
+   |
+LL |             if b > 99 { None } else { Some(Pair { a: 0, b }) }
+   |                ^^^^^^
+   = help: construct through the validating function, or move this literal into the type's module
+
+warning: `tuple::Digit` is constructed by literal here, but `Digit::new` checks `0` before constructing one
+  --> $DIR/unchecked_construction.rs:514:14
+   |
+LL |             (Digit(10), Plain(10))
+   |              ^^^^^^^^^
+   |
+note: the check this literal never runs
+  --> $DIR/unchecked_construction.rs:502:16
+   |
+LL |             if d > 9 { None } else { Some(Digit(d)) }
+   |                ^^^^^
+   = help: construct through the validating function, or move this literal into the type's module
+
+warning: 13 warnings emitted
+

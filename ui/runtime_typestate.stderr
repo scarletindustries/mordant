@@ -1,0 +1,11 @@
+warning: `ready` is tested and bailed on at the start of 2 methods of `Conn`
+  --> $DIR/runtime_typestate.rs:5:5
+   |
+LL |     ready: bool,
+   |     ^^^^^^^^^^^
+   |
+   = help: the ordering invariant lives at runtime; a separate type for the guarded state enforces it at compile time
+   = note: `#[warn(runtime_typestate)]` on by default
+
+warning: 1 warning emitted
+

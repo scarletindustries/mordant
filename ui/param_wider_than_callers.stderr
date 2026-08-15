@@ -1,0 +1,32 @@
+warning: this arm absorbs every future variant of `Shape` (3 variants today)
+  --> $DIR/param_wider_than_callers.rs:34:9
+   |
+LL |         _ => unreachable!("only circles have diameters"),
+   |         ^
+   |
+   = note: `#[warn(wildcard_over_own_enum)]` on by default
+help: list the remaining variants; the compiler then flags every new one added
+   |
+LL -         _ => unreachable!("only circles have diameters"),
+LL +         Shape::Square(..) | Shape::Line => unreachable!("only circles have diameters"),
+   |
+
+warning: all 2 call sites of `area` pass `Circle`, `Square`; this arm panics on `Line`, which no existing caller sends
+  --> $DIR/param_wider_than_callers.rs:16:9
+   |
+LL |         Shape::Line => unreachable!("lines have no area"),
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: the parameter is wider than the function's domain; narrow the type and the panic becomes a compile error for future callers
+   = note: `#[warn(param_wider_than_callers)]` on by default
+
+warning: all 2 call sites of `corners` pass `Circle`, `Square`; this arm panics on `Line`, which no existing caller sends
+  --> $DIR/param_wider_than_callers.rs:58:13
+   |
+LL |             Shape::Line => unreachable!("lines have no corners"),
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: the parameter is wider than the function's domain; narrow the type and the panic becomes a compile error for future callers
+
+warning: 3 warnings emitted
+

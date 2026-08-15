@@ -1,0 +1,19 @@
+warning: `ceiling` and `limit` of `Exceeded` agree one-for-one across all 3 places it is constructed, so one is a stored projection of the other
+  --> $DIR/derived_field.rs:15:1
+   |
+LL | pub struct Exceeded {
+   | ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: give the deciding field a method returning the other and drop the stored copy, so a pairing the constructors never make cannot be written
+   = note: `#[warn(derived_field)]` on by default
+
+warning: `header` and `remaining` of `Entries` agree one-for-one across all 2 places it is constructed, so one is a stored projection of the other
+  --> $DIR/derived_field.rs:56:1
+   |
+LL | pub struct Entries<'a> {
+   | ^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: give the deciding field a method returning the other and drop the stored copy, so a pairing the constructors never make cannot be written
+
+warning: 2 warnings emitted
+
