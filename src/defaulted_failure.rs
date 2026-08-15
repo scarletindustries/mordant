@@ -10,7 +10,7 @@ use rustc_span::{Span, sym};
 use crate::adt_facts::{matches_config_path, result_err_ty};
 use crate::baseline::{emit, emit_with_note};
 use crate::enum_facts::{arm_variant, ctor_literal_variant};
-use crate::hir_shapes::{callee_of, peel_blocks_unsafe};
+use crate::hir_shapes::{callee_of, peel_blocks_unsafe, sole_expr};
 
 rustc_session::declare_lint! {
     /// Flags a call whose failure is replaced by a fixed value and never
@@ -263,18 +263,8 @@ fn fixed_fallback<'tcx>(
 /// The else block of a `let .. else` reports success or nothing at all:
 /// `return`, `return ()` or `return Ok(())`, and nothing else in the block.
 fn else_reports_success(cx: &LateContext<'_>, els: &Block<'_>) -> bool {
-    let only = match (els.stmts, els.expr) {
-        ([], Some(e)) => e,
-        (
-            [
-                Stmt {
-                    kind: StmtKind::Semi(e) | StmtKind::Expr(e),
-                    ..
-                },
-            ],
-            None,
-        ) => e,
-        _ => return false,
+    let Some(only) = sole_expr(els) else {
+        return false;
     };
     let ExprKind::Ret(value) = peel_blocks_unsafe(only).kind else {
         return false;

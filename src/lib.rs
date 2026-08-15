@@ -24,6 +24,7 @@ mod baseline;
 mod bypassed_conversion;
 mod bypassed_validator;
 mod claims;
+mod collapsed_error;
 mod ctor_flow;
 mod defaulted_failure;
 mod dependent_field;
@@ -160,9 +161,10 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
     use {
         asymmetric_guard::AsymmetricGuard, baseline::BaselineWriter,
         bypassed_conversion::BypassedConversion, bypassed_validator::BypassedValidator,
-        defaulted_failure::DefaultedFailure, dependent_field::DependentField,
-        discarded_error::DiscardedError, exclusive_options::ExclusiveOptions,
-        flag_cluster::FlagCluster, forbidden_reach::ForbiddenReach, guard_flag::GuardFlag,
+        collapsed_error::CollapsedError, defaulted_failure::DefaultedFailure,
+        dependent_field::DependentField, discarded_error::DiscardedError,
+        exclusive_options::ExclusiveOptions, flag_cluster::FlagCluster,
+        forbidden_reach::ForbiddenReach, guard_flag::GuardFlag,
         insert_then_unwrap::InsertThenUnwrap, lock_order::LockOrder, misbound_arg::MisboundArg,
         narrowed_return::NarrowedReturn, nonidentity_key::NonidentityKey,
         overwide_parameter::OverwideParameter, parallel_bools::ParallelBools,
@@ -215,6 +217,7 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
         reimplemented_helper::ReimplementedHelper::new(config)
     });
     add(s, true, DependentField::default);
+    add(s, true, CollapsedError::default);
     // Last, so its check_crate_post flushes after every lint has recorded.
     add(s, true, || BaselineWriter);
 }

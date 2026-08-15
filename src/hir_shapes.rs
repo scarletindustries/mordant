@@ -124,6 +124,25 @@ pub(crate) fn peel_blocks_unsafe<'h>(mut e: &'h Expr<'h>) -> &'h Expr<'h> {
     e
 }
 
+/// The block's only expression: `{ e }` with no statements, or `{ e; }` /
+/// `{ e }` as a single expression statement with no tail. Anything else is
+/// None.
+pub(crate) fn sole_expr<'h>(b: &'h Block<'h>) -> Option<&'h Expr<'h>> {
+    match (b.stmts, b.expr) {
+        ([], Some(e)) => Some(e),
+        (
+            [
+                Stmt {
+                    kind: StmtKind::Semi(e) | StmtKind::Expr(e),
+                    ..
+                },
+            ],
+            None,
+        ) => Some(e),
+        _ => None,
+    }
+}
+
 /// The statement's expression, for `let` its initializer.
 pub(crate) fn stmt_expr<'tcx>(stmt: &'tcx Stmt<'tcx>) -> Option<&'tcx Expr<'tcx>> {
     match stmt.kind {
