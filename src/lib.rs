@@ -85,55 +85,45 @@ mod wildcard_over_own_enum;
 ///
 /// `dylint_linting::config_or_default` returns `Default` when the linted
 /// workspace has no `dylint.toml`; the container-level `serde(default)`
-/// fills any omitted key from it too. A key prefixed by a lint's name keeps
-/// the lint's old name (`names::RENAMED`) as a `serde(alias)`.
+/// fills any omitted key from it too.
 #[derive(Default, serde::Deserialize)]
 #[cfg_attr(test, derive(Debug, PartialEq))]
 #[serde(rename_all = "kebab-case", default)]
 #[cfg_attr(dylint_lib = "mordant", allow(bool_cluster))]
 pub struct MordantConfig {
     /// Lints, by name, that stay registered (so an `allow` of one still
-    /// resolves) but never run. A lint's old name stands for it, and
-    /// `group:<name>` for every lint in that family (`names::GROUPS`).
+    /// resolves) but never run. `group:<name>` stands for every lint in that
+    /// family (`names::GROUPS`).
     pub disabled: Vec<String>,
     /// Fully qualified paths of types that are never a valid map key in this
     /// project (e.g. a span type with no file identity). Empty means silent.
-    #[serde(alias = "nonidentity-key-types")]
     pub key_not_identity_types: Vec<String>,
     /// Opt-in key-expression forms: "to-bits", "ptr-cast". Both are legitimate
     /// in interning code, so neither is on by default.
-    #[serde(alias = "nonidentity-key-forms")]
     pub key_not_identity_forms: Vec<String>,
     /// Also flag `Box<dyn Error>` as a stringly error type.
     pub stringly_error_include_box_dyn: bool,
     /// Fully qualified method paths that never produce a valid map key (e.g. a
     /// NaN-boxing `Value::to_bits`). Checked in key position of `insert`/`entry`.
-    #[serde(alias = "nonidentity-key-methods")]
     pub key_not_identity_methods: Vec<String>,
     /// Opt-in: also flag composite keys (tuples, structs one level deep) that
     /// carry a denied type without one of the fixing types beside it.
-    #[serde(alias = "nonidentity-key-composite")]
     pub key_not_identity_composite: bool,
     /// Types whose presence in a composite key restores identity (e.g. the
     /// file id that gives a span a coordinate space).
-    #[serde(alias = "nonidentity-key-fixes")]
     pub key_not_identity_fixes: Vec<String>,
     /// Error types that mean "the environment refused" (allocation, IO,
     /// syscall), added to the built-in std list. A constructor exit failing
     /// with one of these is never treated as validating a field.
     pub validator_resource_errors: Vec<String>,
     /// Minimum Option fields for `options_as_enum` to consider a struct.
-    #[serde(alias = "exclusive-options-min-fields")]
     pub options_as_enum_min_fields: usize = 2,
     /// `wildcard_over_own_enum` stays silent above this many variants.
-    #[serde(alias = "wildcard-local-enum-max-variants")]
     pub wildcard_over_own_enum_max_variants: usize = 12,
     /// Bool fields at which `bool_cluster` fires.
-    #[serde(alias = "flag-cluster-min-bools")]
     pub bool_cluster_min_bools: usize = 3,
     /// Construction sites at which `derived_field` will read a
     /// correspondence between two fields.
-    #[serde(alias = "stored-projection-min-sites")]
     pub derived_field_min_sites: usize = 2,
     /// Expression nodes below which `reimplemented_helper` does not compare
     /// a body, so one-line accessors and constructors never pair up.
@@ -162,7 +152,6 @@ pub struct MordantConfig {
     /// Opt-in: run `bool_cluster`. Off by default because most structs it
     /// names are option bags; the state machines among them are found by
     /// running it once, not by gating on it.
-    #[serde(alias = "flag-cluster-enabled")]
     pub bool_cluster_enabled: bool,
     /// Opt-in: run `stale_safety_comment`. Off by default because a name a
     /// crate cannot see is usually defined in C++, a script, or a downstream
@@ -189,7 +178,6 @@ pub struct MordantConfig {
     /// Opt-in: run `some_still_unchecked`. Off by default because a `Some` that fails
     /// the check usually is meant to read as absent; the lint is a sweep for
     /// the places where a `.filter(..)` or a narrower type says so instead.
-    #[serde(alias = "some-if-enabled")]
     pub some_still_unchecked_enabled: bool,
     /// Functions a parameter group must pass between, unchanged, before
     /// `parallel_params` names it.
@@ -297,7 +285,6 @@ fn register(config: &'static MordantConfig, s: &mut rustc_lint::LintStore) -> Ve
     });
     // Last, so its check_crate_post flushes after every lint has recorded.
     r.add(true, || BaselineWriter);
-    r.renamed(names::RENAMED);
     r.groups(names::GROUPS);
     unknown_names(&disabled, &r.known)
 }
@@ -329,15 +316,6 @@ impl Registrar<'_> {
         }
     }
 
-    /// After every `add`: each old name resolves to the lint it was renamed
-    /// to, so `#[allow(old)]` still silences it, under rustc's
-    /// `renamed_and_removed_lints` warning naming the new one.
-    fn renamed(&mut self, table: &[(&str, &str)]) {
-        for (old, new) in table {
-            self.store.register_renamed(old, new);
-        }
-    }
-
     /// After every `add`: each family becomes a lint group, so one `-A` /
     /// `#![allow(..)]` of `names::group_id` covers its members.
     fn groups(&mut self, table: &[(&str, &[&str])]) {
@@ -355,16 +333,15 @@ impl Registrar<'_> {
     }
 }
 
-/// `disabled` as written in `dylint.toml`, in current lint names: an old
-/// name stands for the lint it was renamed to, and `group:<name>` for every
-/// lint in that family. An entry that names nothing is kept as written for
-/// `unknown_names` to report.
+/// `disabled` as written in `dylint.toml`, with `group:<name>` expanded to
+/// every lint in that family. An entry that names nothing is kept as written
+/// for `unknown_names` to report.
 fn resolve_disabled(written: &[String]) -> Vec<String> {
     let mut disabled = Vec::new();
     for entry in written {
         match names::group_members(entry) {
             Some(members) => disabled.extend(members.iter().map(|m| m.to_string())),
-            None => disabled.push(names::current(entry).to_string()),
+            None => disabled.push(entry.clone()),
         }
     }
     disabled
@@ -509,69 +486,11 @@ fn disabled_names_that_match_no_lint_are_reported() {
     );
 }
 
-#[test]
-fn config_keys_under_a_lints_old_name_still_parse() {
-    let parsed: MordantConfig = toml::from_str(
-        "nonidentity-key-types = [\"Span\"]\n\
-         nonidentity-key-forms = [\"to-bits\"]\n\
-         nonidentity-key-methods = [\"Value::to_raw\"]\n\
-         nonidentity-key-composite = true\n\
-         nonidentity-key-fixes = [\"FileId\"]\n\
-         exclusive-options-min-fields = 5\n\
-         wildcard-local-enum-max-variants = 6\n\
-         flag-cluster-min-bools = 7\n\
-         stored-projection-min-sites = 8\n\
-         flag-cluster-enabled = true\n\
-         some-if-enabled = true\n",
-    )
-    .expect("old keys parse");
-    assert_eq!(parsed.key_not_identity_types, ["Span"]);
-    assert_eq!(parsed.key_not_identity_forms, ["to-bits"]);
-    assert_eq!(parsed.key_not_identity_methods, ["Value::to_raw"]);
-    assert!(parsed.key_not_identity_composite);
-    assert_eq!(parsed.key_not_identity_fixes, ["FileId"]);
-    assert_eq!(parsed.options_as_enum_min_fields, 5);
-    assert_eq!(parsed.wildcard_over_own_enum_max_variants, 6);
-    assert_eq!(parsed.bool_cluster_min_bools, 7);
-    assert_eq!(parsed.derived_field_min_sites, 8);
-    assert!(parsed.bool_cluster_enabled);
-    assert!(parsed.some_still_unchecked_enabled);
-}
-
-#[test]
-fn disabled_accepts_a_lints_old_name_without_reporting_it() {
-    let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    let disabled = resolve_disabled(&names(&["guard_flag", "gaurd_flag"]));
-    assert_eq!(disabled, ["runtime_typestate", "gaurd_flag"]);
-    assert_eq!(
-        unknown_names(&disabled, &names(&["runtime_typestate"])),
-        ["gaurd_flag"]
-    );
-}
-
 #[cfg(test)]
 fn registered_store(config: MordantConfig) -> (rustc_lint::LintStore, Vec<String>) {
     let mut store = rustc_lint::LintStore::new();
     let unknown = register(Box::leak(Box::new(config)), &mut store);
     (store, unknown)
-}
-
-/// `register_renamed` panics on a new name that is not a registered lint,
-/// so building the store already proves half of this; the rest is that the
-/// old name finds the same lint the new one does.
-#[test]
-fn every_renamed_lint_is_registered_and_its_old_name_finds_it() {
-    let (store, unknown) = registered_store(MordantConfig::default());
-    assert!(unknown.is_empty());
-    let registered: Vec<String> = store.get_lints().iter().map(|l| l.name_lower()).collect();
-    for (old, new) in names::RENAMED {
-        assert!(registered.iter().any(|l| l == new), "{new} is not a lint");
-        assert!(
-            !registered.iter().any(|l| l == old),
-            "{old} is still a lint"
-        );
-        assert_eq!(store.find_lints(old), store.find_lints(new), "{old}");
-    }
 }
 
 #[test]

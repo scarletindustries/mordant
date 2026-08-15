@@ -16,8 +16,6 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 
 The lints come in families, and each family is a lint group whose name is in its heading: `#![allow(mordant_naming)]` or `-A mordant_naming` covers every lint under Naming, and `disabled = ["group:naming"]` in `dylint.toml` turns them off. The `mordant_` prefix is there because rustc keeps every loaded lint and group in one namespace.
 
-Twenty-two lints were renamed to say what is wrong rather than what the code looks like (`guard_flag` is now `runtime_typestate`, `exclusive_options` is now `options_as_enum`). The old names keep working wherever they already appear: `#[allow(guard_flag)]` still silences the lint, with a note from rustc giving the new name; `disabled = ["guard_flag"]` and `flag-cluster-min-bools = 3` in `dylint.toml` mean what they did; a baseline recorded under the old names still holds. The full list is `RENAMED` in [src/names.rs](src/names.rs).
-
 ### State (`mordant_state`)
 
 | lint                         | flags                                                                                                                                                                     |
@@ -143,8 +141,8 @@ Configure per project in `dylint.toml` at the workspace root:
 # Lints this project does not want, by name, or a whole family as
 # `group:<family>`. A disabled lint never runs, but it stays registered, so an
 # `#[allow(runtime_typestate)]` left in the code still resolves instead of
-# tripping `unknown_lints`. A lint's old name disables it too. A name that
-# matches no lint or family gets a warning naming it, not an error.
+# tripping `unknown_lints`. A name that matches no lint or family gets a
+# warning naming it, not an error.
 disabled = ["runtime_typestate", "unit_mismatch", "group:duplication"]
 
 key-not-identity-types = ["my_crate::span::Span"]
