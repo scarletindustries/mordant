@@ -1,6 +1,8 @@
 // An integer field one function tests against a sentinel and another indexes
 // with or offsets by unchecked: the sentinel reaches that use.
 
+use std::collections::HashMap;
+
 const INVALID_SLOT: u32 = u32::MAX;
 
 struct Entry {
@@ -14,6 +16,7 @@ struct Entry {
 struct Table {
     names: Vec<&'static str>,
     entries: Vec<Entry>,
+    by_slot: HashMap<u32, usize>,
 }
 
 impl Table {
@@ -40,6 +43,31 @@ impl Table {
         self.names[i]
     }
 
+    // Fine: `assert_ne!` is the comparison, spelled as a macro.
+    fn name_asserted(&self, e: &Entry) -> &'static str {
+        assert_ne!(e.slot, INVALID_SLOT);
+        self.names[e.slot as usize]
+    }
+
+    // Fine: `.get` followed by the early return is the bounds test.
+    fn name_probed(&self, e: &Entry) -> &'static str {
+        if self.names.get(e.slot as usize).is_none() {
+            return "";
+        }
+        self.names[e.slot as usize]
+    }
+
+    // Fine: a keyed lookup answers for a key that is not there.
+    fn forget(&mut self, e: &Entry) -> Option<usize> {
+        let _ = self.by_slot[&e.slot];
+        self.by_slot.remove(&e.slot)
+    }
+
+    // Flagged: the sum carries `slot`, whichever side it is on.
+    fn name_after(&self, e: &Entry) -> &'static str {
+        self.names[e.width as usize + e.slot as usize]
+    }
+
     fn detach(&mut self, i: usize) {
         self.entries[i].parent = u32::MAX;
     }
@@ -54,12 +82,25 @@ impl Table {
         unsafe { self.entries.as_ptr().add(e.parent as usize) }
     }
 
+    // Flagged: wrapping arithmetic decides nothing about the sentinel.
+    fn parent_ptr_wrapping(&self, e: &Entry) -> *const Entry {
+        self.entries.as_ptr().wrapping_add(e.parent as usize)
+    }
+
     // Fine: calls the helper that tests `parent`.
     fn parent_of(&self, e: &Entry) -> Option<&Entry> {
         if self.is_root(e) {
             return None;
         }
         Some(&self.entries[e.parent as usize])
+    }
+
+    // Fine: the arm that indexes is the one the sentinel cannot reach.
+    fn parent_matched(&self, e: &Entry) -> Option<&Entry> {
+        match e.parent {
+            u32::MAX => None,
+            _ => Some(&self.entries[e.parent as usize]),
+        }
     }
 
     // Fine: only ever called from a function that tested `parent` first.
@@ -90,6 +131,14 @@ impl Table {
     // Flagged: `depth` is `-1` when unknown, and the sum indexes.
     fn below(&self, e: &Entry) -> &Entry {
         &self.entries[(e.depth + 1) as usize]
+    }
+
+    // Fine: `matches!` against the sentinel is the test.
+    fn below_matched(&self, e: &Entry) -> Option<&Entry> {
+        if matches!(e.depth, -1) {
+            return None;
+        }
+        Some(&self.entries[(e.depth + 1) as usize])
     }
 
     // Fine: arithmetic alone meets no memory.
@@ -136,6 +185,7 @@ fn main() {
             width: 1,
             rank: 0,
         }],
+        by_slot: HashMap::new(),
     };
     let e = Entry {
         slot: 1,
@@ -147,13 +197,21 @@ fn main() {
     let _ = t.name(&e);
     t.rename(&e, "c");
     let _ = t.name_or_empty(&e);
+    let _ = t.name_asserted(&e);
+    let _ = t.name_probed(&e);
+    t.by_slot.insert(1, 0);
+    let _ = t.forget(&e);
+    let _ = t.name_after(&t.entries[0]);
     t.detach(0);
     let _ = t.parent_ptr(&e);
+    let _ = t.parent_ptr_wrapping(&e);
     let _ = t.parent_of(&e).is_some();
+    let _ = t.parent_matched(&e).is_some();
     let _ = t.grandparent(&e).is_some();
     t.forget_depth(0);
     let _ = t.depth_or_zero(&e);
     let _ = t.below(&t.entries[0]).slot + t.below_clamped(&e).slot;
+    let _ = t.below_matched(&e).is_some();
     let _ = t.deeper(&e);
     t.unbound(0);
     let _ = t.slack(&e, 0);

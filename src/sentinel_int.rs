@@ -1,15 +1,19 @@
 use std::collections::{HashMap, HashSet};
 
 use clippy_utils::higher::Range;
+use clippy_utils::macros::{find_assert_eq_args, root_macro_call_first_node};
 use clippy_utils::res::MaybeResPath;
 use rustc_ast::LitKind;
 use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::DefId;
-use rustc_hir::{BinOpKind, Expr, ExprKind, HirId, LetStmt, PatKind, QPath, UnOp};
+use rustc_hir::{
+    BinOpKind, Expr, ExprKind, HirId, LetStmt, Pat, PatExpr, PatExprKind, PatKind, QPath, UnOp,
+};
 use rustc_lint::{LateContext, LateLintPass};
-use rustc_span::{Span, Symbol};
+use rustc_middle::ty::{self, Ty};
+use rustc_span::{Span, Symbol, sym};
 
-use crate::adt_facts::{field_ty, struct_field};
+use crate::adt_facts::{field_ty, is_option_ty, struct_field};
 use crate::baseline::emit;
 use crate::hir_shapes::{assigned_field, callee_of, peel_blocks_unsafe};
 
@@ -26,15 +30,19 @@ rustc_session::declare_lint! {
     ///
     /// Reported on the unchecked reader. A function counts as checking the
     /// field if it compares the field, or a local read off it, against
-    /// anything (`==`, `!=`, an ordering test against a length), clamps it
-    /// (`min`, `checked_add`, ..), or directly calls a predicate (a
-    /// `bool`-returning function) that does; a function all of whose visible
-    /// callers check is their unchecked half and stays quiet too. `.get(i)`
-    /// already answers for an index that is not there and is not counted.
-    /// Plain arithmetic on the field is not a use: positions and lengths are
-    /// summed everywhere and the sum is only wrong where it meets memory. A
-    /// field only ever *assigned* `MAX` and never compared to it is a bound,
-    /// not a missing value, and is left alone.
+    /// anything (`==`, `!=`, `assert_ne!`, an ordering test against a length,
+    /// a `match` arm or `matches!` with a literal or constant pattern), clamps
+    /// it (`min`, `checked_add`, ..), looks it up with `.get(i)`, or directly
+    /// calls a predicate (a `bool`-returning function) that does; a function
+    /// all of whose visible callers check is their unchecked half and stays
+    /// quiet too. `.get(i)` and keyed lookups (`map.remove(&x.f)`, `map[&x.f]`)
+    /// already answer for a value that is not there and are not uses.
+    /// `wrapping_*` arithmetic opts out of any range decision and is neither
+    /// a check nor, on an integer, a use. Plain arithmetic on the field is not
+    /// a use: positions and lengths are summed everywhere and the sum is only
+    /// wrong where it meets memory. A field only ever *assigned* `MAX` and
+    /// never compared to it is a bound, not a missing value, and is left
+    /// alone.
     pub SENTINEL_INT,
     Warn,
     "an integer field compared to a sentinel by one reader and indexed with unchecked by another"
@@ -68,8 +76,8 @@ pub struct SentinelInt {
     reads: HashMap<Field, Vec<Read>>,
     /// The function tests the field, or a value read off it, somewhere.
     checked: HashSet<(DefId, Field)>,
-    /// `let i = x.f as usize`: locals that carry a field's value.
-    locals: HashMap<HirId, Field>,
+    /// `let i = x.f as usize + y.g`: locals that carry fields' values.
+    locals: HashMap<HirId, Vec<Field>>,
     /// Function -> local `bool`-returning functions it calls directly.
     calls: HashMap<DefId, HashSet<DefId>>,
     /// Local function -> functions that call it directly.
@@ -94,6 +102,26 @@ fn names_absence(name: &str) -> bool {
         .any(|w| matches!(w, "INVALID" | "NONE" | "SENTINEL"))
 }
 
+fn is_minus_one(lit: LitKind) -> bool {
+    matches!(lit, LitKind::Int(v, _) if v.get() == 1)
+}
+
+/// A constant that spells a sentinel: `core`'s `MAX`, or one named for
+/// absence.
+fn sentinel_const(cx: &LateContext<'_>, res: Res) -> Option<Sentinel> {
+    let Res::Def(DefKind::Const { .. } | DefKind::AssocConst { .. }, did) = res else {
+        return None;
+    };
+    let name = cx.tcx.item_name(did);
+    if name.as_str() == "MAX" && cx.tcx.crate_name(did.krate).as_str() == "core" {
+        Some(Sentinel::Max)
+    } else if names_absence(name.as_str()) {
+        Some(Sentinel::Named(did))
+    } else {
+        None
+    }
+}
+
 /// The sentinel an expression spells, if it is one of the three forms.
 fn sentinel_of<'tcx>(cx: &LateContext<'tcx>, e: &'tcx Expr<'tcx>) -> Option<Sentinel> {
     let e = peel_blocks_unsafe(e);
@@ -102,31 +130,46 @@ fn sentinel_of<'tcx>(cx: &LateContext<'tcx>, e: &'tcx Expr<'tcx>) -> Option<Sent
     }
     match e.kind {
         ExprKind::Unary(UnOp::Neg, inner) => match peel_blocks_unsafe(inner).kind {
-            ExprKind::Lit(lit) if matches!(lit.node, LitKind::Int(v, _) if v.get() == 1) => {
-                Some(Sentinel::MinusOne)
-            }
+            ExprKind::Lit(lit) if is_minus_one(lit.node) => Some(Sentinel::MinusOne),
             _ => None,
         },
-        ExprKind::Path(ref qpath) => match cx.qpath_res(qpath, e.hir_id) {
-            Res::Def(DefKind::Const { .. } | DefKind::AssocConst { .. }, did) => {
-                let name = cx.tcx.item_name(did);
-                if name.as_str() == "MAX" && cx.tcx.crate_name(did.krate).as_str() == "core" {
-                    Some(Sentinel::Max)
-                } else if names_absence(name.as_str()) {
-                    Some(Sentinel::Named(did))
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        },
+        ExprKind::Path(ref qpath) => sentinel_const(cx, cx.qpath_res(qpath, e.hir_id)),
         _ => None,
     }
 }
 
-fn spelling(cx: &LateContext<'_>, s: &Sentinel, e: &Expr<'_>) -> String {
+/// The sentinel a `match` arm pattern spells: `-1` or a constant path.
+fn pat_sentinel(cx: &LateContext<'_>, pe: &PatExpr<'_>) -> Option<Sentinel> {
+    match pe.kind {
+        PatExprKind::Lit { lit, negated: true } if is_minus_one(lit.node) => {
+            Some(Sentinel::MinusOne)
+        }
+        PatExprKind::Path(ref qpath) => sentinel_const(cx, cx.qpath_res(qpath, pe.hir_id)),
+        PatExprKind::Lit { .. } => None,
+    }
+}
+
+/// The arm patterns that test the scrutinee's value — a literal, constant or
+/// range — through `|`, `&` and guards.
+fn value_pats<'a>(pat: &'a Pat<'a>, out: &mut Vec<&'a Pat<'a>>) {
+    match pat.kind {
+        PatKind::Expr(_) | PatKind::Range(..) => out.push(pat),
+        PatKind::Or(alts) => {
+            for alt in alts {
+                value_pats(alt, out);
+            }
+        }
+        PatKind::Ref(inner, _, _)
+        | PatKind::Deref(inner)
+        | PatKind::Box(inner)
+        | PatKind::Guard(inner, _) => value_pats(inner, out),
+        _ => {}
+    }
+}
+
+fn spelling<'tcx>(cx: &LateContext<'tcx>, s: &Sentinel, ty: Ty<'tcx>) -> String {
     match s {
-        Sentinel::Max => format!("{}::MAX", cx.typeck_results().expr_ty(e)),
+        Sentinel::Max => format!("{ty}::MAX"),
         Sentinel::MinusOne => "-1".to_owned(),
         Sentinel::Named(did) => cx.tcx.item_name(*did).to_string(),
     }
@@ -156,6 +199,35 @@ fn owner_fn(cx: &LateContext<'_>, hir_id: HirId) -> DefId {
     did
 }
 
+/// Memory a `usize` positions into, where the INDEXERS calls panic or are UB
+/// past the end.
+fn is_contiguous<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>) -> bool {
+    match ty.kind() {
+        ty::Slice(_) | ty::Array(..) | ty::Str => true,
+        ty::Adt(adt, _) => {
+            cx.tcx.is_diagnostic_item(sym::Vec, adt.did())
+                || cx.tcx.is_diagnostic_item(sym::String, adt.did())
+        }
+        _ => false,
+    }
+}
+
+/// An INDEXERS call that does not answer for an index that is not there:
+/// on contiguous memory, or on anything else unless its result is the
+/// `Option`/`bool` a keyed collection (`map.remove`, `deque.remove`) hands
+/// back for an absent key.
+fn indexes_positionally<'tcx>(
+    cx: &LateContext<'tcx>,
+    call: &'tcx Expr<'tcx>,
+    recv: &'tcx Expr<'tcx>,
+) -> bool {
+    if is_contiguous(cx, cx.typeck_results().expr_ty_adjusted(recv).peel_refs()) {
+        return true;
+    }
+    let out = cx.typeck_results().expr_ty(call);
+    !(out.is_bool() || out.is_unit() || is_option_ty(cx, out))
+}
+
 /// Value-preserving wrappers a field read is still visible through.
 const ADAPTERS: &[&str] = &[
     "clone",
@@ -167,8 +239,8 @@ const ADAPTERS: &[&str] = &[
     "cast_unsigned",
 ];
 
-/// Calls that index their receiver by their one argument and do not answer
-/// for an index that is not there.
+/// Calls that index contiguous memory by their one argument and do not
+/// answer for an index that is not there.
 const INDEXERS: &[&str] = &[
     "get_unchecked",
     "get_unchecked_mut",
@@ -186,12 +258,30 @@ const OFFSETS: &[&str] = &[
     "byte_add",
     "byte_sub",
     "byte_offset",
+    "wrapping_add",
+    "wrapping_sub",
+    "wrapping_offset",
+    "wrapping_byte_add",
+    "wrapping_byte_sub",
+    "wrapping_byte_offset",
 ];
 
 impl SentinelInt {
-    /// The field whose value `e` carries: the field itself through casts,
-    /// borrows, derefs and value-preserving adapters, or a local bound to one.
-    fn read_of<'tcx>(&self, cx: &LateContext<'tcx>, mut e: &'tcx Expr<'tcx>) -> Option<Field> {
+    /// Every field whose value `e` carries: the field itself through casts,
+    /// borrows, derefs and value-preserving adapters, a local bound to one,
+    /// or both operands of a sum.
+    fn reads_of<'tcx>(&self, cx: &LateContext<'tcx>, e: &'tcx Expr<'tcx>) -> Vec<Field> {
+        let mut out = Vec::new();
+        self.collect_reads(cx, e, &mut out);
+        out
+    }
+
+    fn collect_reads<'tcx>(
+        &self,
+        cx: &LateContext<'tcx>,
+        mut e: &'tcx Expr<'tcx>,
+        out: &mut Vec<Field>,
+    ) {
         loop {
             e = peel_blocks_unsafe(e);
             match e.kind {
@@ -210,29 +300,93 @@ impl SentinelInt {
                 {
                     e = arg;
                 }
-                // `off + len`, `idx - 1`: the sum still carries the sentinel.
+                // `off + len`, `idx - 1`: the sum still carries the sentinel
+                // of either side.
                 ExprKind::Binary(op, l, r)
                     if matches!(op.node, BinOpKind::Add | BinOpKind::Sub | BinOpKind::Mul) =>
                 {
-                    return self.read_of(cx, l).or_else(|| self.read_of(cx, r));
+                    self.collect_reads(cx, l, out);
+                    e = r;
                 }
-                ExprKind::Field(base, ident) => return field_key(cx, base, ident.name),
+                ExprKind::Field(base, ident) => {
+                    out.extend(field_key(cx, base, ident.name));
+                    return;
+                }
                 ExprKind::Path(_) => {
-                    return e
-                        .res_local_id()
-                        .and_then(|id| self.locals.get(&id).copied());
+                    if let Some(id) = e.res_local_id()
+                        && let Some(fields) = self.locals.get(&id)
+                    {
+                        out.extend_from_slice(fields);
+                    }
+                    return;
                 }
-                _ => return None,
+                _ => return,
             }
         }
     }
 
-    fn compared(&mut self, cx: &LateContext<'_>, field: Field, s: &Sentinel, at: &Expr<'_>) {
+    fn compared<'tcx>(&mut self, cx: &LateContext<'tcx>, field: Field, s: &Sentinel, ty: Ty<'tcx>) {
         let ev = self.evidence.entry(field).or_default();
         if ev.compared == 0 {
-            ev.spelling = spelling(cx, s, at);
+            ev.spelling = spelling(cx, s, ty);
         }
         ev.compared += 1;
+    }
+
+    /// The enclosing function tests every field `e` carries; those fields.
+    fn tested<'tcx>(&mut self, cx: &LateContext<'tcx>, e: &'tcx Expr<'tcx>) -> Vec<Field> {
+        let fields = self.reads_of(cx, e);
+        if !fields.is_empty() {
+            let body = owner_fn(cx, e.hir_id);
+            for f in &fields {
+                self.checked.insert((body, *f));
+            }
+        }
+        fields
+    }
+
+    /// `l == r` / `l != r`, spelled as an operator or an `assert_eq!`.
+    fn equated<'tcx>(&mut self, cx: &LateContext<'tcx>, l: &'tcx Expr<'tcx>, r: &'tcx Expr<'tcx>) {
+        for (a, b) in [(l, r), (r, l)] {
+            let fields = self.tested(cx, a);
+            if let Some(s) = sentinel_of(cx, b) {
+                let ty = cx.typeck_results().expr_ty(peel_blocks_unsafe(b));
+                for f in fields {
+                    self.compared(cx, f, &s, ty);
+                }
+            }
+        }
+    }
+
+    /// `match scrut { CONST => .., 0..=9 => .. }`, `matches!(scrut, -1)`,
+    /// `if let CONST = scrut`: an arm that names a value tests the scrutinee.
+    fn matched<'tcx>(
+        &mut self,
+        cx: &LateContext<'tcx>,
+        scrut: &'tcx Expr<'tcx>,
+        pats: impl Iterator<Item = &'tcx Pat<'tcx>>,
+    ) {
+        let mut leaves = Vec::new();
+        for pat in pats {
+            value_pats(pat, &mut leaves);
+        }
+        if leaves.is_empty() {
+            return;
+        }
+        let fields = self.tested(cx, scrut);
+        if fields.is_empty() {
+            return;
+        }
+        for leaf in leaves {
+            if let PatKind::Expr(pe) = leaf.kind
+                && let Some(s) = pat_sentinel(cx, pe)
+            {
+                let ty = cx.typeck_results().node_type(leaf.hir_id);
+                for f in &fields {
+                    self.compared(cx, *f, &s, ty);
+                }
+            }
+        }
     }
 
     fn read<'tcx>(
@@ -242,8 +396,12 @@ impl SentinelInt {
         span: Span,
         how: Use,
     ) {
-        if let Some(field) = self.read_of(cx, operand) {
-            let body = owner_fn(cx, operand.hir_id);
+        // A position is an integer by value; `&x.f` is a key being looked up.
+        if !cx.typeck_results().expr_ty(operand).is_integral() {
+            return;
+        }
+        let body = owner_fn(cx, operand.hir_id);
+        for field in self.reads_of(cx, operand) {
             self.reads
                 .entry(field)
                 .or_default()
@@ -325,20 +483,46 @@ impl SentinelInt {
             }
         }
     }
+
+    fn assert_eq_args<'tcx>(
+        cx: &LateContext<'tcx>,
+        expr: &'tcx Expr<'tcx>,
+    ) -> Option<(&'tcx Expr<'tcx>, &'tcx Expr<'tcx>)> {
+        let mac = root_macro_call_first_node(cx, expr)?;
+        if !matches!(
+            cx.tcx.get_diagnostic_name(mac.def_id),
+            Some(
+                sym::assert_eq_macro
+                    | sym::assert_ne_macro
+                    | sym::debug_assert_eq_macro
+                    | sym::debug_assert_ne_macro
+            )
+        ) {
+            return None;
+        }
+        find_assert_eq_args(cx, expr, mac.expn).map(|(l, r, _)| (l, r))
+    }
 }
 
 impl<'tcx> LateLintPass<'tcx> for SentinelInt {
     fn check_local(&mut self, cx: &LateContext<'tcx>, local: &'tcx LetStmt<'tcx>) {
         if let Some(init) = local.init
             && let PatKind::Binding(_, id, _, None) = local.pat.kind
-            && let Some(field) = self.read_of(cx, init)
         {
-            self.locals.insert(id, field);
+            let fields = self.reads_of(cx, init);
+            if !fields.is_empty() {
+                self.locals.insert(id, fields);
+            }
         }
     }
 
     fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         self.record_call(cx, expr);
+        // `assert_eq!(a, b)` compares through match-arm bindings the operator
+        // arm below cannot see back through; read its arguments directly.
+        if let Some((l, r)) = Self::assert_eq_args(cx, expr) {
+            self.equated(cx, l, r);
+        }
         match expr.kind {
             ExprKind::Struct(_, fields, _) => {
                 let Some(adt) = cx.typeck_results().expr_ty(expr).ty_adt_def() else {
@@ -359,7 +543,7 @@ impl<'tcx> LateLintPass<'tcx> for SentinelInt {
                             .entry((adt.did(), init.ident.name))
                             .or_default();
                         if ev.spelling.is_empty() {
-                            ev.spelling = spelling(cx, &s, init.expr);
+                            ev.spelling = spelling(cx, &s, cx.typeck_results().expr_ty(init.expr));
                         }
                     }
                 }
@@ -371,50 +555,40 @@ impl<'tcx> LateLintPass<'tcx> for SentinelInt {
                 {
                     let ev = self.evidence.entry(field).or_default();
                     if ev.spelling.is_empty() {
-                        ev.spelling = spelling(cx, &s, val);
+                        ev.spelling = spelling(cx, &s, cx.typeck_results().expr_ty(val));
                     }
                 }
             }
             ExprKind::Binary(op, l, r) => match op.node {
-                BinOpKind::Eq | BinOpKind::Ne => {
-                    let body = owner_fn(cx, expr.hir_id);
-                    for (a, b) in [(l, r), (r, l)] {
-                        if let Some(field) = self.read_of(cx, a) {
-                            self.checked.insert((body, field));
-                            if let Some(s) = sentinel_of(cx, b) {
-                                self.compared(cx, field, &s, b);
-                            }
-                        }
-                    }
-                }
+                BinOpKind::Eq | BinOpKind::Ne => self.equated(cx, l, r),
                 BinOpKind::Lt | BinOpKind::Le | BinOpKind::Gt | BinOpKind::Ge => {
-                    let body = owner_fn(cx, expr.hir_id);
-                    for a in [l, r] {
-                        if let Some(field) = self.read_of(cx, a) {
-                            self.checked.insert((body, field));
-                        }
-                    }
+                    self.tested(cx, l);
+                    self.tested(cx, r);
                 }
                 _ => {}
             },
+            ExprKind::Match(scrut, arms, _) => self.matched(cx, scrut, arms.iter().map(|a| a.pat)),
+            ExprKind::Let(l) => self.matched(cx, l.init, std::iter::once(l.pat)),
             ExprKind::Index(_, idx, _) => self.indexed(cx, idx, expr.span),
             ExprKind::MethodCall(seg, recv, args, _) => {
                 let name = seg.ident.as_str();
                 // The author deciding what an out-of-range value does:
-                // overflow-aware arithmetic on it, or a clamp of it.
-                let bounded = ["checked_", "saturating_", "wrapping_", "overflowing_"]
+                // overflow-aware arithmetic on it, a clamp of it, or a lookup
+                // that answers for absence. `wrapping_*` decides nothing.
+                let bounded = ["checked_", "saturating_", "overflowing_"]
                     .iter()
                     .any(|p| name.starts_with(p))
-                    || matches!(name, "min" | "max" | "clamp");
+                    || matches!(
+                        name,
+                        "min" | "max" | "clamp" | "get" | "get_mut" | "contains" | "contains_key"
+                    );
                 if bounded {
                     for operand in std::iter::once(recv).chain(args.iter()) {
-                        if let Some(field) = self.read_of(cx, operand) {
-                            self.checked.insert((owner_fn(cx, expr.hir_id), field));
-                        }
+                        self.tested(cx, operand);
                     }
                 }
                 if let [arg] = args {
-                    if INDEXERS.contains(&name) {
+                    if INDEXERS.contains(&name) && indexes_positionally(cx, expr, recv) {
                         self.indexed(cx, arg, expr.span);
                     } else if OFFSETS.contains(&name)
                         && cx.typeck_results().expr_ty_adjusted(recv).is_raw_ptr()
