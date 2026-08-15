@@ -45,10 +45,6 @@ impl Canvas {
     }
 }
 
-fn with_alias(from: &str, version: &str) -> usize {
-    from.len() + version.len()
-}
-
 fn under(url: &str, registry: &str) -> bool {
     url.starts_with(registry)
 }
@@ -95,6 +91,13 @@ fn lone_reversal_is_flagged(url: &str, registry: &str) -> bool {
     under(registry, url)
 }
 
+fn literal_partner_is_flagged(opts: &SpawnOptions, height: u32) -> u32 {
+    // Flagged: a literal in the namesake slot is still the other half of a
+    // transposition; `spawn(opts.inherit_stdout, true)` compiles just as well.
+    let _ = spawn(true, opts.inherit_stdout);
+    resize(height, 0)
+}
+
 fn correct_order_is_fine(width: u32, height: u32, opts: &SpawnOptions) -> u32 {
     // Fine: every name sits in its own slot.
     let _ = spawn(opts.inherit_stdout, opts.inherit_stderr);
@@ -132,12 +135,6 @@ fn symmetric_pair_is_fine(url: &str, scope_registry: &str) -> bool {
     !(under(url, scope_registry) && under(scope_registry, url))
 }
 
-fn literal_namesake_is_fine(version: &str) -> usize {
-    // Fine: `version` fills `from`, but the `version` slot holds a literal,
-    // so there is no second value it could have been transposed with.
-    with_alias(version, "latest")
-}
-
 fn pseudo_receiver_is_fine(str: &[u8]) -> bool {
     // Fine: `self_` is a receiver slot; whatever fills it is the subject.
     has_prefix(str, b"./")
@@ -167,8 +164,8 @@ fn main() {
     let _ = unnamed_args_are_fine(&Daemon { detached: false });
     let _ = closures_are_fine(1, 2);
     let _ = lone_reversal_is_flagged("u", "r");
+    let _ = literal_partner_is_flagged(&opts, 2);
     let _ = symmetric_pair_is_fine("u", "r");
     let _ = pseudo_receiver_is_fine(b"s");
-    let _ = literal_namesake_is_fine("v");
     let _ = Span(1, 2).encloses(&Span(0, 3));
 }
