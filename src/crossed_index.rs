@@ -82,10 +82,9 @@ fn singular(word: &str) -> &str {
             return &word[..word.len() - 2];
         }
     }
-    match word.strip_suffix('s') {
-        Some(stem) if !stem.ends_with('s') => stem,
-        _ => word,
-    }
+    word.strip_suffix('s')
+        .filter(|stem| !stem.ends_with('s'))
+        .unwrap_or(word)
 }
 
 /// Two `_`-separated names name one kind when any word of one is, or

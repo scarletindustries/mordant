@@ -53,6 +53,7 @@ mod parallel_vecs;
 mod reimplemented_helper;
 mod same_match_twice;
 mod sentinel_int;
+mod some_if;
 mod stale_across_reentry;
 mod stale_panic_message;
 mod stale_safety_comment;
@@ -256,6 +257,7 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
     r.add(true, BoolParams::default);
     r.add(true, UnnamedTuple::default);
     r.add(true, || CrossedAlias);
+    r.add(true, || some_if::SomeIf);
     // Last, so its check_crate_post flushes after every lint has recorded.
     r.add(true, || BaselineWriter);
     let unknown = unknown_names(&config.disabled, &r.known);
