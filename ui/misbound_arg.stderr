@@ -1,5 +1,5 @@
 warning: arguments `height` and `width` are bound to `resize`'s parameters `width` and `height`; all are `u32`, so the transposition type-checks
-  --> $DIR/misbound_arg.rs:50:5
+  --> $DIR/misbound_arg.rs:71:5
    |
 LL |     resize(height, width)
    |     ^^^^^^^^^^^^^^^^^^^^^
@@ -8,7 +8,7 @@ LL |     resize(height, width)
    = note: `#[warn(misbound_arg)]` on by default
 
 warning: arguments `inherit_stderr` and `inherit_stdout` are bound to `spawn`'s parameters `inherit_stdout` and `inherit_stderr`; all are `bool`, so the transposition type-checks
-  --> $DIR/misbound_arg.rs:55:5
+  --> $DIR/misbound_arg.rs:76:5
    |
 LL |     spawn(opts.inherit_stderr, opts.inherit_stdout)
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -16,7 +16,7 @@ LL |     spawn(opts.inherit_stderr, opts.inherit_stdout)
    = help: give the two parameters distinct types (a newtype per quantity, an enum per flag) so a swap is a type error
 
 warning: argument `column` is bound to `place`'s parameter `line`, but `place` also takes a parameter `column` of the same type `u32`
-  --> $DIR/misbound_arg.rs:60:11
+  --> $DIR/misbound_arg.rs:81:11
    |
 LL |     place(column, extra, 0)
    |           ^^^^^^
@@ -24,26 +24,20 @@ LL |     place(column, extra, 0)
    = help: give the two parameters distinct types (a newtype per quantity, an enum per flag) so a swap is a type error
 
 warning: arguments `dst` and `src` are bound to `blit`'s parameters `src` and `dst`; all are `usize`, so the transposition type-checks
-  --> $DIR/misbound_arg.rs:65:5
+  --> $DIR/misbound_arg.rs:86:5
    |
 LL |     c.blit(dst, src)
    |     ^^^^^^^^^^^^^^^^
    |
    = help: give the two parameters distinct types (a newtype per quantity, an enum per flag) so a swap is a type error
 
-warning: `prefixed_names_are_fine` takes `bool` parameters `dir` and `is_follow`, and 1 of its 1 call sites passes bare `true`/`false` for both: nothing at `prefixed_names_are_fine(true, false)` says which flag each one sets
-  --> $DIR/misbound_arg.rs:74:4
+warning: arguments `registry` and `url` are bound to `under`'s parameters `url` and `registry`; all are `&str`, so the transposition type-checks
+  --> $DIR/misbound_arg.rs:91:5
    |
-LL | fn prefixed_names_are_fine(dir: bool, is_follow: bool) -> usize {
-   |    ^^^^^^^^^^^^^^^^^^^^^^^
+LL |     under(registry, url)
+   |     ^^^^^^^^^^^^^^^^^^^^
    |
-note: one such call
-  --> $DIR/misbound_arg.rs:116:13
-   |
-LL |     let _ = prefixed_names_are_fine(true, false);
-   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   = help: a two-variant enum per flag, or one options struct, names every argument at the call site and turns a swapped pair into a type error
-   = note: `#[warn(bool_params)]` on by default
+   = help: give the two parameters distinct types (a newtype per quantity, an enum per flag) so a swap is a type error
 
 warning: 5 warnings emitted
 

@@ -45,6 +45,27 @@ impl Canvas {
     }
 }
 
+fn under(url: &str, registry: &str) -> bool {
+    url.starts_with(registry)
+}
+
+fn has_prefix(self_: &[u8], str: &[u8]) -> bool {
+    self_.starts_with(str)
+}
+
+struct Span(u32, u32);
+
+impl Span {
+    fn within(&self, other: &Span) -> bool {
+        other.0 <= self.0 && self.1 <= other.1
+    }
+
+    fn encloses(&self, inner: &Span) -> bool {
+        // Fine: `self` in an argument slot names a position, not a role.
+        inner.within(self)
+    }
+}
+
 fn swapped_pair_is_flagged(width: u32, height: u32) -> u32 {
     // Flagged: both names cross, reported once for the call.
     resize(height, width)
@@ -63,6 +84,11 @@ fn one_misbound_is_flagged(column: u32, extra: u32) -> u32 {
 fn method_args_are_flagged(c: &Canvas, src: usize, dst: usize) -> usize {
     // Flagged: receiver aside, the two indices are transposed.
     c.blit(dst, src)
+}
+
+fn lone_reversal_is_flagged(url: &str, registry: &str) -> bool {
+    // Flagged: nothing nearby applies `under` the right way round.
+    under(registry, url)
 }
 
 fn correct_order_is_fine(width: u32, height: u32, opts: &SpawnOptions) -> u32 {
@@ -97,6 +123,16 @@ fn unnamed_args_are_fine(d: &Daemon) -> bool {
     spawn(true, d.detached)
 }
 
+fn symmetric_pair_is_fine(url: &str, registry: &str) -> bool {
+    // Fine: both orders in one condition is an equality test, not a slip.
+    !(under(url, registry) && under(registry, url))
+}
+
+fn pseudo_receiver_is_fine(str: &[u8]) -> bool {
+    // Fine: `self_` is a receiver slot; whatever fills it is the subject.
+    has_prefix(str, b"./")
+}
+
 fn closures_are_fine(width: u32, height: u32) -> u32 {
     // Fine: a closure's parameters are not a signature anyone reads by name.
     let f = |width: u32, height: u32| width + height;
@@ -113,10 +149,15 @@ fn main() {
     let _ = one_misbound_is_flagged(1, 2);
     let _ = method_args_are_flagged(&Canvas, 1, 2);
     let _ = correct_order_is_fine(1, 2, &opts);
-    let _ = prefixed_names_are_fine(true, false);
+    let (dir, follow) = (true, opts.inherit_stderr);
+    let _ = prefixed_names_are_fine(dir, follow);
     let _ = different_types_are_fine(2, 1.0);
     let _ = same_value_twice_is_fine("n");
     let _ = qualified_param_is_fine(2, 3);
     let _ = unnamed_args_are_fine(&Daemon { detached: false });
     let _ = closures_are_fine(1, 2);
+    let _ = lone_reversal_is_flagged("u", "r");
+    let _ = symmetric_pair_is_fine("u", "r");
+    let _ = pseudo_receiver_is_fine(b"s");
+    let _ = Span(1, 2).encloses(&Span(0, 3));
 }
