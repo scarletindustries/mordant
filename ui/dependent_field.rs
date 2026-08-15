@@ -86,6 +86,71 @@ fn apply(v: &Verify) -> u8 {
     out + u8::from(v.reject)
 }
 
+// Flagged: `result` is assigned only in the block that moves `state` to
+// `Done`, and read only under `state == Done`.
+#[derive(Clone, Copy, PartialEq)]
+enum State {
+    Idle,
+    Running,
+    Done,
+}
+
+struct Job {
+    state: State,
+    result: u64,
+}
+
+fn job() -> Job {
+    Job {
+        state: State::Idle,
+        result: 0,
+    }
+}
+
+fn run(j: &mut Job, r: u64) {
+    j.state = State::Running;
+    if r > 2 {
+        j.state = State::Done;
+        j.result = r;
+    }
+}
+
+fn finished(j: &Job) -> Option<u64> {
+    match j.state {
+        State::Done => Some(j.result),
+        State::Idle | State::Running => None,
+    }
+}
+
+// Fine: `names` is filled in by an assignment that has nothing to do with
+// `dirty`, so it means something in both cases even though the one reader
+// happens to check `dirty` first.
+struct Folder {
+    dirty: bool,
+    names: Option<Vec<u8>>,
+}
+
+fn folder() -> Folder {
+    Folder {
+        dirty: false,
+        names: None,
+    }
+}
+
+fn scan(f: &mut Folder, n: Vec<u8>, changed: bool) {
+    f.names = Some(n);
+    if changed {
+        f.dirty = true;
+    }
+}
+
+fn sweep(f: &Folder) -> usize {
+    if !f.dirty {
+        return 0;
+    }
+    f.names.as_ref().map_or(0, Vec::len)
+}
+
 // Fine: `len` has an accessor that reads it whatever `kind` is.
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
@@ -275,6 +340,12 @@ fn main() {
     let s = subproc(core::ptr::null_mut());
     let _ = (dispatch(&c), dispatch(&s), captured(&c), format!("{c:?}"));
     let _ = (apply(&no_request()), apply(&with_request(true)));
+    let mut j = job();
+    run(&mut j, 3);
+    let _ = finished(&j);
+    let mut f = folder();
+    scan(&mut f, vec![1], true);
+    let _ = sweep(&f);
     let [a, b] = bufs(9);
     let _ = (a.len(), b.heap_len());
     let [x, y, z] = addrs(3);

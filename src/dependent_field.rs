@@ -4,12 +4,12 @@ use crate::adt_facts::{has_fixed_repr, has_positional_fields, private_local_stru
 use crate::baseline::emit;
 use crate::enum_facts::{arm_variant, ctor_literal_variant};
 use clippy_utils::eq_expr_value;
-use clippy_utils::{in_automatically_derived, is_default_equivalent};
+use clippy_utils::{get_enclosing_block, in_automatically_derived, is_default_equivalent};
 use rustc_ast::LitKind;
 use rustc_hir::def_id::DefId;
 use rustc_hir::{
-    Arm, BinOpKind, Block, BorrowKind, Expr, ExprKind, Mutability, Node, Pat, PatExpr, PatExprKind,
-    PatKind, StmtKind, StructTailExpr, UnOp,
+    Arm, BinOpKind, Block, BorrowKind, Expr, ExprKind, HirId, Mutability, Node, Pat, PatExpr,
+    PatExprKind, PatKind, StmtKind, StructTailExpr, UnOp,
 };
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
@@ -31,11 +31,13 @@ rustc_session::declare_lint! {
     /// explicit `repr`, and only on proof: one read the lint cannot place
     /// under such a test — an accessor, a destructuring pattern, a `Debug`
     /// written by hand, a test on a copy of the sibling rather than the
-    /// sibling itself — keeps it quiet, as does a construction that gives
-    /// the field a real value beside another value of the sibling, and so
-    /// does a sibling that is never given the tested value by any literal or
-    /// assignment (the field is then dead, not dependent). Reads in derived
-    /// impls are not counted.
+    /// sibling itself — keeps it quiet. So does any write of a real value
+    /// outside that case: a construction that gives the field one beside
+    /// another value of the sibling, or an assignment to it neither under
+    /// the test nor in a block that also assigns the sibling that value. A
+    /// sibling never given the tested value by any literal or assignment
+    /// keeps it quiet too (the field is then dead, not dependent). Reads in
+    /// derived impls are not counted.
     pub DEPENDENT_FIELD,
     Warn,
     "a field that only means something when a sibling field has one value"
@@ -83,6 +85,10 @@ pub struct DependentField {
     /// Fields assigned after construction, whose values the sites do not
     /// bound.
     assigned: HashSet<(DefId, Symbol)>,
+    /// (struct, field) -> per assignment of a real value, the sibling tests
+    /// dominating it plus the sibling values assigned beside it in the same
+    /// block: the cases that write can belong to.
+    writes: HashMap<(DefId, Symbol), Vec<HashSet<Test>>>,
 }
 
 rustc_session::impl_lint_pass!(DependentField => [DEPENDENT_FIELD]);
@@ -301,7 +307,7 @@ fn preceding_guards(
     cx: &LateContext<'_>,
     base: &Expr<'_>,
     block: &Block<'_>,
-    child: rustc_hir::HirId,
+    child: HirId,
     out: &mut HashSet<Test>,
 ) {
     let pos = block
@@ -390,6 +396,23 @@ fn dominating_tests(cx: &LateContext<'_>, read: &Expr<'_>, base: &Expr<'_>) -> H
     out
 }
 
+/// The `<base>.g = <value>` assignments among the statements of the block
+/// enclosing `at`: writes that put the struct into a case at the same step.
+fn assigned_beside(cx: &LateContext<'_>, base: &Expr<'_>, at: HirId, out: &mut HashSet<Test>) {
+    let Some(block) = get_enclosing_block(cx, at) else {
+        return;
+    };
+    for stmt in block.stmts {
+        if let StmtKind::Semi(e) | StmtKind::Expr(e) = stmt.kind
+            && let ExprKind::Assign(lhs, rhs, _) = e.kind
+            && let Some(sibling) = sibling_of(cx, base, lhs)
+            && let Some(value) = expr_value(cx, rhs)
+        {
+            out.insert(Test { sibling, value });
+        }
+    }
+}
+
 impl DependentField {
     fn record_read(&mut self, adt: DefId, field: Symbol, tests: HashSet<Test>) {
         self.reads.entry((adt, field)).or_default().push(tests);
@@ -430,10 +453,18 @@ impl<'tcx> LateLintPass<'tcx> for DependentField {
                 // `base.f = ..` writes; everything else, `base.f += ..` and
                 // `&mut base.f` included, reads.
                 if let Node::Expr(parent) = cx.tcx.parent_hir_node(expr.hir_id)
-                    && let ExprKind::Assign(lhs, ..) = parent.kind
+                    && let ExprKind::Assign(lhs, rhs, _) = parent.kind
                     && lhs.hir_id == expr.hir_id
                 {
                     self.assigned.insert((adt.did(), ident.name));
+                    if !is_placeholder(cx, rhs) {
+                        let mut cases = dominating_tests(cx, expr, base);
+                        assigned_beside(cx, base, parent.hir_id, &mut cases);
+                        self.writes
+                            .entry((adt.did(), ident.name))
+                            .or_default()
+                            .push(cases);
+                    }
                     return;
                 }
                 let tests = dominating_tests(cx, expr, base);
@@ -495,6 +526,15 @@ impl<'tcx> LateLintPass<'tcx> for DependentField {
                             .is_some_and(|i| i.value.is_none_or(|v| v == test.value))
                     });
                 if !reached {
+                    continue;
+                }
+                // Every real value assigned later goes in under the test or
+                // together with the sibling being set to that case.
+                let writes = self
+                    .writes
+                    .get(&(*did, *field))
+                    .map_or(&[][..], Vec::as_slice);
+                if !writes.iter().all(|cases| cases.contains(&test)) {
                     continue;
                 }
                 // Sites that give the sibling some other spelled-out value.
