@@ -1,120 +1,120 @@
-warning: `write_pidfile` reports `SysError` only as `false`, and this call drops the `false`: the failure can no longer be observed anywhere
+warning: `write_pidfile` turns its `SysError` into `false`, and this call ignores the `false`, so a failure inside `write_pidfile` is silently treated as success
   --> $DIR/error_collapsed_to_bool.rs:23:5
    |
 LL |     write_pidfile(buf);
    |     ^^^^^^^^^^^^^^^^^^
    |
-note: the error becomes `false` here, and nothing else is done with it
+note: the error becomes `false` here
   --> $DIR/error_collapsed_to_bool.rs:17:9
    |
 LL |         Err(_) => false,
    |         ^^^^^^^^^^^^^^^
-   = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
+   = help: make `write_pidfile` return the `Result` and decide here what a failure means; failing that, mark it `#[must_use]` so this call cannot drop the answer
    = note: `#[warn(error_collapsed_to_bool)]` on by default
 
-warning: `write_pidfile` reports `SysError` only as `false`, and this call drops the `false`: the failure can no longer be observed anywhere
+warning: `write_pidfile` turns its `SysError` into `false`, and this call ignores the `false`, so a failure inside `write_pidfile` is silently treated as success
   --> $DIR/error_collapsed_to_bool.rs:28:13
    |
 LL |     let _ = write_pidfile(buf);
    |             ^^^^^^^^^^^^^^^^^^
    |
-note: the error becomes `false` here, and nothing else is done with it
+note: the error becomes `false` here
   --> $DIR/error_collapsed_to_bool.rs:17:9
    |
 LL |         Err(_) => false,
    |         ^^^^^^^^^^^^^^^
-   = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
+   = help: make `write_pidfile` return the `Result` and decide here what a failure means; failing that, mark it `#[must_use]` so this call cannot drop the answer
 
-warning: `set_mode` reports `SysError` only as `false`, and this call drops the `false`: the failure can no longer be observed anywhere
+warning: `set_mode` turns its `SysError` into `false`, and this call ignores the `false`, so a failure inside `set_mode` is silently treated as success
   --> $DIR/error_collapsed_to_bool.rs:43:13
    |
 LL |     let _ = set_mode(buf);
    |             ^^^^^^^^^^^^^
    |
-note: the error becomes `false` here, and nothing else is done with it
+note: the error becomes `false` here
   --> $DIR/error_collapsed_to_bool.rs:38:5
    |
 LL |     sys_write(buf, b"m").is_ok()
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
+   = help: make `set_mode` return the `Result` and decide here what a failure means; failing that, mark it `#[must_use]` so this call cannot drop the answer
 
-warning: `sync_dir` reports `SysError` only as `false`, and this call drops the `false`: the failure can no longer be observed anywhere
+warning: `sync_dir` turns its `SysError` into `false`, and this call ignores the `false`, so a failure inside `sync_dir` is silently treated as success
   --> $DIR/error_collapsed_to_bool.rs:58:5
    |
 LL |     sync_dir(buf);
    |     ^^^^^^^^^^^^^
    |
-note: the error becomes `false` here, and nothing else is done with it
+note: the error becomes `false` here
   --> $DIR/error_collapsed_to_bool.rs:50:9
    |
 LL |         return false;
    |         ^^^^^^^^^^^^
-   = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
+   = help: make `sync_dir` return the `Result` and decide here what a failure means; failing that, mark it `#[must_use]` so this call cannot drop the answer
 
-warning: `reserve` reports `SysError` only as `false`, and this call drops the `false`: the failure can no longer be observed anywhere
+warning: `reserve` turns its `SysError` into `false`, and this call ignores the `false`, so a failure inside `reserve` is silently treated as success
   --> $DIR/error_collapsed_to_bool.rs:71:13
    |
 LL |     let _ = reserve(buf);
    |             ^^^^^^^^^^^^
    |
-note: the error becomes `false` here, and nothing else is done with it
+note: the error becomes `false` here
   --> $DIR/error_collapsed_to_bool.rs:64:9
    |
 LL |         return false;
    |         ^^^^^^^^^^^^
-   = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
+   = help: make `reserve` return the `Result` and decide here what a failure means; failing that, mark it `#[must_use]` so this call cannot drop the answer
 
-warning: `open_slot` reports `SysError` only as `None`, and this call drops the `None`: the failure can no longer be observed anywhere
+warning: `open_slot` turns its `SysError` into `None`, and this call ignores the `None`, so a failure inside `open_slot` is silently treated as success
   --> $DIR/error_collapsed_to_bool.rs:82:5
    |
 LL |     open_slot(buf);
    |     ^^^^^^^^^^^^^^
    |
-note: the error becomes `None` here, and nothing else is done with it
+note: the error becomes `None` here
   --> $DIR/error_collapsed_to_bool.rs:76:13
    |
 LL |     let n = sys_write(buf, b"o").ok()?;
    |             ^^^^^^^^^^^^^^^^^^^^^^^^^
-   = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
+   = help: make `open_slot` return the `Result` and decide here what a failure means; failing that, mark it `#[must_use]` so this call cannot drop the answer
 
-warning: `probe_slot` reports `SysError` only as `None`, and this call drops the `None`: the failure can no longer be observed anywhere
+warning: `probe_slot` turns its `SysError` into `None`, and this call ignores the `None`, so a failure inside `probe_slot` is silently treated as success
   --> $DIR/error_collapsed_to_bool.rs:112:5
    |
 LL |     probe_slot(buf);
    |     ^^^^^^^^^^^^^^^
    |
-note: the error becomes `None` here, and nothing else is done with it
+note: the error becomes `None` here
   --> $DIR/error_collapsed_to_bool.rs:106:9
    |
 LL |         None
    |         ^^^^
-   = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
+   = help: make `probe_slot` return the `Result` and decide here what a failure means; failing that, mark it `#[must_use]` so this call cannot drop the answer
 
-warning: `fill` reports `SysError` only as `false`, and this call drops the `false`: the failure can no longer be observed anywhere
+warning: `fill` turns its `SysError` into `false`, and this call ignores the `false`, so a failure inside `fill` is silently treated as success
   --> $DIR/error_collapsed_to_bool.rs:179:5
    |
 LL |     fill(buf);
    |     ^^^^^^^^^
    |
-note: the error becomes `false` here, and nothing else is done with it
+note: the error becomes `false` here
   --> $DIR/error_collapsed_to_bool.rs:168:13
    |
 LL |             return false;
    |             ^^^^^^^^^^^^
-   = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
+   = help: make `fill` return the `Result` and decide here what a failure means; failing that, mark it `#[must_use]` so this call cannot drop the answer
 
-warning: `is_digit` reports `&str` only as `false`, and this call drops the `false`: the failure can no longer be observed anywhere
+warning: `is_digit` turns its `&str` into `false`, and this call ignores the `false`, so a failure inside `is_digit` is silently treated as success
   --> $DIR/error_collapsed_to_bool.rs:197:13
    |
 LL |     let _ = is_digit("x");
    |             ^^^^^^^^^^^^^
    |
-note: the error becomes `false` here, and nothing else is done with it
+note: the error becomes `false` here
   --> $DIR/error_collapsed_to_bool.rs:192:5
    |
 LL |     parse_digit(s).is_ok()
    |     ^^^^^^^^^^^^^^^^^^^^^^
-   = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
+   = help: make `is_digit` return the `Result` and decide here what a failure means; failing that, mark it `#[must_use]` so this call cannot drop the answer
 
 warning: 9 warnings emitted
 

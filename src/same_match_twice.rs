@@ -10,13 +10,12 @@ use crate::baseline::emit_with_note;
 use crate::hir_clone::{expr_hash, exprs_equal};
 
 rustc_session::declare_lint! {
-    /// Flags a `match` over an enum that is written out a second time, arm
-    /// for arm, somewhere else in the crate: same scrutinee type, same
-    /// patterns, same arm bodies up to the names of the locals they read. A
-    /// mapping from variants to values or actions that exists in two places
-    /// is a method the enum does not have; the two copies are kept in step by
-    /// hand, and a variant added later is handled in whichever copy the
-    /// author remembers.
+    /// Flags a `match` over an enum that repeats another one somewhere else
+    /// in the crate arm for arm: same scrutinee type, same patterns, same arm
+    /// bodies up to the names of the locals they read. The same table from
+    /// variants to results exists twice, which is a method the enum does not
+    /// have; a change to one copy silently misses the other, and a variant
+    /// added later is handled in whichever copy the author remembers.
     ///
     /// Only matches with at least two arms that name a pattern count (a
     /// `_`/binding catch-all plus one arm is a test, not a table), and only
@@ -119,17 +118,17 @@ impl<'tcx> LateLintPass<'tcx> for SameMatchTwice {
                 continue;
             }
             reported.push(span);
+            let name = cx.tcx.def_path_str(adt);
             emit_with_note(
                 cx,
                 SAME_MATCH_TWICE,
                 span,
                 format!(
-                    "this `match` on `{}` is written out arm for arm a second time",
-                    cx.tcx.def_path_str(adt),
+                    "this `match` on `{name}` repeats an earlier one arm for arm, so the same table from variants to results exists twice and a change to one copy silently misses the other"
                 ),
                 earlier,
-                "the same match is here",
-                "the mapping lives in two places kept in step by hand; a method on the enum states it once",
+                "the other copy",
+                format!("move the mapping into a method on `{name}` and call it from both places"),
             );
         }
     }

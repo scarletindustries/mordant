@@ -6,12 +6,14 @@ use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 
 use crate::adt_facts::inside_own_trait_impl;
-use crate::baseline::emit;
+use crate::baseline::emit_with_note;
 use crate::enum_facts::{arm_variant, private_enum_of};
 
 rustc_session::declare_lint! {
-    /// Flags a crate-private enum variant that is constructed somewhere but
-    /// never named by a pattern outside the enum's own trait impls. Trait
+    /// Flags a crate-private enum variant that is built somewhere but never
+    /// singled out by a `match` arm or other pattern outside the enum's own
+    /// trait impls, so whatever it carries is never read and it is only ever
+    /// handled by a catch-all. Trait
     /// impls (`Display`, `Debug`, `From`, derives) must match every variant to
     /// exist, so they prove nothing; a pattern anywhere else, including the
     /// enum's own inherent methods, is the crate reading the structure. An
@@ -146,16 +148,20 @@ impl<'tcx> LateLintPass<'tcx> for UnreadErrorVariant {
         }
         unread.sort_by_key(|(span, ..)| span.lo());
         for (span, variant, enum_did) in unread {
-            emit(
+            let path = cx.tcx.def_path_str(variant);
+            let owner = cx.tcx.item_name(enum_did);
+            emit_with_note(
                 cx,
                 UNREAD_ERROR_VARIANT,
                 span,
                 format!(
-                    "`{}` is constructed here, but no pattern outside `{}`'s trait impls ever names it",
-                    cx.tcx.def_path_str(variant),
-                    cx.tcx.item_name(enum_did),
+                    "`{path}` is constructed here, but no `match` arm or pattern anywhere (outside `{owner}`'s own trait impls) ever singles it out, so whatever it carries is never read and it is only ever handled by a catch-all"
                 ),
-                "the variant's structure is never read; handle it distinctly or collapse it into another variant",
+                cx.tcx.def_span(variant),
+                "the variant, which nothing matches on",
+                format!(
+                    "add an arm for `{path}` where `{owner}` is matched, or fold it into the variant it is currently lumped with"
+                ),
             );
         }
     }

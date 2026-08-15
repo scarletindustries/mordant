@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::adt_facts::{has_fixed_repr, has_positional_fields, private_local_struct, struct_field};
-use crate::baseline::emit;
+use crate::baseline::emit_with_note;
 use crate::enum_facts::{arm_variant, ctor_literal_variant};
 use clippy_utils::eq_expr_value;
 use clippy_utils::{get_enclosing_block, in_automatically_derived, is_default_equivalent};
@@ -17,16 +17,16 @@ use rustc_middle::ty::adjustment::{Adjust, AutoBorrow, AutoBorrowMutability};
 use rustc_span::{Span, Symbol, SyntaxContext, sym};
 
 rustc_session::declare_lint! {
-    /// Flags a struct field that is read only where a sibling field is known
-    /// to hold one particular value — every read in the crate sits under an
-    /// `if`, `match`, `let .. else` or diverging guard that tests the sibling
-    /// against the same variant or literal — while a construction site that
-    /// gives the sibling any other value fills the field with a placeholder
+    /// Flags a struct field that only means something when a sibling field
+    /// has one particular value: every read in the crate sits under an `if`,
+    /// `match`, `let .. else` or diverging guard that tests the sibling
+    /// against the same variant or literal, and every construction that
+    /// gives the sibling another value fills the field with a placeholder
     /// (`None`, `0`, `""`, `false`, `Default::default()`, a null pointer).
-    /// The field is the payload of one case of the sibling, stored flat: the
-    /// struct lets every other case carry a value that means nothing and lets
-    /// any new reader use it without the test. An enum whose variant carries
-    /// the field cannot be built or read that way.
+    /// The struct carries the field in every case anyway, so any new reader
+    /// can use it without the test. Making that case of the sibling an enum
+    /// variant that carries the field leaves the other cases nothing to fill
+    /// in or misread.
     ///
     /// Only fires on structs private to the crate with named fields and no
     /// explicit `repr`, and only on proof: one read the lint cannot place
@@ -78,11 +78,17 @@ struct Init {
     placeholder: bool,
 }
 
+/// One read of a field: where it is and the sibling tests that dominate it.
+/// An empty set is a read nothing is known at.
+struct Read {
+    at: Span,
+    tests: HashSet<Test>,
+}
+
 #[derive(Default)]
 pub struct FieldValidOnlyWhen {
-    /// (struct, field) -> per read, the sibling tests that dominate it. An
-    /// empty set is a read nothing is known at.
-    reads: HashMap<(DefId, Symbol), Vec<HashSet<Test>>>,
+    /// (struct, field) -> its reads.
+    reads: HashMap<(DefId, Symbol), Vec<Read>>,
     /// struct -> per literal construction site, what each named field got.
     sites: HashMap<DefId, Vec<HashMap<Symbol, Init>>>,
     /// (struct, field) -> the values assigned to it after construction
@@ -436,8 +442,11 @@ fn mutated_in_place(cx: &LateContext<'_>, place: &Expr<'_>, parent: Node<'_>) ->
 }
 
 impl FieldValidOnlyWhen {
-    fn record_read(&mut self, adt: DefId, field: Symbol, tests: HashSet<Test>) {
-        self.reads.entry((adt, field)).or_default().push(tests);
+    fn record_read(&mut self, adt: DefId, field: Symbol, at: Span, tests: HashSet<Test>) {
+        self.reads
+            .entry((adt, field))
+            .or_default()
+            .push(Read { at, tests });
     }
 }
 
@@ -515,7 +524,7 @@ impl<'tcx> LateLintPass<'tcx> for FieldValidOnlyWhen {
                         .insert(None);
                 }
                 let tests = dominating_tests(cx, expr, base);
-                self.record_read(adt.did(), ident.name, tests);
+                self.record_read(adt.did(), ident.name, expr.span, tests);
             }
             _ => {}
         }
@@ -535,16 +544,16 @@ impl<'tcx> LateLintPass<'tcx> for FieldValidOnlyWhen {
             return;
         }
         for f in fields {
-            self.record_read(adt.did(), f.ident.name, HashSet::new());
+            self.record_read(adt.did(), f.ident.name, f.span, HashSet::new());
         }
     }
 
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
-        let mut findings: Vec<(Span, String)> = Vec::new();
+        let mut findings: Vec<(Span, String, Span, String)> = Vec::new();
         for ((did, field), reads) in &self.reads {
             // The tests every read agrees on; one bare read empties it.
             let mut common: Option<HashSet<Test>> = None;
-            for tests in reads {
+            for Read { tests, .. } in reads {
                 common = Some(match common {
                     None => tests.clone(),
                     Some(c) => c.intersection(tests).copied().collect(),
@@ -607,39 +616,53 @@ impl<'tcx> LateLintPass<'tcx> for FieldValidOnlyWhen {
                 let Some(fdef) = struct_field(adt, *field) else {
                     continue;
                 };
-                let holds = match test.value {
-                    Value::Variant(v) => format!(
-                        "{} == {}::{}",
-                        test.sibling,
-                        cx.tcx.item_name(cx.tcx.parent(v)),
-                        cx.tcx.item_name(v)
-                    ),
-                    Value::Bool(true) => test.sibling.to_string(),
-                    Value::Bool(false) => format!("!{}", test.sibling),
-                    Value::Int(n) => format!("{} == {n}", test.sibling),
+                let sibling = test.sibling;
+                let (holds, case) = match test.value {
+                    Value::Variant(v) => {
+                        let variant = cx.tcx.item_name(v);
+                        (
+                            format!(
+                                "{sibling} == {}::{variant}",
+                                cx.tcx.item_name(cx.tcx.parent(v))
+                            ),
+                            format!("`{variant}`"),
+                        )
+                    }
+                    Value::Bool(true) => (sibling.to_string(), "`true`".to_owned()),
+                    Value::Bool(false) => (format!("!{sibling}"), "`false`".to_owned()),
+                    Value::Int(n) => (format!("{sibling} == {n}"), format!("`{n}`")),
+                };
+                let first_read = reads.iter().map(|r| r.at).min_by_key(|at| at.lo());
+                let Some(first_read) = first_read else {
+                    continue;
                 };
                 findings.push((
                     cx.tcx.def_span(fdef.did),
                     format!(
-                        "`{field}` is only read where `{holds}` has been tested ({} read{}), and every `{}` made with another `{}` fills it with a placeholder ({placeholders} site{})",
+                        "`{field}` is read only after testing `{holds}` ({} read{}) and gets a placeholder wherever `{}` is constructed with another `{sibling}` ({placeholders} site{}), so it only means something in that one case, yet the struct carries it in all of them",
                         reads.len(),
                         if reads.len() == 1 { "" } else { "s" },
                         cx.tcx.item_name(*did),
-                        test.sibling,
                         if placeholders == 1 { "" } else { "s" },
+                    ),
+                    first_read,
+                    format!(
+                        "turn the {case} case of `{sibling}` into an enum variant that carries `{field}`, and delete the flat field; the other cases then have nothing to fill in or misread"
                     ),
                 ));
                 break;
             }
         }
-        findings.sort_by_key(|(span, _)| span.lo());
-        for (span, msg) in findings {
-            emit(
+        findings.sort_by_key(|(span, ..)| span.lo());
+        for (span, msg, read, help) in findings {
+            emit_with_note(
                 cx,
                 FIELD_VALID_ONLY_WHEN,
                 span,
                 msg,
-                "the field is the payload of that one case, stored flat; an enum variant carrying it leaves the other cases nothing to fill in or misread",
+                read,
+                "one of the reads, under that test",
+                help,
             );
         }
     }

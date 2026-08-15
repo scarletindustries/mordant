@@ -9,13 +9,14 @@ use rustc_span::Span;
 use rustc_span::def_id::LocalDefId;
 
 use crate::MordantConfig;
-use crate::baseline::emit;
+use crate::baseline::{emit, emit_with_note};
 use crate::hir_shapes::{callee_of, def_path_names};
 
 rustc_session::declare_lint! {
-    /// Config-declared reachability bans: "from `scheduler::pick`, no call
-    /// path may reach allocation, locking, or panic". On a violation the
-    /// finding prints the witness path, every edge of which is a real call
+    /// Flags a function that can call something this project's
+    /// `forbidden-reach` config bans from it ("from `scheduler::pick`, no
+    /// call path may reach allocation, locking, or panic"), printing the
+    /// chain of calls that gets there, every edge of which is a real call
     /// expression in this crate. Dynamic dispatch and function pointers are
     /// invisible to the walk, so absence of a finding proves nothing — but a
     /// finding is a concrete path that exists.
@@ -160,20 +161,30 @@ impl<'tcx> LateLintPass<'tcx> for ForbiddenReach {
                     2 => " (and 1 further call site to it)".to_string(),
                     n => format!(" (and {} further call sites to it)", n - 1),
                 };
-                emit(
-                    cx,
-                    FORBIDDEN_REACH,
-                    root_span,
-                    format!(
-                        "`{}` reaches `{}`, which this project bans from it: {}{}",
-                        cx.tcx.def_path_str(root),
-                        cx.tcx.def_path_str(banned),
-                        chain.join(" -> "),
-                        more,
-                    ),
-                    "one finding per banned definition reached; every arrow is a real call in \
-                     this crate, so break the chain or amend the rule",
+                let (root_name, banned_name) =
+                    (cx.tcx.def_path_str(root), cx.tcx.def_path_str(banned));
+                let msg = format!(
+                    "`{root_name}` can call `{banned_name}`, which this project's `forbidden-reach` \
+                     config bans from it, through {}{more}",
+                    chain.join(" -> "),
                 );
+                let help = format!(
+                    "break that chain (every arrow is a real call in this crate), or if the call \
+                     is acceptable after all, amend the `forbidden-reach` rule for `{}`",
+                    rule.from,
+                );
+                match parent.get(&banned) {
+                    Some(&(_, at)) => emit_with_note(
+                        cx,
+                        FORBIDDEN_REACH,
+                        root_span,
+                        msg,
+                        at,
+                        format!("the last call in the chain, reaching `{banned_name}`"),
+                        help,
+                    ),
+                    None => emit(cx, FORBIDDEN_REACH, root_span, msg, help),
+                }
             }
         }
     }

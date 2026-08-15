@@ -14,16 +14,15 @@ use rustc_middle::ty::{self, Ty, TypeckResults};
 use rustc_span::{Span, Symbol, sym};
 
 use crate::adt_facts::{field_ty, has_fixed_repr, has_positional_fields, struct_field};
-use crate::baseline::emit;
+use crate::baseline::emit_with_note;
 use crate::hir_shapes::{Callee, callee_of, peel_blocks_unsafe};
 
 rustc_session::declare_lint! {
-    /// Flags a string or byte-string field or local whose every value the
-    /// code ever stores is one of a fixed set of literals, and which is then
-    /// compared against literals to decide what to do. The set is an enum
-    /// the type does not declare: a misspelt literal on either side compiles,
-    /// a new state needs every comparison found by hand, and nothing says
-    /// which strings are possible.
+    /// Flags a string or byte-string field or local that only ever holds one
+    /// of a fixed set of literals and is read by comparing against literals:
+    /// an enum spelled as a string, so a misspelt state on either side still
+    /// compiles, a new state needs every comparison found by hand, and
+    /// nothing says which strings are possible.
     ///
     /// Only fires where every store is visible: a local, or a field no other
     /// crate can name (the struct or the field is private to this one). Every
@@ -51,7 +50,8 @@ struct Facts {
     open: bool,
     stores: usize,
     values: BTreeSet<String>,
-    compared: bool,
+    /// The first comparison against a literal.
+    compared: Option<Span>,
 }
 
 #[derive(Default)]
@@ -332,10 +332,15 @@ impl StringlyState {
         }
     }
 
+    fn compared(&mut self, slot: Slot, at: Span) {
+        self.facts(slot).compared.get_or_insert(at);
+    }
+
     /// `a == "lit"`, `a != b"lit"`, either way round.
     fn note_comparison<'tcx>(
         &mut self,
         cx: &LateContext<'tcx>,
+        at: Span,
         l: &'tcx Expr<'tcx>,
         r: &'tcx Expr<'tcx>,
     ) {
@@ -343,7 +348,7 @@ impl StringlyState {
             if is_literal_expr(other)
                 && let Some(slot) = read_slot(cx, place)
             {
-                self.facts(slot).compared = true;
+                self.compared(slot, at);
             }
         }
     }
@@ -379,7 +384,7 @@ impl StringlyState {
         }
         for o in operands {
             if let Some(slot) = read_slot(cx, o) {
-                self.facts(slot).compared = true;
+                self.compared(slot, e.span);
             }
         }
     }
@@ -387,17 +392,24 @@ impl StringlyState {
     fn note_match<'tcx>(
         &mut self,
         cx: &LateContext<'tcx>,
+        at: Span,
         scrut: &'tcx Expr<'tcx>,
         arms: &'tcx [Arm<'tcx>],
     ) {
         if let Some(slot) = read_slot(cx, scrut)
             && arms.iter().any(|a| pat_has_literal(a.pat))
         {
-            self.facts(slot).compared = true;
+            self.compared(slot, at);
         }
     }
 
-    fn message(&self, cx: &LateContext<'_>, slot: Slot, facts: &Facts) -> Option<(Span, String)> {
+    /// Where to report, the message, and the help.
+    fn message(
+        &self,
+        cx: &LateContext<'_>,
+        slot: Slot,
+        facts: &Facts,
+    ) -> Option<(Span, String, String)> {
         let (span, name, scope) = match slot {
             Slot::Field(did, name) => {
                 let field = struct_field(cx.tcx.adt_def(did), name)?;
@@ -422,13 +434,17 @@ impl StringlyState {
         Some((
             span,
             format!(
-                "every value stored in `{}` is one of {} ({} {}{}), and it is read by comparing \
-                 against literals",
-                name,
+                "`{name}` only ever holds one of {} ({} {}{}) and is read by comparing against \
+                 literals, so it is an enum spelled as a string and a misspelt state still \
+                 compiles",
                 list.join(", "),
                 facts.stores,
                 if facts.stores == 1 { "store" } else { "stores" },
                 scope,
+            ),
+            format!(
+                "declare an enum with a variant per string and store that in `{name}`; keep the \
+                 text in an `as_str` method for wherever it is printed"
             ),
         ))
     }
@@ -528,10 +544,10 @@ impl<'tcx> LateLintPass<'tcx> for StringlyState {
                 }
             }
             ExprKind::Binary(op, l, r) if matches!(op.node, BinOpKind::Eq | BinOpKind::Ne) => {
-                self.note_comparison(cx, l, r);
+                self.note_comparison(cx, expr.span, l, r);
             }
             ExprKind::Match(scrut, arms, MatchSource::Normal | MatchSource::Postfix) => {
-                self.note_match(cx, scrut, arms);
+                self.note_match(cx, scrut.span, scrut, arms);
             }
             ExprKind::Call(..) | ExprKind::MethodCall(..) => self.note_comparing_call(cx, expr),
             _ => {}
@@ -539,21 +555,26 @@ impl<'tcx> LateLintPass<'tcx> for StringlyState {
     }
 
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
-        let mut findings: Vec<(Span, String)> = self
+        let mut findings: Vec<(Span, String, Span, String)> = self
             .slots
             .iter()
-            .filter(|(_, f)| !f.open && f.compared && f.values.len() >= 2)
-            .filter_map(|(slot, f)| self.message(cx, *slot, f))
+            .filter(|(_, f)| !f.open && f.values.len() >= 2)
+            .filter_map(|(slot, f)| {
+                let compared = f.compared?;
+                let (span, msg, help) = self.message(cx, *slot, f)?;
+                Some((span, msg, compared, help))
+            })
             .collect();
-        findings.sort_by_key(|(span, _)| span.lo());
-        for (span, msg) in findings {
-            emit(
+        findings.sort_by_key(|(span, ..)| span.lo());
+        for (span, msg, compared, help) in findings {
+            emit_with_note(
                 cx,
                 STRINGLY_STATE,
                 span,
                 msg,
-                "these strings are the variants of an enum; store the enum and keep the text in an \
-                 `as_str` method, so a misspelt state is a compile error",
+                compared,
+                "one of the comparisons against a literal",
+                help,
             );
         }
     }

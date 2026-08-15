@@ -1,19 +1,19 @@
-warning: this message names `frame_lock`, which appears nowhere in this file's code, this crate, or any crate it links
+warning: this message mentions `frame_lock`, but nothing by that name exists any more in this file's code, this crate, or any crate it links, so whoever hits this panic is sent looking for something that is gone
   --> $DIR/stale_panic_message.rs:12:28
    |
 LL |     *t.slots.get(i).expect("guarded upstream by `frame_lock`")
    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-   = help: whoever reads this at a crash site will search for a name that no longer exists; update the message
+   = help: rewrite the message in terms of whatever replaced `frame_lock`
    = note: `#[warn(stale_panic_message)]` on by default
 
-warning: this message names `normalizer`, which appears nowhere in this file's code, this crate, or any crate it links
+warning: this message mentions `normalizer`, but nothing by that name exists any more in this file's code, this crate, or any crate it links, so whoever hits this panic is sent looking for something that is gone
   --> $DIR/stale_panic_message.rs:18:27
    |
 LL |         _ => unreachable!("`normalizer` rejects nonzero values before this"),
    |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-   = help: whoever reads this at a crash site will search for a name that no longer exists; update the message
+   = help: rewrite the message in terms of whatever replaced `normalizer`
 
 warning: 2 warnings emitted
 

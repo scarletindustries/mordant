@@ -20,14 +20,14 @@ use crate::hir_shapes::{
 };
 
 rustc_session::declare_lint! {
-    /// A fact read off a field of `self` (`let n = self.items.len()`, `let p =
-    /// self.buf.as_ptr()`, `let had = self.cb.is_some()`), then a statement
-    /// that hands control to code this function cannot see, then a later
-    /// statement that acts on the same field as if the fact still held:
+    /// Flags a value read off a field of `self` (`let n = self.items.len()`,
+    /// `let p = self.buf.as_ptr()`, `let had = self.cb.is_some()`), then a
+    /// call that can run code with access to `self`, then a later statement
+    /// that uses the value as if the field could not have changed in between:
     /// indexing or removing at `n`, unwrapping under `had`, or touching `p`
-    /// at all. Whatever ran in between had `self` available and may have
-    /// pushed, popped, taken, or reallocated; the panic or dangling access
-    /// only shows up on the re-entrant path, which is the one tests skip.
+    /// at all. Whatever ran in between may have pushed, popped, taken, or
+    /// reallocated; the panic or dangling access only shows up on the
+    /// re-entrant path, which is the one tests skip.
     ///
     /// The re-entrant statements are calls through a closure or fn-pointer
     /// parameter or field, calls on a `dyn Trait` receiver, `.await`, and
@@ -192,14 +192,14 @@ impl Fact {
         }
     }
 
-    fn help(self) -> &'static str {
+    fn help(self, name: Symbol, place: &str) -> String {
         match self {
-            Fact::Count | Fact::Flag => {
-                "re-read the field after the call, or hold the item itself rather than its position"
-            }
-            Fact::Pointer => {
-                "take the pointer after the call, or keep what it points at alive across it by value"
-            }
+            Fact::Count | Fact::Flag => format!(
+                "re-read `{place}` after that call instead of reusing `{name}`, or hold the element itself rather than its position across the call"
+            ),
+            Fact::Pointer => format!(
+                "take the pointer from `{place}` again after that call, or keep the data alive across it by value"
+            ),
         }
     }
 }
@@ -753,10 +753,10 @@ impl<'tcx> LateLintPass<'tcx> for StaleAcrossReentry {
                             let name = t.name;
                             let msg = match t.fact {
                                 Fact::Count | Fact::Flag => format!(
-                                    "`{name}` describes `{place}` as it stood before a call that can re-enter and change it"
+                                    "`{name}` was read off `{place}` before a call that can run code with access to `self`, and is used here as if `{place}` could not have changed in between"
                                 ),
                                 Fact::Pointer => format!(
-                                    "`{name}` points into `{place}` as it stood before a call that can re-enter and move or free it"
+                                    "`{name}` points into `{place}` as it was before a call that can run code with access to `self`, which may have moved or freed that buffer by the time `{name}` is used here"
                                 ),
                             };
                             emit_with_note(
@@ -765,8 +765,10 @@ impl<'tcx> LateLintPass<'tcx> for StaleAcrossReentry {
                                 at,
                                 msg,
                                 call,
-                                "control leaves this function here, with `self` reachable from whatever runs",
-                                t.fact.help(),
+                                format!(
+                                    "control leaves this function here, and whatever runs can reach `{place}`"
+                                ),
+                                t.fact.help(name, &place),
                             );
                             break;
                         }

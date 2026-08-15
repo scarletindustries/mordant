@@ -1,59 +1,59 @@
-warning: map keyed on `Span`, which this project declares is not an identity
+warning: this map is keyed on `Span`, and `Span` is listed in this project's `key-not-identity-types`: equal `Span`s need not mean the same thing, so distinct entries can collide
   --> $DIR/key_not_identity.rs:17:9
    |
 LL |         m.insert(*s, i);
    |         ^^^^^^^^^^^^^^^
    |
-   = help: key on the canonical identity of the thing this names
+   = help: key on what does identify the value: this project's `key-not-identity-fixes` names `FileId` as what makes a `Span` unambiguous, so put that in the key beside it
    = note: `#[warn(key_not_identity)]` on by default
 
-warning: map keyed on `Span`, which this project declares is not an identity
+warning: this map is keyed on `Span`, and `Span` is listed in this project's `key-not-identity-types`: equal `Span`s need not mean the same thing, so distinct entries can collide
   --> $DIR/key_not_identity.rs:23:5
    |
 LL |     m.get(&s).copied()
    |     ^^^^^^^^^
    |
-   = help: key on the canonical identity of the thing this names
+   = help: key on what does identify the value: this project's `key-not-identity-fixes` names `FileId` as what makes a `Span` unambiguous, so put that in the key beside it
 
-warning: map keyed on `to_bits()` of a float
+warning: this map is keyed on a float's `to_bits()`; for a NaN-boxed or interned value those bits are a pointer, so two equal values can land under different keys
   --> $DIR/key_not_identity.rs:29:21
    |
 LL |         pool.insert(c.to_bits(), i);
    |                     ^^^^^^^^^^^
    |
-   = help: for boxed or interned values the bits are a pointer, not the value; key on the canonical identity
+   = help: key on the value itself or its canonical handle, not on its bit pattern
 
-warning: map keyed on `to_bits()` of a float
+warning: this map is keyed on a float's `to_bits()`; for a NaN-boxed or interned value those bits are a pointer, so two equal values can land under different keys
   --> $DIR/key_not_identity.rs:36:17
    |
 LL |     seen.insert(x.to_bits());
    |                 ^^^^^^^^^^^
    |
-   = help: for boxed or interned values the bits are a pointer, not the value; key on the canonical identity
+   = help: key on the value itself or its canonical handle, not on its bit pattern
 
-warning: map keyed on a pointer cast to an integer
+warning: this map is keyed on a pointer cast to an integer, which names an allocation rather than a value: equal values at two addresses get two entries, and a freed-and-reused address aliases an old one
   --> $DIR/key_not_identity.rs:43:20
    |
 LL |         ids.insert(v.as_ptr() as usize, ());
    |                    ^^^^^^^^^^^^^^^^^^^
    |
-   = help: pointer bits name an allocation, not a value; key on the canonical identity
+   = help: key on the value, or on an id assigned when it is created, not on its address
 
-warning: map keyed on `to_raw()`, which this project declares is not an identity
+warning: this map is keyed on the result of `to_raw()`, which this project's `key-not-identity-methods` lists as not an identity, so equal things can land under different keys
   --> $DIR/key_not_identity.rs:59:18
    |
 LL |         m.insert(v.to_raw(), i);
    |                  ^^^^^^^^^^
    |
-   = help: key on the canonical identity of the thing this names
+   = help: key on the value's identity rather than on what `to_raw()` returns
 
-warning: map keyed on `(Span, u32)` carrying `Span`, which this project declares is not an identity
+warning: this map is keyed on `(Span, u32)`, which contains a `Span`, and `Span` is listed in this project's `key-not-identity-types`: equal `Span`s need not mean the same thing, so distinct entries can collide
   --> $DIR/key_not_identity.rs:76:9
    |
 LL |         m.insert((*s, 0u32), i);
    |         ^^^^^^^^^^^^^^^^^^^^^^^
    |
-   = help: key on the canonical identity of the thing this names
+   = help: key on what does identify the value: this project's `key-not-identity-fixes` names `FileId` as what makes a `Span` unambiguous, so put that in the key beside it
 
 warning: 7 warnings emitted
 

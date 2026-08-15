@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::adt_facts::{field_ty, struct_field};
-use crate::baseline::emit;
+use crate::baseline::emit_with_note;
 use crate::hir_shapes::{SelfField, assigned_adt_field, ends_in_return, peel_not, self_field};
 use rustc_hir::def_id::DefId;
 use rustc_hir::intravisit::FnKind;
@@ -12,11 +12,11 @@ use rustc_span::def_id::LocalDefId;
 use rustc_span::{Span, Symbol};
 
 rustc_session::declare_lint! {
-    /// Flags a bool field that two or more methods test and bail on at entry:
-    /// `if self.flag { return ... }` as the first statement. The ordering
-    /// invariant ("call X before Y") is enforced at runtime, per method, and
-    /// only where someone remembered. A type per state enforces it at compile
-    /// time everywhere.
+    /// Flags a bool field that two or more methods start by checking and
+    /// returning early on: `if self.flag { return ... }` as the first
+    /// statement. Whether those methods may be called is decided at runtime,
+    /// method by method, and only where someone remembered. A type per state
+    /// decides it at compile time everywhere.
     ///
     /// The field must also be written somewhere after construction: a flag
     /// that is only ever set in a literal (`is_server`, `minify`) is a role
@@ -29,7 +29,9 @@ rustc_session::declare_lint! {
 
 #[derive(Default)]
 pub struct RuntimeTypestate {
-    guards: HashMap<(DefId, Symbol), usize>,
+    /// (struct, field) -> how many methods bail on it at entry, and the
+    /// first such test.
+    guards: HashMap<(DefId, Symbol), (usize, Span)>,
     /// Fields assigned, compound-assigned, or mutably borrowed anywhere in
     /// the crate: the ones whose value is a state rather than a setting.
     written: HashSet<(DefId, Symbol)>,
@@ -101,27 +103,34 @@ impl<'tcx> LateLintPass<'tcx> for RuntimeTypestate {
             return;
         };
         if ends_in_return(then) {
-            *self.guards.entry((adt.did(), field)).or_default() += 1;
+            self.guards
+                .entry((adt.did(), field))
+                .or_insert((0, cond.span))
+                .0 += 1;
         }
     }
 
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
-        for ((did, field), count) in &self.guards {
+        for ((did, field), (count, first)) in &self.guards {
             if *count < 2 || !self.written.contains(&(*did, *field)) {
                 continue;
             }
             let Some(fdef) = struct_field(cx.tcx.adt_def(*did), *field) else {
                 continue;
             };
-            emit(
+            let owner = cx.tcx.def_path_str(*did);
+            emit_with_note(
                 cx,
                 RUNTIME_TYPESTATE,
                 cx.tcx.def_span(fdef.did),
                 format!(
-                    "`{field}` is tested and bailed on at the start of {count} methods of `{}`",
-                    cx.tcx.def_path_str(*did),
+                    "{count} methods of `{owner}` start by testing `{field}` and returning early, so whether they may be called yet is decided at runtime, method by method"
                 ),
-                "the ordering invariant lives at runtime; a separate type for the guarded state enforces it at compile time",
+                *first,
+                "the test at the top of one of those methods",
+                format!(
+                    "split `{owner}` into one type per state and put those {count} methods only on the type where `{field}` allows them; calling one too early is then a compile error"
+                ),
             );
         }
     }

@@ -14,19 +14,19 @@ use rustc_middle::ty::{self, Ty};
 use rustc_span::{Span, Symbol, sym};
 
 use crate::adt_facts::{field_ty, is_option_ty, struct_field};
-use crate::baseline::emit;
+use crate::baseline::emit_with_note;
 use crate::hir_shapes::{assigned_field, callee_of, peel_blocks_unsafe};
 
 rustc_session::declare_lint! {
-    /// Flags an integer struct field that the crate itself treats as
-    /// sometimes absent — some function compares it `==`/`!=` against
-    /// `T::MAX`, `-1`, or a constant named `INVALID`/`NONE`/`SENTINEL` — and
-    /// that another function indexes with (`v[x.f as usize]`, a slice range
-    /// end, `buf[off..off + len]`, `get_unchecked`) or offsets a pointer by,
-    /// with no test of the field anywhere in that function. One reader knows
-    /// the magic value means "none"; the other turns it into an out-of-bounds
-    /// index or a wild pointer. The type is `u32` when the value set is
-    /// `Option<u32>`, and only convention tells the readers apart.
+    /// Flags an integer struct field that can hold a sentinel — some
+    /// function compares it `==`/`!=` against `T::MAX`, `-1`, or a constant
+    /// named `INVALID`/`NONE`/`SENTINEL`, treating that value as "no value" —
+    /// and that another function indexes with (`v[x.f as usize]`, a slice
+    /// range end, `buf[off..off + len]`, `get_unchecked`) or offsets a pointer
+    /// by without any such test. One reader knows the magic value means
+    /// "none"; the other turns it into an out-of-range index or a wild
+    /// offset. The type is `u32` when the value set is `Option<u32>`, and only
+    /// convention tells the readers apart.
     ///
     /// Reported on the unchecked reader. A function counts as checking the
     /// field if it compares the field, or a local read off it, against
@@ -56,6 +56,8 @@ struct Evidence {
     /// How the first comparison seen spells the sentinel.
     spelling: String,
     compared: usize,
+    /// Where that first comparison is.
+    at: Option<Span>,
 }
 
 #[derive(Clone, Copy)]
@@ -325,10 +327,18 @@ impl SentinelInteger {
         }
     }
 
-    fn compared<'tcx>(&mut self, cx: &LateContext<'tcx>, field: Field, s: &Sentinel, ty: Ty<'tcx>) {
+    fn compared<'tcx>(
+        &mut self,
+        cx: &LateContext<'tcx>,
+        field: Field,
+        s: &Sentinel,
+        ty: Ty<'tcx>,
+        at: Span,
+    ) {
         let ev = self.evidence.entry(field).or_default();
         if ev.compared == 0 {
             ev.spelling = spelling(cx, s, ty);
+            ev.at = Some(at);
         }
         ev.compared += 1;
     }
@@ -346,13 +356,19 @@ impl SentinelInteger {
     }
 
     /// `l == r` / `l != r`, spelled as an operator or an `assert_eq!`.
-    fn equated<'tcx>(&mut self, cx: &LateContext<'tcx>, l: &'tcx Expr<'tcx>, r: &'tcx Expr<'tcx>) {
+    fn equated<'tcx>(
+        &mut self,
+        cx: &LateContext<'tcx>,
+        at: Span,
+        l: &'tcx Expr<'tcx>,
+        r: &'tcx Expr<'tcx>,
+    ) {
         for (a, b) in [(l, r), (r, l)] {
             let fields = self.tested(cx, a);
             if let Some(s) = sentinel_of(cx, b) {
                 let ty = cx.typeck_results().expr_ty(peel_blocks_unsafe(b));
                 for f in fields {
-                    self.compared(cx, f, &s, ty);
+                    self.compared(cx, f, &s, ty, at);
                 }
             }
         }
@@ -383,7 +399,7 @@ impl SentinelInteger {
             {
                 let ty = cx.typeck_results().node_type(leaf.hir_id);
                 for f in &fields {
-                    self.compared(cx, *f, &s, ty);
+                    self.compared(cx, *f, &s, ty, leaf.span);
                 }
             }
         }
@@ -521,7 +537,7 @@ impl<'tcx> LateLintPass<'tcx> for SentinelInteger {
         // `assert_eq!(a, b)` compares through match-arm bindings the operator
         // arm below cannot see back through; read its arguments directly.
         if let Some((l, r)) = Self::assert_eq_args(cx, expr) {
-            self.equated(cx, l, r);
+            self.equated(cx, expr.span, l, r);
         }
         match expr.kind {
             ExprKind::Struct(_, fields, _) => {
@@ -560,7 +576,7 @@ impl<'tcx> LateLintPass<'tcx> for SentinelInteger {
                 }
             }
             ExprKind::Binary(op, l, r) => match op.node {
-                BinOpKind::Eq | BinOpKind::Ne => self.equated(cx, l, r),
+                BinOpKind::Eq | BinOpKind::Ne => self.equated(cx, expr.span, l, r),
                 BinOpKind::Lt | BinOpKind::Le | BinOpKind::Gt | BinOpKind::Ge => {
                     self.tested(cx, l);
                     self.tested(cx, r);
@@ -602,14 +618,14 @@ impl<'tcx> LateLintPass<'tcx> for SentinelInteger {
     }
 
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
-        let mut findings: Vec<(Span, String)> = Vec::new();
+        let mut findings: Vec<(Span, String, Span, String, String)> = Vec::new();
         for (field, reads) in &self.reads {
             let Some(ev) = self.evidence.get(field) else {
                 continue;
             };
-            if ev.compared == 0 {
+            let Some(evidence_at) = ev.at else {
                 continue;
-            }
+            };
             // One report per unchecked function, at its first use.
             let mut first: HashMap<DefId, &Read> = HashMap::new();
             for read in reads {
@@ -626,37 +642,35 @@ impl<'tcx> LateLintPass<'tcx> for SentinelInteger {
                 if self.checks(body, *field) || self.callers_check(body, *field) {
                     continue;
                 }
-                let how = match read.how {
-                    Use::Index => "indexes with",
-                    Use::Offset => "offsets a pointer by",
+                let (how, becomes) = match read.how {
+                    Use::Index => ("indexes with", "an out-of-range index"),
+                    Use::Offset => ("offsets a pointer by", "a wild offset"),
                 };
                 let reader = match cx.tcx.opt_item_name(body) {
                     Some(name) => format!("`{name}`"),
                     None => "this body".to_owned(),
                 };
+                let (owner, name, sentinel) = (cx.tcx.item_name(field.0), field.1, &ev.spelling);
                 findings.push((
                     read.span,
                     format!(
-                        "sentinel `{}` can reach this use: {reader} {how} `{}.{}` and nothing in it tests the field, which the crate compares against that sentinel at {} other site{}",
-                        ev.spelling,
-                        cx.tcx.item_name(field.0),
-                        field.1,
+                        "`{owner}.{name}` can be `{sentinel}`, which {} other place{} in the crate test{} for as \"no value\", but {reader} {how} it here without any such test, so the sentinel becomes {becomes}",
                         ev.compared,
                         if ev.compared == 1 { "" } else { "s" },
+                        if ev.compared == 1 { "s" } else { "" },
+                    ),
+                    evidence_at,
+                    format!("one of the places that treats `{sentinel}` as \"no value\""),
+                    format!(
+                        "store `{name}` as an `Option` (over a `NonZero`/`NonMax` type to keep the size), so {reader} has to decide the empty case before it can use the number"
                     ),
                 ));
             }
         }
-        findings.sort_by_key(|(span, _)| span.lo());
-        findings.dedup_by_key(|(span, _)| *span);
-        for (span, msg) in findings {
-            emit(
-                cx,
-                SENTINEL_INTEGER,
-                span,
-                msg,
-                "the field's value set is `Option<int>`; store that (a `NonZero`/`NonMax` niche keeps the size) and no reader can index without deciding the empty case",
-            );
+        findings.sort_by_key(|(span, ..)| span.lo());
+        findings.dedup_by_key(|(span, ..)| *span);
+        for (span, msg, evidence_at, note, help) in findings {
+            emit_with_note(cx, SENTINEL_INTEGER, span, msg, evidence_at, note, help);
         }
     }
 }

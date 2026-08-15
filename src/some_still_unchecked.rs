@@ -19,12 +19,13 @@ rustc_session::declare_lint! {
     /// with the value that fails it handled exactly as the absent case is:
     /// `Some(x) if x.ready() => go(x), _ => wait()`, `if let Some(x) = next
     /// && x.ready() { .. } else { .. }`, or the same with the condition as an
-    /// inner `if` whose `else` repeats the outer one. The `Option` at this
-    /// point admits a `Some` the code does not want, and the condition that
-    /// says which is written here, at a consumer, rather than where the
-    /// value is produced; every other consumer has to repeat it or gets the
-    /// unwanted `Some` as a valid one. Filtering at the source, or a payload
-    /// type that cannot hold the unwanted value, makes `Some` mean present.
+    /// inner `if` whose `else` repeats the outer one. A `Some` that fails
+    /// the condition is handled exactly like `None`, so at this point `Some`
+    /// alone does not mean usable, and the condition saying which is written
+    /// here, at a consumer, rather than where the value is produced; every
+    /// other consumer has to repeat it or takes the unwanted `Some` as a
+    /// valid one. Filtering at the source, or a payload type that cannot
+    /// hold the unwanted value, makes `Some` mean present.
     ///
     /// Stays quiet when the condition never reads what the pattern bound (a
     /// guard on unrelated state is a different shape), when the failing
@@ -74,33 +75,54 @@ impl Wrapper {
         }
     }
 
+    /// How the present variant is spelled in a message.
+    fn present_name(self) -> &'static str {
+        match self {
+            Wrapper::Option => "Some",
+            Wrapper::Result => "Ok",
+        }
+    }
+
+    fn absent_name(self) -> &'static str {
+        match self {
+            Wrapper::Option => "None",
+            Wrapper::Result => "Err",
+        }
+    }
+
     fn message(self, cond: &str) -> String {
-        match self {
-            Wrapper::Option => {
-                format!("a `Some` that fails `{cond}` is handled as if it were `None`")
-            }
-            Wrapper::Result => {
-                format!("an `Ok` that fails `{cond}` is handled as if it were `Err`")
-            }
-        }
+        let (present, absent) = (self.present_name(), self.absent_name());
+        let article = match self {
+            Wrapper::Option => "a",
+            Wrapper::Result => "an",
+        };
+        format!(
+            "{article} `{present}` that fails `{cond}` is handled exactly like `{absent}` here, so `{present}` alone does not mean usable and every other consumer of this value has to repeat the check"
+        )
     }
 
-    fn note(self) -> &'static str {
-        match self {
-            Wrapper::Option => "the failing `Some` lands here, handled like `None`",
-            Wrapper::Result => "the failing `Ok` lands here, handled like `Err`",
-        }
+    fn note(self) -> String {
+        format!(
+            "the failing `{}` lands here, together with `{}`",
+            self.present_name(),
+            self.absent_name()
+        )
     }
 
-    fn help(self) -> &'static str {
-        match self {
-            Wrapper::Option => {
-                "filter where the value is produced (`.filter(..)`, or a type whose `Some` is always valid) so `Some` needs no second check here"
-            }
-            Wrapper::Result => {
-                "reject where the value is produced (an error for this case, or a type whose `Ok` is always valid) so `Ok` needs no second check here"
-            }
-        }
+    fn help(self, scrut: &str, cond: &str) -> String {
+        let (present, means) = match self {
+            Wrapper::Option => (
+                "a `Some`",
+                "a `.filter(..)`, or a payload type that cannot fail it",
+            ),
+            Wrapper::Result => (
+                "an `Ok`",
+                "an error for that case, or a payload type that cannot fail it",
+            ),
+        };
+        format!(
+            "make whatever produces `{scrut}` reject values failing `{cond}` ({means}), so {present} reaching here needs no second check"
+        )
     }
 }
 
@@ -195,12 +217,15 @@ fn has_let(operands: &[&Expr<'_>]) -> bool {
 struct Finding {
     w: Wrapper,
     span: Span,
+    /// The `Option`/`Result` being matched, for the help.
+    scrut: Span,
     cond: Span,
     lands: Span,
 }
 
 fn report(cx: &LateContext<'_>, f: Finding) {
     let cond = snippet(cx, f.cond, "..");
+    let scrut = snippet(cx, f.scrut, "..");
     emit_with_note(
         cx,
         SOME_STILL_UNCHECKED,
@@ -208,7 +233,7 @@ fn report(cx: &LateContext<'_>, f: Finding) {
         f.w.message(&cond),
         f.lands,
         f.w.note(),
-        f.w.help(),
+        f.w.help(&scrut, &cond),
     );
 }
 
@@ -255,19 +280,23 @@ fn check_match<'tcx>(
     Some(Finding {
         w,
         span: arm.pat.span.to(cond.span),
+        scrut: scrut.span,
         cond: cond.span,
         lands: lands.pat.span,
     })
 }
 
-/// `let Some(x) = init` at the head of a condition: the wrapper it opens
-/// and the locals it binds.
-fn present_let<'tcx>(cx: &LateContext<'tcx>, e: &Expr<'tcx>) -> Option<(Wrapper, Vec<HirId>)> {
+/// `let Some(x) = init` at the head of a condition: the wrapper it opens,
+/// the locals it binds, and where `init` is.
+fn present_let<'tcx>(
+    cx: &LateContext<'tcx>,
+    e: &Expr<'tcx>,
+) -> Option<(Wrapper, Vec<HirId>, Span)> {
     let ExprKind::Let(LetExpr { pat, init, .. }) = e.kind else {
         return None;
     };
     let w = Wrapper::of(cx, cx.typeck_results().expr_ty(init))?;
-    Some((w, present_bindings(cx, pat, w)?))
+    Some((w, present_bindings(cx, pat, w)?, init.span))
 }
 
 fn check_if<'tcx>(
@@ -282,7 +311,7 @@ fn check_if<'tcx>(
     let mut parts = Vec::new();
     and_operands(cond, &mut parts);
     let (head, tail) = parts.split_first()?;
-    let (w, ids) = present_let(cx, head)?;
+    let (w, ids, scrut) = present_let(cx, head)?;
     if let (Some(first), Some(last)) = (tail.first(), tail.last()) {
         // `if let Some(x) = v && COND { A } else { B }`
         if has_let(tail) || !tail.iter().any(|e| reads_any(cx, e, &ids)) {
@@ -291,6 +320,7 @@ fn check_if<'tcx>(
         return Some(Finding {
             w,
             span: cond.span,
+            scrut,
             cond: first.span.to(last.span),
             lands: els.span,
         });
@@ -313,6 +343,7 @@ fn check_if<'tcx>(
     Some(Finding {
         w,
         span: head.span,
+        scrut,
         cond: inner_cond.span,
         lands: inner_els.span,
     })

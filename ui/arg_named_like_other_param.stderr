@@ -1,59 +1,94 @@
-warning: arguments `height` and `width` are bound to `resize`'s parameters `width` and `height`; all are `u32`, so the transposition type-checks
+warning: `height` and `width` are passed where `resize` expects `width` and `height`, in that order, and since all are `u32` the compiler cannot tell they are swapped
   --> $DIR/arg_named_like_other_param.rs:71:5
    |
 LL |     resize(height, width)
    |     ^^^^^^^^^^^^^^^^^^^^^
    |
-   = help: give the two parameters distinct types (a newtype per quantity, an enum per flag) so a swap is a type error
+note: `resize`'s parameters, in the order it declares them
+  --> $DIR/arg_named_like_other_param.rs:3:1
+   |
+LL | fn resize(width: u32, height: u32) -> u32 {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: swap them, or if the call is right as written, rename the values so they stop contradicting the parameters; then give `width` and `height` distinct types (a newtype per quantity, an enum per flag) so the next mix-up is a type error
    = note: `#[warn(arg_named_like_other_param)]` on by default
 
-warning: arguments `inherit_stderr` and `inherit_stdout` are bound to `spawn`'s parameters `inherit_stdout` and `inherit_stderr`; all are `bool`, so the transposition type-checks
+warning: `inherit_stderr` and `inherit_stdout` are passed where `spawn` expects `inherit_stdout` and `inherit_stderr`, in that order, and since all are `bool` the compiler cannot tell they are swapped
   --> $DIR/arg_named_like_other_param.rs:76:5
    |
 LL |     spawn(opts.inherit_stderr, opts.inherit_stdout)
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-   = help: give the two parameters distinct types (a newtype per quantity, an enum per flag) so a swap is a type error
+note: `spawn`'s parameters, in the order it declares them
+  --> $DIR/arg_named_like_other_param.rs:16:1
+   |
+LL | fn spawn(inherit_stdout: bool, inherit_stderr: bool) -> bool {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: swap them, or if the call is right as written, rename the values so they stop contradicting the parameters; then give `inherit_stdout` and `inherit_stderr` distinct types (a newtype per quantity, an enum per flag) so the next mix-up is a type error
 
-warning: argument `column` is bound to `place`'s parameter `line`, but `place` also takes a parameter `column` of the same type `u32`
+warning: `column` is passed as `place`'s `line` parameter, though `place` also has a `column` parameter of the same type `u32`, so this looks like an argument in the wrong position and the compiler cannot tell
   --> $DIR/arg_named_like_other_param.rs:81:11
    |
 LL |     place(column, extra, 0)
    |           ^^^^^^
    |
-   = help: give the two parameters distinct types (a newtype per quantity, an enum per flag) so a swap is a type error
+note: `place`'s parameters, in the order it declares them
+  --> $DIR/arg_named_like_other_param.rs:20:1
+   |
+LL | fn place(line: u32, column: u32, offset: u32) -> u32 {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: move `column` to the `column` position, or if it really is the `line` here, rename it; then give `line` and `column` distinct types (a newtype per quantity, an enum per flag) so the next mix-up is a type error
 
-warning: arguments `dst` and `src` are bound to `blit`'s parameters `src` and `dst`; all are `usize`, so the transposition type-checks
+warning: `dst` and `src` are passed where `blit` expects `src` and `dst`, in that order, and since all are `usize` the compiler cannot tell they are swapped
   --> $DIR/arg_named_like_other_param.rs:86:5
    |
 LL |     c.blit(dst, src)
    |     ^^^^^^^^^^^^^^^^
    |
-   = help: give the two parameters distinct types (a newtype per quantity, an enum per flag) so a swap is a type error
+note: `blit`'s parameters, in the order it declares them
+  --> $DIR/arg_named_like_other_param.rs:43:5
+   |
+LL |     fn blit(&self, src: usize, dst: usize) -> usize {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: swap them, or if the call is right as written, rename the values so they stop contradicting the parameters; then give `src` and `dst` distinct types (a newtype per quantity, an enum per flag) so the next mix-up is a type error
 
-warning: arguments `registry` and `url` are bound to `under`'s parameters `url` and `registry`; all are `&str`, so the transposition type-checks
+warning: `registry` and `url` are passed where `under` expects `url` and `registry`, in that order, and since all are `&str` the compiler cannot tell they are swapped
   --> $DIR/arg_named_like_other_param.rs:91:5
    |
 LL |     under(registry, url)
    |     ^^^^^^^^^^^^^^^^^^^^
    |
-   = help: give the two parameters distinct types (a newtype per quantity, an enum per flag) so a swap is a type error
+note: `under`'s parameters, in the order it declares them
+  --> $DIR/arg_named_like_other_param.rs:48:1
+   |
+LL | fn under(url: &str, registry: &str) -> bool {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: swap them, or if the call is right as written, rename the values so they stop contradicting the parameters; then give `url` and `registry` distinct types (a newtype per quantity, an enum per flag) so the next mix-up is a type error
 
-warning: argument `inherit_stdout` is bound to `spawn`'s parameter `inherit_stderr`, but `spawn` also takes a parameter `inherit_stdout` of the same type `bool`
+warning: `inherit_stdout` is passed as `spawn`'s `inherit_stderr` parameter, though `spawn` also has a `inherit_stdout` parameter of the same type `bool`, so this looks like an argument in the wrong position and the compiler cannot tell
   --> $DIR/arg_named_like_other_param.rs:97:25
    |
 LL |     let _ = spawn(true, opts.inherit_stdout);
    |                         ^^^^^^^^^^^^^^^^^^^
    |
-   = help: give the two parameters distinct types (a newtype per quantity, an enum per flag) so a swap is a type error
+note: `spawn`'s parameters, in the order it declares them
+  --> $DIR/arg_named_like_other_param.rs:16:1
+   |
+LL | fn spawn(inherit_stdout: bool, inherit_stderr: bool) -> bool {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: move `inherit_stdout` to the `inherit_stdout` position, or if it really is the `inherit_stderr` here, rename it; then give `inherit_stderr` and `inherit_stdout` distinct types (a newtype per quantity, an enum per flag) so the next mix-up is a type error
 
-warning: argument `height` is bound to `resize`'s parameter `width`, but `resize` also takes a parameter `height` of the same type `u32`
+warning: `height` is passed as `resize`'s `width` parameter, though `resize` also has a `height` parameter of the same type `u32`, so this looks like an argument in the wrong position and the compiler cannot tell
   --> $DIR/arg_named_like_other_param.rs:98:12
    |
 LL |     resize(height, 0)
    |            ^^^^^^
    |
-   = help: give the two parameters distinct types (a newtype per quantity, an enum per flag) so a swap is a type error
+note: `resize`'s parameters, in the order it declares them
+  --> $DIR/arg_named_like_other_param.rs:3:1
+   |
+LL | fn resize(width: u32, height: u32) -> u32 {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: move `height` to the `height` position, or if it really is the `width` here, rename it; then give `width` and `height` distinct types (a newtype per quantity, an enum per flag) so the next mix-up is a type error
 
 warning: 7 warnings emitted
 

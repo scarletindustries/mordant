@@ -6,9 +6,10 @@ use crate::hir_shapes::value_name;
 
 rustc_session::declare_lint! {
     /// Flags addition, subtraction, and comparison between values whose names
-    /// claim different units: `timeout_ms + deadline_ns` compiles and is
-    /// always wrong. Multiplication and division stay silent, since they are
-    /// how units legitimately convert.
+    /// say they are in different units: `timeout_ms + deadline_ns` uses them
+    /// as if they were the same unit, compiles, and is always wrong.
+    /// Multiplication and division stay silent, since they are how units
+    /// legitimately convert.
     pub UNIT_MISMATCH,
     Warn,
     "arithmetic between values whose names claim different units"
@@ -68,19 +69,21 @@ impl<'tcx> LateLintPass<'tcx> for UnitMismatch {
             return;
         };
         if lc != rc {
+            let op = if matches!(op.node, BinOpKind::Add | BinOpKind::Sub) {
+                "arithmetic"
+            } else {
+                "comparison"
+            };
             emit(
                 cx,
                 UNIT_MISMATCH,
                 expr.span,
                 format!(
-                    "`{ln}` claims {lc} and `{rn}` claims {rc}; {} between them mixes units",
-                    if matches!(op.node, BinOpKind::Add | BinOpKind::Sub) {
-                        "arithmetic"
-                    } else {
-                        "comparison"
-                    }
+                    "`{ln}` says it is in {lc} and `{rn}` says {rc}, and this {op} uses them as if they were the same unit"
                 ),
-                "convert one side, or rename whichever name is lying about its unit",
+                format!(
+                    "convert one side to the other's unit first, or if `{ln}` or `{rn}` is wrong about its unit, rename it; a `Duration` or a unit newtype makes the compiler catch the next one"
+                ),
             );
         }
     }

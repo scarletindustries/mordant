@@ -1,57 +1,57 @@
-warning: a `Some` that fails `j.ready` is handled as if it were `None`
+warning: a `Some` that fails `j.ready` is handled exactly like `None` here, so `Some` alone does not mean usable and every other consumer of this value has to repeat the check
   --> $DIR/some_still_unchecked.rs:28:9
    |
 LL |         Some(j) if j.ready => j.id,
    |         ^^^^^^^^^^^^^^^^^^
    |
-note: the failing `Some` lands here, handled like `None`
+note: the failing `Some` lands here, together with `None`
   --> $DIR/some_still_unchecked.rs:29:9
    |
 LL |         _ => wait(),
    |         ^
-   = help: filter where the value is produced (`.filter(..)`, or a type whose `Some` is always valid) so `Some` needs no second check here
+   = help: make whatever produces `next()` reject values failing `j.ready` (a `.filter(..)`, or a payload type that cannot fail it), so a `Some` reaching here needs no second check
    = note: `#[warn(some_still_unchecked)]` on by default
 
-warning: a `Some` that fails `j.ready` is handled as if it were `None`
+warning: a `Some` that fails `j.ready` is handled exactly like `None` here, so `Some` alone does not mean usable and every other consumer of this value has to repeat the check
   --> $DIR/some_still_unchecked.rs:38:9
    |
 LL |         Some(j) if j.ready => j.id,
    |         ^^^^^^^^^^^^^^^^^^
    |
-note: the failing `Some` lands here, handled like `None`
+note: the failing `Some` lands here, together with `None`
   --> $DIR/some_still_unchecked.rs:39:9
    |
 LL |         Some(_) => wait(),
    |         ^^^^^^^
-   = help: filter where the value is produced (`.filter(..)`, or a type whose `Some` is always valid) so `Some` needs no second check here
+   = help: make whatever produces `next()` reject values failing `j.ready` (a `.filter(..)`, or a payload type that cannot fail it), so a `Some` reaching here needs no second check
 
-warning: a `Some` that fails `j.ready && j.id > 0` is handled as if it were `None`
+warning: a `Some` that fails `j.ready && j.id > 0` is handled exactly like `None` here, so `Some` alone does not mean usable and every other consumer of this value has to repeat the check
   --> $DIR/some_still_unchecked.rs:46:9
    |
 LL |         Some(j) if j.ready && j.id > 0 => j.id,
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-note: the failing `Some` lands here, handled like `None`
+note: the failing `Some` lands here, together with `None`
   --> $DIR/some_still_unchecked.rs:47:9
    |
 LL |         Some(_) | None => wait(),
    |         ^^^^^^^^^^^^^^
-   = help: filter where the value is produced (`.filter(..)`, or a type whose `Some` is always valid) so `Some` needs no second check here
+   = help: make whatever produces `next()` reject values failing `j.ready && j.id > 0` (a `.filter(..)`, or a payload type that cannot fail it), so a `Some` reaching here needs no second check
 
-warning: an `Ok` that fails `n > 2` is handled as if it were `Err`
+warning: an `Ok` that fails `n > 2` is handled exactly like `Err` here, so `Ok` alone does not mean usable and every other consumer of this value has to repeat the check
   --> $DIR/some_still_unchecked.rs:54:9
    |
 LL |         Ok(n) if n > 2 => n,
    |         ^^^^^^^^^^^^^^
    |
-note: the failing `Ok` lands here, handled like `Err`
+note: the failing `Ok` lands here, together with `Err`
   --> $DIR/some_still_unchecked.rs:55:9
    |
 LL |         Err(_) | Ok(_) => wait(),
    |         ^^^^^^^^^^^^^^
-   = help: reject where the value is produced (an error for this case, or a type whose `Ok` is always valid) so `Ok` needs no second check here
+   = help: make whatever produces `parse()` reject values failing `n > 2` (an error for that case, or a payload type that cannot fail it), so an `Ok` reaching here needs no second check
 
-warning: a `Some` that fails `j.ready` is handled as if it were `None`
+warning: a `Some` that fails `j.ready` is handled exactly like `None` here, so `Some` alone does not mean usable and every other consumer of this value has to repeat the check
   --> $DIR/some_still_unchecked.rs:61:8
    |
 LL |       if let Some(j) = next()
@@ -59,7 +59,7 @@ LL |       if let Some(j) = next()
 LL | |         && j.ready
    | |__________________^
    |
-note: the failing `Some` lands here, handled like `None`
+note: the failing `Some` lands here, together with `None`
   --> $DIR/some_still_unchecked.rs:65:12
    |
 LL |       } else {
@@ -67,20 +67,20 @@ LL |       } else {
 LL | |         wait()
 LL | |     }
    | |_____^
-   = help: filter where the value is produced (`.filter(..)`, or a type whose `Some` is always valid) so `Some` needs no second check here
+   = help: make whatever produces `next()` reject values failing `j.ready` (a `.filter(..)`, or a payload type that cannot fail it), so a `Some` reaching here needs no second check
 
-warning: a `Some` that fails `j.ready` is handled as if it were `None`
+warning: a `Some` that fails `j.ready` is handled exactly like `None` here, so `Some` alone does not mean usable and every other consumer of this value has to repeat the check
   --> $DIR/some_still_unchecked.rs:72:8
    |
 LL |     if let Some(j) = next() {
    |        ^^^^^^^^^^^^^^^^^^^^
    |
-note: the failing `Some` lands here, handled like `None`
+note: the failing `Some` lands here, together with `None`
   --> $DIR/some_still_unchecked.rs:73:34
    |
 LL |         if j.ready { j.id } else { wait() + 1 }
    |                                  ^^^^^^^^^^^^^^
-   = help: filter where the value is produced (`.filter(..)`, or a type whose `Some` is always valid) so `Some` needs no second check here
+   = help: make whatever produces `next()` reject values failing `j.ready` (a `.filter(..)`, or a payload type that cannot fail it), so a `Some` reaching here needs no second check
 
 warning: 6 warnings emitted
 

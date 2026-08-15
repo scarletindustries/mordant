@@ -1,109 +1,109 @@
-warning: `parse_port` rejects some of what it is handed, and `unwrap_or` carries on with a fixed value in place of the rejection
+warning: `parse_port` can reject its input, and `.unwrap_or` here swaps that rejection for a fixed value, so input `parse_port` refused is processed as if it had passed
   --> $DIR/defaulted_failure.rs:156:5
    |
 LL |     parse_port(s).unwrap_or(0)
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-note: the check whose failure is replaced
+note: the check in `parse_port` whose failure is replaced
   --> $DIR/defaulted_failure.rs:20:8
    |
 LL |     if s.is_empty() {
    |        ^^^^^^^^^^^^
-   = help: propagate the failure, or handle the failing arm where its cause is still visible
+   = help: propagate the error with `?` or `return Err(..)`, or match on it here while `parse_port`'s reason is still attached
    = note: `#[warn(defaulted_failure)]` on by default
 
-warning: `parse_port` rejects some of what it is handed, and `unwrap_or_default` carries on with a fixed value in place of the rejection
+warning: `parse_port` can reject its input, and `.unwrap_or_default` here swaps that rejection for a fixed value, so input `parse_port` refused is processed as if it had passed
   --> $DIR/defaulted_failure.rs:160:5
    |
 LL |     parse_port(s).unwrap_or_default()
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-note: the check whose failure is replaced
+note: the check in `parse_port` whose failure is replaced
   --> $DIR/defaulted_failure.rs:20:8
    |
 LL |     if s.is_empty() {
    |        ^^^^^^^^^^^^
-   = help: propagate the failure, or handle the failing arm where its cause is still visible
+   = help: propagate the error with `?` or `return Err(..)`, or match on it here while `parse_port`'s reason is still attached
 
-warning: `parse_port` rejects some of what it is handed, and `unwrap_or_else` carries on with a fixed value in place of the rejection
+warning: `parse_port` can reject its input, and `.unwrap_or_else` here swaps that rejection for a fixed value, so input `parse_port` refused is processed as if it had passed
   --> $DIR/defaulted_failure.rs:164:5
    |
 LL |     parse_port(s).unwrap_or_else(|_| u16::MAX)
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-note: the check whose failure is replaced
+note: the check in `parse_port` whose failure is replaced
   --> $DIR/defaulted_failure.rs:20:8
    |
 LL |     if s.is_empty() {
    |        ^^^^^^^^^^^^
-   = help: propagate the failure, or handle the failing arm where its cause is still visible
+   = help: propagate the error with `?` or `return Err(..)`, or match on it here while `parse_port`'s reason is still attached
 
-warning: `parse_port` rejects some of what it is handed, and `unwrap_or_else` carries on with a fixed value in place of the rejection
+warning: `parse_port` can reject its input, and `.unwrap_or_else` here swaps that rejection for a fixed value, so input `parse_port` refused is processed as if it had passed
   --> $DIR/defaulted_failure.rs:168:5
    |
 LL |     parse_port(s).unwrap_or_else(|_| Default::default())
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-note: the check whose failure is replaced
+note: the check in `parse_port` whose failure is replaced
   --> $DIR/defaulted_failure.rs:20:8
    |
 LL |     if s.is_empty() {
    |        ^^^^^^^^^^^^
-   = help: propagate the failure, or handle the failing arm where its cause is still visible
+   = help: propagate the error with `?` or `return Err(..)`, or match on it here while `parse_port`'s reason is still attached
 
-warning: `parse_port` rejects some of what it is handed, and `unwrap_or` carries on with a fixed value in place of the rejection
+warning: `parse_port` can reject its input, and `.unwrap_or` here swaps that rejection for a fixed value, so input `parse_port` refused is processed as if it had passed
   --> $DIR/defaulted_failure.rs:172:5
    |
 LL |     parse_port(s).ok().unwrap_or(80)
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-note: the check whose failure is replaced
+note: the check in `parse_port` whose failure is replaced
   --> $DIR/defaulted_failure.rs:20:8
    |
 LL |     if s.is_empty() {
    |        ^^^^^^^^^^^^
-   = help: propagate the failure, or handle the failing arm where its cause is still visible
+   = help: propagate the error with `?` or `return Err(..)`, or match on it here while `parse_port`'s reason is still attached
 
-warning: `Header::is_open` rejects some of what it is handed, and `unwrap_or` carries on with a fixed value in place of the rejection
+warning: `Header::is_open` can reject its input, and `.unwrap_or` here swaps that rejection for a fixed value, so input `Header::is_open` refused is processed as if it had passed
   --> $DIR/defaulted_failure.rs:176:5
    |
 LL |     h.is_open(s).unwrap_or(true)
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-note: the check whose failure is replaced
+note: the check in `Header::is_open` whose failure is replaced
   --> $DIR/defaulted_failure.rs:71:12
    |
 LL |         if s.is_empty() {
    |            ^^^^^^^^^^^^
-   = help: propagate the failure, or handle the failing arm where its cause is still visible
+   = help: propagate the error with `?` or `return Err(..)`, or match on it here while `Header::is_open`'s reason is still attached
 
-warning: `parse_pair` rejects some of what it is handed, and `unwrap_or` carries on with a fixed value in place of the rejection
+warning: `parse_pair` can reject its input, and `.unwrap_or` here swaps that rejection for a fixed value, so input `parse_pair` refused is processed as if it had passed
   --> $DIR/defaulted_failure.rs:180:5
    |
 LL |     parse_pair(s).unwrap_or((0, 0))
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-note: the check whose failure is replaced
+note: the check in `parse_pair` whose failure is replaced
   --> $DIR/defaulted_failure.rs:41:18
    |
 LL |     let (a, b) = s.split_once(':').ok_or(ParseError::Empty)?;
    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   = help: propagate the failure, or handle the failing arm where its cause is still visible
+   = help: propagate the error with `?` or `return Err(..)`, or match on it here while `parse_pair`'s reason is still attached
 
-warning: `Header::parse_limit` rejects some of what it is handed, and `unwrap_or` carries on with a fixed value in place of the rejection
+warning: `Header::parse_limit` can reject its input, and `.unwrap_or` here swaps that rejection for a fixed value, so input `Header::parse_limit` refused is processed as if it had passed
   --> $DIR/defaulted_failure.rs:184:5
    |
 LL |     h.parse_limit(s).unwrap_or(0)
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-note: the check whose failure is replaced
+note: the check in `Header::parse_limit` whose failure is replaced
   --> $DIR/defaulted_failure.rs:54:12
    |
 LL |         if n > self.limit {
    |            ^^^^^^^^^^^^^^
-   = help: propagate the failure, or handle the failing arm where its cause is still visible
+   = help: propagate the error with `?` or `return Err(..)`, or match on it here while `Header::parse_limit`'s reason is still attached
 
-warning: `parse_port` rejects some of what it is handed, and the `else` returns success in place of the rejection
+warning: `parse_port` can reject its input, and the `else` here returns success when it does, so input `parse_port` refused is reported as handled
   --> $DIR/defaulted_failure.rs:188:5
    |
 LL | /     let Ok(port) = parse_port(s) else {
@@ -111,27 +111,27 @@ LL | |         return Ok(());
 LL | |     };
    | |______^
    |
-note: the check whose failure is replaced
+note: the check in `parse_port` whose failure is replaced
   --> $DIR/defaulted_failure.rs:20:8
    |
 LL |     if s.is_empty() {
    |        ^^^^^^^^^^^^
-   = help: propagate the failure, or handle the failing arm where its cause is still visible
+   = help: propagate the error with `?` or `return Err(..)`, or match on it here while `parse_port`'s reason is still attached
 
-warning: `parse_port` rejects some of what it is handed, and the `else` returns success in place of the rejection
+warning: `parse_port` can reject its input, and the `else` here returns success when it does, so input `parse_port` refused is reported as handled
   --> $DIR/defaulted_failure.rs:196:5
    |
 LL |     let Ok(port) = parse_port(s) else { return };
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-note: the check whose failure is replaced
+note: the check in `parse_port` whose failure is replaced
   --> $DIR/defaulted_failure.rs:20:8
    |
 LL |     if s.is_empty() {
    |        ^^^^^^^^^^^^
-   = help: propagate the failure, or handle the failing arm where its cause is still visible
+   = help: propagate the error with `?` or `return Err(..)`, or match on it here while `parse_port`'s reason is still attached
 
-warning: `parse_port` rejects some of what it is handed, and the `else` returns success in place of the rejection
+warning: `parse_port` can reject its input, and the `else` here returns success when it does, so input `parse_port` refused is reported as handled
   --> $DIR/defaulted_failure.rs:201:5
    |
 LL | /     let Some(port) = parse_port(s).ok() else {
@@ -139,94 +139,94 @@ LL | |         return Ok(());
 LL | |     };
    | |______^
    |
-note: the check whose failure is replaced
+note: the check in `parse_port` whose failure is replaced
   --> $DIR/defaulted_failure.rs:20:8
    |
 LL |     if s.is_empty() {
    |        ^^^^^^^^^^^^
-   = help: propagate the failure, or handle the failing arm where its cause is still visible
+   = help: propagate the error with `?` or `return Err(..)`, or match on it here while `parse_port`'s reason is still attached
 
-warning: `parse_port` rejects some of what it is handed, and the `else` returns success in place of the rejection
+warning: `parse_port` can reject its input, and the `else` here returns success when it does, so input `parse_port` refused is reported as handled
   --> $DIR/defaulted_failure.rs:209:5
    |
 LL |     let Some(port) = parse_port(s).ok() else { return };
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-note: the check whose failure is replaced
+note: the check in `parse_port` whose failure is replaced
   --> $DIR/defaulted_failure.rs:20:8
    |
 LL |     if s.is_empty() {
    |        ^^^^^^^^^^^^
-   = help: propagate the failure, or handle the failing arm where its cause is still visible
+   = help: propagate the error with `?` or `return Err(..)`, or match on it here while `parse_port`'s reason is still attached
 
-warning: `Header::send_checked` rejects some of what it is handed, and `unwrap_or` carries on with a fixed value in place of the rejection
+warning: `Header::send_checked` can reject its input, and `.unwrap_or` here swaps that rejection for a fixed value, so input `Header::send_checked` refused is processed as if it had passed
   --> $DIR/defaulted_failure.rs:214:5
    |
 LL |     h.send_checked(s).unwrap_or(0)
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-note: the check whose failure is replaced
+note: the check in `Header::send_checked` whose failure is replaced
   --> $DIR/defaulted_failure.rs:93:16
    |
 LL |             if s.is_empty() {
    |                ^^^^^^^^^^^^
-   = help: propagate the failure, or handle the failing arm where its cause is still visible
+   = help: propagate the error with `?` or `return Err(..)`, or match on it here while `Header::send_checked`'s reason is still attached
 
-warning: `check_port` rejects some of what it is handed, and `unwrap_or_default` carries on with a fixed value in place of the rejection
+warning: `check_port` can reject its input, and `.unwrap_or_default` here swaps that rejection for a fixed value, so input `check_port` refused is processed as if it had passed
   --> $DIR/defaulted_failure.rs:218:5
    |
 LL |     check_port(s).unwrap_or_default()
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-note: the check whose failure is replaced
+note: the check in `check_port` whose failure is replaced
   --> $DIR/defaulted_failure.rs:103:5
    |
 LL |     parse_port(s)?;
    |     ^^^^^^^^^^^^^^
-   = help: propagate the failure, or handle the failing arm where its cause is still visible
+   = help: propagate the error with `?` or `return Err(..)`, or match on it here while `check_port`'s reason is still attached
 
-warning: `listed_by_config` is listed in `defaulted-failure-callees`, and `unwrap_or` carries on with a fixed value in place of its failure
+warning: `listed_by_config` is listed in `defaulted-failure-callees` as able to reject its input, and `.unwrap_or` here swaps that rejection for a fixed value, so input `listed_by_config` refused is processed as if it had passed
   --> $DIR/defaulted_failure.rs:222:5
    |
 LL |     listed_by_config(s).unwrap_or(0)
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-   = help: propagate the failure, or handle the failing arm where its cause is still visible
+   = help: propagate the error with `?` or `return Err(..)`, or match on it here while `listed_by_config`'s reason is still attached
 
-warning: `core::num::<impl u32>::from_str_radix` is listed in `defaulted-failure-callees`, and `unwrap_or` carries on with a fixed value in place of its failure
+warning: `core::num::<impl u32>::from_str_radix` is listed in `defaulted-failure-callees` as able to reject its input, and `.unwrap_or` here swaps that rejection for a fixed value, so input `core::num::<impl u32>::from_str_radix` refused is processed as if it had passed
   --> $DIR/defaulted_failure.rs:226:5
    |
 LL |     u32::from_str_radix(s, 16).unwrap_or(0)
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-   = help: propagate the failure, or handle the failing arm where its cause is still visible
+   = help: propagate the error with `?` or `return Err(..)`, or match on it here while `core::num::<impl u32>::from_str_radix`'s reason is still attached
 
-warning: `let_else_reporting_failure_is_fine` reports `ParseError` only as `false`, and this call drops the `false`: the failure can no longer be observed anywhere
+warning: `let_else_reporting_failure_is_fine` turns its `ParseError` into `false`, and this call ignores the `false`, so a failure inside `let_else_reporting_failure_is_fine` is silently treated as success
   --> $DIR/defaulted_failure.rs:393:13
    |
 LL |     let _ = let_else_reporting_failure_is_fine("a", &mut ports);
    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-note: the error becomes `false` here, and nothing else is done with it
+note: the error becomes `false` here
   --> $DIR/defaulted_failure.rs:328:9
    |
 LL |         return false;
    |         ^^^^^^^^^^^^
-   = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
+   = help: make `let_else_reporting_failure_is_fine` return the `Result` and decide here what a failure means; failing that, mark it `#[must_use]` so this call cannot drop the answer
    = note: `#[warn(error_collapsed_to_bool)]` on by default
 
-warning: `let_else_returning_none_is_fine` reports `ParseError` only as `None`, and this call drops the `None`: the failure can no longer be observed anywhere
+warning: `let_else_returning_none_is_fine` turns its `ParseError` into `None`, and this call ignores the `None`, so a failure inside `let_else_returning_none_is_fine` is silently treated as success
   --> $DIR/defaulted_failure.rs:394:13
    |
 LL |     let _ = let_else_returning_none_is_fine("a");
    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-note: the error becomes `None` here, and nothing else is done with it
+note: the error becomes `None` here
   --> $DIR/defaulted_failure.rs:336:9
    |
 LL |         return None;
    |         ^^^^^^^^^^^
-   = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
+   = help: make `let_else_returning_none_is_fine` return the `Result` and decide here what a failure means; failing that, mark it `#[must_use]` so this call cannot drop the answer
 
 warning: 18 warnings emitted
 

@@ -1,43 +1,68 @@
-warning: sentinel `INVALID_SLOT` can reach this use: `rename` indexes with `Entry.slot` and nothing in it tests the field, which the crate compares against that sentinel at 2 other sites
+warning: `Entry.slot` can be `INVALID_SLOT`, which 2 other places in the crate test for as "no value", but `rename` indexes with it here without any such test, so the sentinel becomes an out-of-range index
   --> $DIR/sentinel_integer.rs:34:9
    |
 LL |         self.names[e.slot as usize] = to;
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-   = help: the field's value set is `Option<int>`; store that (a `NonZero`/`NonMax` niche keeps the size) and no reader can index without deciding the empty case
+note: one of the places that treats `INVALID_SLOT` as "no value"
+  --> $DIR/sentinel_integer.rs:25:12
+   |
+LL |         if e.slot == INVALID_SLOT {
+   |            ^^^^^^^^^^^^^^^^^^^^^^
+   = help: store `slot` as an `Option` (over a `NonZero`/`NonMax` type to keep the size), so `rename` has to decide the empty case before it can use the number
    = note: `#[warn(sentinel_integer)]` on by default
 
-warning: sentinel `INVALID_SLOT` can reach this use: `name_after` indexes with `Entry.slot` and nothing in it tests the field, which the crate compares against that sentinel at 2 other sites
+warning: `Entry.slot` can be `INVALID_SLOT`, which 2 other places in the crate test for as "no value", but `name_after` indexes with it here without any such test, so the sentinel becomes an out-of-range index
   --> $DIR/sentinel_integer.rs:68:9
    |
 LL |         self.names[e.width as usize + e.slot as usize]
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-   = help: the field's value set is `Option<int>`; store that (a `NonZero`/`NonMax` niche keeps the size) and no reader can index without deciding the empty case
+note: one of the places that treats `INVALID_SLOT` as "no value"
+  --> $DIR/sentinel_integer.rs:25:12
+   |
+LL |         if e.slot == INVALID_SLOT {
+   |            ^^^^^^^^^^^^^^^^^^^^^^
+   = help: store `slot` as an `Option` (over a `NonZero`/`NonMax` type to keep the size), so `name_after` has to decide the empty case before it can use the number
 
-warning: sentinel `u32::MAX` can reach this use: `parent_ptr` offsets a pointer by `Entry.parent` and nothing in it tests the field, which the crate compares against that sentinel at 3 other sites
+warning: `Entry.parent` can be `u32::MAX`, which 3 other places in the crate test for as "no value", but `parent_ptr` offsets a pointer by it here without any such test, so the sentinel becomes a wild offset
   --> $DIR/sentinel_integer.rs:82:18
    |
 LL |         unsafe { self.entries.as_ptr().add(e.parent as usize) }
    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-   = help: the field's value set is `Option<int>`; store that (a `NonZero`/`NonMax` niche keeps the size) and no reader can index without deciding the empty case
+note: one of the places that treats `u32::MAX` as "no value"
+  --> $DIR/sentinel_integer.rs:76:9
+   |
+LL |         e.parent == u32::MAX
+   |         ^^^^^^^^^^^^^^^^^^^^
+   = help: store `parent` as an `Option` (over a `NonZero`/`NonMax` type to keep the size), so `parent_ptr` has to decide the empty case before it can use the number
 
-warning: sentinel `u32::MAX` can reach this use: `parent_ptr_wrapping` offsets a pointer by `Entry.parent` and nothing in it tests the field, which the crate compares against that sentinel at 3 other sites
+warning: `Entry.parent` can be `u32::MAX`, which 3 other places in the crate test for as "no value", but `parent_ptr_wrapping` offsets a pointer by it here without any such test, so the sentinel becomes a wild offset
   --> $DIR/sentinel_integer.rs:87:9
    |
 LL |         self.entries.as_ptr().wrapping_add(e.parent as usize)
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-   = help: the field's value set is `Option<int>`; store that (a `NonZero`/`NonMax` niche keeps the size) and no reader can index without deciding the empty case
+note: one of the places that treats `u32::MAX` as "no value"
+  --> $DIR/sentinel_integer.rs:76:9
+   |
+LL |         e.parent == u32::MAX
+   |         ^^^^^^^^^^^^^^^^^^^^
+   = help: store `parent` as an `Option` (over a `NonZero`/`NonMax` type to keep the size), so `parent_ptr_wrapping` has to decide the empty case before it can use the number
 
-warning: sentinel `-1` can reach this use: `below` indexes with `Entry.depth` and nothing in it tests the field, which the crate compares against that sentinel at 2 other sites
+warning: `Entry.depth` can be `-1`, which 2 other places in the crate test for as "no value", but `below` indexes with it here without any such test, so the sentinel becomes an out-of-range index
   --> $DIR/sentinel_integer.rs:133:10
    |
 LL |         &self.entries[(e.depth + 1) as usize]
    |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-   = help: the field's value set is `Option<int>`; store that (a `NonZero`/`NonMax` niche keeps the size) and no reader can index without deciding the empty case
+note: one of the places that treats `-1` as "no value"
+  --> $DIR/sentinel_integer.rs:124:9
+   |
+LL |         e.depth != -1
+   |         ^^^^^^^^^^^^^
+   = help: store `depth` as an `Option` (over a `NonZero`/`NonMax` type to keep the size), so `below` has to decide the empty case before it can use the number
 
 warning: 5 warnings emitted
 

@@ -63,14 +63,15 @@ use crate::baseline::emit_with_note;
 use crate::mir_flow::mir_for;
 
 rustc_session::declare_lint! {
-    /// Flags an integer the function received (a parameter other than
-    /// `self`, or a field reached from one) handed to `split_at`,
+    /// Flags an integer that comes from the caller (a parameter other than
+    /// `self`, or a field reached from one) passed to `split_at`,
     /// `get_unchecked`, `with_capacity`, `reserve`, `set_len`,
     /// `from_raw_parts`, `copy_nonoverlapping` or a raw-pointer
-    /// `add`/`offset` on a path that has not compared it, when some other
-    /// branch of the same function bounds it (`<`, `<=`, `>`, `>=`, also via
-    /// arithmetic on it): the author knew it needed a bound and this path
-    /// skips it. Reported at the use; the note points at the bound.
+    /// `add`/`offset` on a path where nothing has checked it, although the
+    /// same function does bound it (`<`, `<=`, `>`, `>=`, also via
+    /// arithmetic on it) on another path: the author knew it needed a bound
+    /// and this path skips it. Reported at the use; the note points at the
+    /// bound.
     ///
     /// Silent when every such use is dominated by a branch that tests the
     /// value (a clamp, an early return, an equality test, a `debug_assert!`,
@@ -1008,11 +1009,13 @@ impl<'tcx> LateLintPass<'tcx> for UncheckedInputLen {
                 UNCHECKED_INPUT_LEN,
                 span,
                 format!(
-                    "`{name}` reaches `{callee}` here without having been checked, though this function bounds it elsewhere"
+                    "`{name}` comes from the caller and is passed to `{callee}` here on a path where nothing has checked it, although this function does bound `{name}` on another path"
                 ),
                 bound,
-                "the bound that does not cover this use",
-                "check it before it sizes anything on every path, or make the check the only way to obtain the value this use takes",
+                format!("the bound on `{name}` that does not cover this path"),
+                format!(
+                    "check `{name}` before this call on every path (or once, before the paths split), or make the checked value the only thing `{callee}` can be given here"
+                ),
             );
         }
     }

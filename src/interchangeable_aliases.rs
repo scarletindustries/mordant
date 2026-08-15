@@ -4,9 +4,10 @@ use rustc_hir::def_id::DefId;
 use rustc_hir::{BinOpKind, Body, Expr, ExprKind, LetStmt, Node, Ty as HirTy};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty::{self, Ty, VariantDef};
+use rustc_span::Span;
 
 use crate::adt_facts::cfg_selected;
-use crate::baseline::emit;
+use crate::baseline::emit_with_note;
 use crate::hir_shapes::{
     Callee, assigned_adt_field, callee_of, declared_ty, field_decl_ty, param_decl_ty,
     return_decl_ty, value_expr, written_alias,
@@ -19,8 +20,9 @@ rustc_session::declare_lint! {
     /// `let p: PackageId = ..`, returned from a `-> PackageId` function,
     /// defining a `PackageId` const, or compared with a `PackageId` value,
     /// where both aliases name the same primitive integer. Two aliases over
-    /// one integer exist to tell two kinds of number apart, and rustc erases
-    /// both, so nothing rejects the crossing; a newtype per kind would. The
+    /// one integer exist to tell two kinds of number apart, but since both
+    /// are the plain integer the compiler accepts one where the other is
+    /// meant; a newtype per kind would not. The
     /// kinds are read off the written types of this crate's locals,
     /// parameters, fields, consts and signatures, so the lint stays quiet
     /// when either side has no alias (a literal, a plain `u32`, arithmetic
@@ -42,6 +44,8 @@ struct Kind<'tcx> {
     written: DefId,
     root: DefId,
     int: Ty<'tcx>,
+    /// Where the type was written.
+    decl: Span,
 }
 
 /// `type A = B;` names `B`'s kind; follow the chain while it stays visible.
@@ -82,7 +86,12 @@ fn kind_of<'tcx>(cx: &LateContext<'tcx>, ty: &HirTy<'_>) -> Option<Kind<'tcx>> {
         .type_of(root)
         .instantiate_identity()
         .skip_normalization();
-    matches!(int.kind(), ty::Int(_) | ty::Uint(_)).then_some(Kind { written, root, int })
+    matches!(int.kind(), ty::Int(_) | ty::Uint(_)).then_some(Kind {
+        written,
+        root,
+        int,
+        decl: ty.span,
+    })
 }
 
 fn is_lit(e: &Expr<'_>) -> bool {
@@ -222,17 +231,22 @@ fn check_value<'tcx>(cx: &LateContext<'tcx>, src: &'tcx Expr<'tcx>, to: &Kind<'t
         &Slot::Const(c) => format!("defines `{to_name}` const `{}`", def_name(cx, c)),
         Slot::Compared(other) => format!("is compared with `{other}`, declared `{to_name}`"),
     };
-    emit(
+    let from_name = def_name(cx, from.written);
+    emit_with_note(
         cx,
         INTERCHANGEABLE_ALIASES,
         src.span,
         format!(
-            "`{}` is declared `{}` but {lands}; both are `{}`, so nothing rejects the crossing",
+            "`{}` is declared `{from_name}` but {lands}, and since both aliases are plain `{}` the compiler accepts one where the other is meant",
             snippet(cx, src.span, ".."),
-            def_name(cx, from.written),
             to.int,
         ),
-        "a newtype per id kind makes this a type error",
+        from.decl,
+        format!("the `{from_name}` declaration this value comes from"),
+        format!(
+            "make `{from_name}` and `{to_name}` newtypes (`struct {to_name}({});`) instead of aliases; this line then fails to compile until the right id is passed",
+            to.int,
+        ),
     );
 }
 

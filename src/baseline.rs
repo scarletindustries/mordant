@@ -265,8 +265,9 @@ pub fn emit(
     lint: &'static Lint,
     span: Span,
     msg: impl Into<String>,
-    help: &'static str,
+    help: impl Into<String>,
 ) {
+    let help: String = help.into();
     match weigh(cx, lint, span, cx.last_node_with_lint_attrs) {
         Verdict::Silent => {}
         Verdict::Lint => span_lint_and_help(cx, lint, span, msg.into(), None, help),
@@ -284,9 +285,10 @@ pub fn emit_with_note(
     span: Span,
     msg: impl Into<String>,
     note_span: Span,
-    note: &'static str,
-    help: &'static str,
+    note: impl Into<String>,
+    help: impl Into<String>,
 ) {
+    let (note, help): (String, String) = (note.into(), help.into());
     let decorate = |diag: &mut Diag<'_, ()>| {
         diag.span_note(note_span, note);
         diag.help(help);

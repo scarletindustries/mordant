@@ -1,27 +1,42 @@
-warning: parallel vecs: the fields `ages`, `names` of `People` only change length together (2 blocks) and are read at one index, so element `i` of each is one record kept in 2 places
+warning: `ages`, `names` of `People` only ever change length together (2 blocks) and are read at the same index, so element `i` of each is one record split across 2 vecs whose lengths the struct lets differ
   --> $DIR/parallel_vecs.rs:7:1
    |
 LL | struct People {
    | ^^^^^^^^^^^^^
    |
-   = help: one `Vec` of a struct with these fields holds the pairing in the type and cannot let the lengths differ
+note: one of the reads at a shared index
+  --> $DIR/parallel_vecs.rs:42:44
+   |
+LL |         format!("{} is {}", self.names[i], self.ages[i])
+   |                                            ^^^^^^^^^^^^
+   = help: replace the 2 fields with one `Vec` whose element struct has a field for each; then there is one length and one push
    = note: `#[warn(parallel_vecs)]` on by default
 
-warning: parallel vecs: the fields `keys`, `phases`, `values` of `Table` only change length together (1 block) and are read at one index, so element `i` of each is one record kept in 3 places
+warning: `keys`, `phases`, `values` of `Table` only ever change length together (1 block) and are read at the same index, so element `i` of each is one record split across 3 vecs whose lengths the struct lets differ
   --> $DIR/parallel_vecs.rs:54:1
    |
 LL | struct Table {
    | ^^^^^^^^^^^^
    |
-   = help: one `Vec` of a struct with these fields holds the pairing in the type and cannot let the lengths differ
+note: one of the reads at a shared index
+  --> $DIR/parallel_vecs.rs:67:19
+   |
+LL |     for (k, v) in t.keys.iter().zip(&t.values) {
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: replace the 3 fields with one `Vec` whose element struct has a field for each; then there is one length and one push
 
-warning: parallel vecs: the fields `items`, `locs` of `Tape` only change length together (2 blocks) and are read at one index, so element `i` of each is one record kept in 2 places
+warning: `items`, `locs` of `Tape` only ever change length together (2 blocks) and are read at the same index, so element `i` of each is one record split across 2 vecs whose lengths the struct lets differ
   --> $DIR/parallel_vecs.rs:73:1
    |
 LL | struct Tape {
    | ^^^^^^^^^^^
    |
-   = help: one `Vec` of a struct with these fields holds the pairing in the type and cannot let the lengths differ
+note: one of the reads at a shared index
+  --> $DIR/parallel_vecs.rs:89:49
+   |
+LL |         let n = self.tape.items[mark..].len() + self.tape.locs[mark..].len();
+   |                                                 ^^^^^^^^^^^^^^^^^^^^^^
+   = help: replace the 2 fields with one `Vec` whose element struct has a field for each; then there is one length and one push
 
 warning: 3 warnings emitted
 

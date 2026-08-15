@@ -14,21 +14,20 @@ use rustc_middle::ty::{self, AssocContainer, Ty, TyCtxt};
 use rustc_span::def_id::LocalDefId;
 use rustc_span::{Ident, Span, Symbol, sym};
 
-use crate::baseline::{emit, emit_with_note};
+use crate::baseline::emit_with_note;
 use crate::hir_shapes::{callee_of, peel_blocks_unsafe};
 
 rustc_session::declare_lint! {
     /// Flags a crate-private function returning a tuple (bare, or inside an
-    /// `Option`/`Result`) with two members of one type, when every call site
-    /// in the crate destructures it on the spot (`let (a, b) = f()`, an
+    /// `Option`/`Result`) with two members of one type, when every call in
+    /// the crate unpacks it on the spot (`let (a, b) = f()`, an
     /// `if let`/`match` arm, or `(a, self.b) = f()`) and all of them, across
-    /// at least two functions, give the members the same names. Those names
-    /// are the members' real names: written at every use, missing only from
-    /// the type, which is the one place the compiler could keep them attached.
-    /// As a tuple, `(r, g, b)` and `(r, b, g)` are the same type, so a
-    /// transposed pattern or return value goes through; when the function's
-    /// own body already returns the members under those names in another
-    /// order, the finding says where.
+    /// at least two functions, give the members the same names. Those are the
+    /// members' names everywhere but in the type, and since the members share
+    /// a type a swapped pair still compiles; when the function's own body
+    /// already returns them under those names in another order, the finding
+    /// says where. A struct with those fields puts the names in the
+    /// signature.
     ///
     /// Silent when the member types all differ (the compiler already rejects
     /// a transposition), when any caller keeps the tuple whole (stores,
@@ -64,6 +63,8 @@ struct Sites {
     /// The items the destructuring sites sit in.
     owners: HashSet<LocalDefId>,
     count: usize,
+    /// The first destructuring call, for the note.
+    first: Option<Span>,
     /// A site kept the tuple whole, left a member unnamed, or disagreed.
     opaque: bool,
 }
@@ -402,6 +403,7 @@ impl TupleWantsStruct {
             Use::Opaque => sites.opaque = true,
             Use::Names(names) => {
                 sites.count += 1;
+                sites.first.get_or_insert(site.span);
                 sites
                     .owners
                     .insert(cx.tcx.hir_get_parent_item(site.hir_id).def_id);
@@ -493,7 +495,7 @@ impl<'tcx> LateLintPass<'tcx> for TupleWantsStruct {
     }
 
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
-        let mut findings: Vec<(Span, String, Option<Span>)> = Vec::new();
+        let mut findings: Vec<(Span, String, Span, &str, String)> = Vec::new();
         for (def, cand) in &self.candidates {
             if self.poisoned.contains(def) {
                 continue;
@@ -501,14 +503,14 @@ impl<'tcx> LateLintPass<'tcx> for TupleWantsStruct {
             let Some(sites) = self.sites.get(def) else {
                 continue;
             };
-            let Some(names) = &sites.names else {
+            let (Some(names), Some(first)) = (&sites.names, sites.first) else {
                 continue;
             };
             if sites.opaque || sites.count < 2 || sites.owners.len() < 2 {
                 continue;
             }
             let lead = format!(
-                "all {} call sites of `{}`, in {} functions, destructure this as `{}`",
+                "every one of the {} calls to `{}` (in {} functions) unpacks this as `{}`",
                 sites.count,
                 cand.name,
                 sites.owners.len(),
@@ -524,41 +526,36 @@ impl<'tcx> LateLintPass<'tcx> for TupleWantsStruct {
                     a == b
                 }
             });
-            let (msg, note) = match transposed {
+            let (msg, at, note) = match transposed {
                 Some(r) => (
                     format!(
-                        "{lead}, but the body returns them as `{}`; {}, so both orders type-check and one of them is wrong",
+                        "{lead}, but the body returns them as `{}`, and since {} both orders compile and one of them is wrong",
                         tuple_of(&r.names),
                         cand.same,
                     ),
-                    Some(r.span),
+                    r.span,
+                    "the body returns them in the other order here",
                 ),
                 None => (
                     format!(
-                        "{lead}: the members are named everywhere except in the type; {}, so transposing them still type-checks",
+                        "{lead}, so those are the members' names everywhere but in the type, and since {} a swapped pair still compiles",
                         cand.same,
                     ),
-                    None,
+                    first,
+                    "one of the calls that names them",
                 ),
             };
-            findings.push((cand.ret_span, msg, note));
+            let fields: Vec<String> = names.iter().map(|n| format!("`{n}`")).collect();
+            let help = format!(
+                "return a struct with fields {} instead of the tuple; the names then live in the signature and same-typed members cannot trade places",
+                fields.join(", "),
+            );
+            findings.push((cand.ret_span, msg, at, note, help));
         }
         // `candidates` is a HashMap; report in source order.
         findings.sort_by_key(|(span, ..)| span.lo());
-        let help = "return a struct with these fields: the names move into the signature, and members of one type can no longer trade places";
-        for (span, msg, note) in findings {
-            match note {
-                Some(note) => emit_with_note(
-                    cx,
-                    TUPLE_WANTS_STRUCT,
-                    span,
-                    msg,
-                    note,
-                    "returned in this order here",
-                    help,
-                ),
-                None => emit(cx, TUPLE_WANTS_STRUCT, span, msg, help),
-            }
+        for (span, msg, at, note, help) in findings {
+            emit_with_note(cx, TUPLE_WANTS_STRUCT, span, msg, at, note, help);
         }
     }
 }

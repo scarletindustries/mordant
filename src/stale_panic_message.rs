@@ -7,10 +7,10 @@ use crate::claims::{self, DefNames};
 
 rustc_session::declare_lint! {
     /// Flags a panic-family message (`panic!`, `unreachable!`, `assert!`,
-    /// `expect`) whose backticked identifiers no longer exist in the file's
-    /// code or among the definitions of this crate or any crate it links. A
-    /// crash message that explains the invariant in terms of a guard a
-    /// refactor renamed actively misleads whoever reads the backtrace.
+    /// `expect`) that mentions a backticked identifier nothing by that name
+    /// exists for any more, in the file's code or among the definitions of
+    /// this crate or any crate it links. Whoever hits the panic is sent
+    /// looking for something that is gone.
     pub STALE_PANIC_MESSAGE,
     Warn,
     "panic or assert message names an identifier that no longer exists"
@@ -50,9 +50,9 @@ impl StalePanicMessage {
                     STALE_PANIC_MESSAGE,
                     at,
                     format!(
-                        "this message names `{ident}`, which appears nowhere in this file's code, this crate, or any crate it links"
+                        "this message mentions `{ident}`, but nothing by that name exists any more in this file's code, this crate, or any crate it links, so whoever hits this panic is sent looking for something that is gone"
                     ),
-                    "whoever reads this at a crash site will search for a name that no longer exists; update the message",
+                    format!("rewrite the message in terms of whatever replaced `{ident}`"),
                 );
             }
         }

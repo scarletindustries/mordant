@@ -13,11 +13,10 @@ use crate::hir_shapes::{Callee, callee_of};
 
 rustc_session::declare_lint! {
     /// Flags a crate-private function with two or more `bool` parameters
-    /// when a call site fills at least two of them with bare `true` /
-    /// `false`. At `f(x, true, false)` nothing says which flag each literal
-    /// sets, and the literals share a type, so the call with them in the
-    /// other order (or the wrong one flipped) is a program the compiler
-    /// accepts. The parameter names exist only in the signature; a
+    /// when a call fills at least two of them with bare `true` / `false`. At
+    /// `f(x, true, false)` nothing says which flag is which, and the
+    /// literals share a type, so the swapped call (or the wrong one flipped)
+    /// compiles too. The parameter names exist only in the signature; a
     /// two-variant enum per flag (or an options struct) carries them to
     /// every call and makes a swap a type error.
     ///
@@ -155,7 +154,7 @@ impl<'tcx> LateLintPass<'tcx> for BareBoolArgs {
     }
 
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
-        let mut findings: Vec<(Span, String, Span)> = Vec::new();
+        let mut findings: Vec<(Span, String, Span, String)> = Vec::new();
         for (def, calls) in &mut self.calls {
             calls.bare.sort_by_key(|(span, _)| span.lo());
             let Some((first, written)) = calls.bare.first() else {
@@ -184,27 +183,30 @@ impl<'tcx> LateLintPass<'tcx> for BareBoolArgs {
                 .tcx
                 .def_ident_span(*def)
                 .unwrap_or_else(|| cx.tcx.def_span(*def));
+            let params = format!("{} and {last}", names.join(", "));
             findings.push((
                 span,
                 format!(
-                    "`{}` takes `bool` parameters {} and {last}, and {k} of its {n} call sites {pass} bare `true`/`false` for {which}: nothing at `{written}` says which flag each one sets",
+                    "`{}` takes `bool` parameters {params}, and {k} of its {n} calls {pass} bare `true`/`false` for {which}, so at `{written}` nothing says which flag is which and the swapped call compiles too",
                     cx.tcx.item_name(*def),
-                    names.join(", "),
                 ),
                 *first,
+                format!(
+                    "give {params} each a two-variant enum type named for the flag (or group them in an options struct), so every call names what it sets and a swap is a type error"
+                ),
             ));
         }
         // `calls` is a HashMap; report in source order.
         findings.sort_by_key(|(span, ..)| span.lo());
-        for (span, msg, call) in findings {
+        for (span, msg, call, help) in findings {
             emit_with_note(
                 cx,
                 BARE_BOOL_ARGS,
                 span,
                 msg,
                 call,
-                "one such call",
-                "a two-variant enum per flag, or one options struct, names every argument at the call site and turns a swapped pair into a type error",
+                "one of those calls",
+                help,
             );
         }
     }

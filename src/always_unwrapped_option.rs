@@ -6,16 +6,15 @@ use rustc_lint::{LateContext, LateLintPass};
 use rustc_span::Symbol;
 
 use crate::adt_facts::{field_ty, is_option_ty, private_local_struct, struct_field};
-use crate::baseline::emit;
+use crate::baseline::emit_with_note;
 
 rustc_session::declare_lint! {
-    /// Flags an `Option` field every read of which assumes `Some`: two or
-    /// more `unwrap`/`expect` reads and not one site that handles `None`.
-    /// The type admits a state no reader survives, which usually means a
-    /// two-phase object: `None` exists only between construction and setup.
-    /// Splitting the phases into types (a builder that yields the ready
-    /// shape, or a plain `T` field) deletes every one of those panics
-    /// structurally.
+    /// Flags an `Option` field that is unwrapped at every one of its reads
+    /// (two or more `unwrap`/`expect`s) while nothing ever handles `None`, so
+    /// `None` only exists to crash on. That usually means a two-phase object:
+    /// `None` between construction and setup. Storing the value directly and
+    /// constructing the struct once it is available, or splitting it into a
+    /// before type and an after type, deletes every one of those panics.
     pub ALWAYS_UNWRAPPED_OPTION,
     Warn,
     "Option field whose None is never handled by any reader"
@@ -111,16 +110,20 @@ impl<'tcx> LateLintPass<'tcx> for AlwaysUnwrappedOption {
             let Some(fdef) = struct_field(cx.tcx.adt_def(*adt), *field) else {
                 continue;
             };
-            emit(
+            let owner = cx.tcx.item_name(*adt);
+            emit_with_note(
                 cx,
                 ALWAYS_UNWRAPPED_OPTION,
                 cx.tcx.def_span(fdef.did),
                 format!(
-                    "every read of `{}.{field}` assumes `Some` ({} unwraps, 0 sites handle `None`)",
-                    cx.tcx.item_name(*adt),
+                    "`{owner}.{field}` is unwrapped at every one of its {} reads and nothing ever handles `None`, so `None` only exists to crash on",
                     facts.panicking.len(),
                 ),
-                "`None` is a state no reader survives; split the phases into types, or store `T` directly",
+                facts.panicking[0],
+                "one of the reads",
+                format!(
+                    "store the `{field}` value directly and construct `{owner}` once you have it, or split `{owner}` into a type without `{field}` and a later one with it"
+                ),
             );
         }
     }

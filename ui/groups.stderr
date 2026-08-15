@@ -1,23 +1,28 @@
-warning: this arm absorbs every future variant of `Op` (3 variants today)
+warning: this catch-all also matches any variant added to `Op` later (3 today), so a new variant lands here silently instead of failing to compile
   --> $DIR/groups.rs:14:9
    |
 LL |         _ => 0,
    |         ^
    |
+note: `Op`, whose new variants would fall into this arm
+  --> $DIR/groups.rs:4:1
+   |
+LL | enum Op {
+   | ^^^^^^^
    = note: `#[warn(wildcard_over_own_enum)]` on by default
-help: list the remaining variants; the compiler then flags every new one added
+help: spell out the remaining variants instead; the compiler then points at this `match` whenever `Op` grows
    |
 LL -         _ => 0,
 LL +         Op::Sub | Op::Mul => 0,
    |
 
-warning: `.ok()` in statement position discards the error unobserved
+warning: `.ok();` turns this `Result` into an `Option` and drops it on the spot, so its `std::num::ParseIntError` error is thrown away by something that reads like handling
   --> $DIR/groups.rs:30:5
    |
 LL |     "1".parse::<u8>().ok();
    |     ^^^^^^^^^^^^^^^^^^^^^^
    |
-   = help: handle the error, or state the discard with `let _ = ...`
+   = help: handle the `Err` or propagate it with `?`; if dropping it is intended, write `let _ = ...;` so the discard is stated
    = note: `#[warn(discarded_error)]` on by default
 
 warning: 2 warnings emitted

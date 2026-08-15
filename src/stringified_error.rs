@@ -6,10 +6,10 @@ use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 
 rustc_session::declare_lint! {
-    /// Flags the site where a typed error is collapsed into a string:
-    /// `.map_err(|e| e.to_string())` on a `Result` whose error type is not
-    /// already a string. `stringly_error` flags the signature that demands
-    /// this; this lint flags the expression that performs the destruction.
+    /// Flags a `.map_err(|e| e.to_string())` that turns a typed error into a
+    /// `String`, after which callers cannot match on which failure it was.
+    /// `stringly_error` flags the signature that demands this; this lint
+    /// flags the expression that does it.
     pub STRINGIFIED_ERROR,
     Warn,
     "typed error collapsed into a string"
@@ -61,8 +61,12 @@ impl<'tcx> LateLintPass<'tcx> for StringifiedError {
                 cx,
                 STRINGIFIED_ERROR,
                 expr.span,
-                format!("typed error `{err_ty}` collapsed into a string"),
-                "return the error type, or an error enum with a variant that wraps it",
+                format!(
+                    "this `map_err` turns `{err_ty}` into `String`, so from here on callers cannot match on which failure it was"
+                ),
+                format!(
+                    "return `{err_ty}` itself, or an error enum with a variant that wraps it, and turn it into text only where it is displayed"
+                ),
             );
         }
     }

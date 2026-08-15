@@ -1,35 +1,35 @@
-warning: `timeout_ms` claims ms and `deadline_ns` claims ns; arithmetic between them mixes units
+warning: `timeout_ms` says it is in ms and `deadline_ns` says ns, and this arithmetic uses them as if they were the same unit
   --> $DIR/unit_mismatch.rs:11:5
    |
 LL |     t.timeout_ms + t.deadline_ns
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-   = help: convert one side, or rename whichever name is lying about its unit
+   = help: convert one side to the other's unit first, or if `timeout_ms` or `deadline_ns` is wrong about its unit, rename it; a `Duration` or a unit newtype makes the compiler catch the next one
    = note: `#[warn(unit_mismatch)]` on by default
 
-warning: `timeout_ms` claims ms and `deadline_ns` claims ns; comparison between them mixes units
+warning: `timeout_ms` says it is in ms and `deadline_ns` says ns, and this comparison uses them as if they were the same unit
   --> $DIR/unit_mismatch.rs:15:5
    |
 LL |     t.timeout_ms < t.deadline_ns
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-   = help: convert one side, or rename whichever name is lying about its unit
+   = help: convert one side to the other's unit first, or if `timeout_ms` or `deadline_ns` is wrong about its unit, rename it; a `Duration` or a unit newtype makes the compiler catch the next one
 
-warning: `timeout_ms` claims ms and `size_bytes` claims bytes; comparison between them mixes units
+warning: `timeout_ms` says it is in ms and `size_bytes` says bytes, and this comparison uses them as if they were the same unit
   --> $DIR/unit_mismatch.rs:19:5
    |
 LL |     t.timeout_ms == t.size_bytes
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-   = help: convert one side, or rename whichever name is lying about its unit
+   = help: convert one side to the other's unit first, or if `timeout_ms` or `size_bytes` is wrong about its unit, rename it; a `Duration` or a unit newtype makes the compiler catch the next one
 
-warning: `timeout_ms` claims ms and `elapsed_ns` claims ns; arithmetic between them mixes units
+warning: `timeout_ms` says it is in ms and `elapsed_ns` says ns, and this arithmetic uses them as if they were the same unit
   --> $DIR/unit_mismatch.rs:40:5
    |
 LL |     t.timeout_ms + elapsed_ns()
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-   = help: convert one side, or rename whichever name is lying about its unit
+   = help: convert one side to the other's unit first, or if `timeout_ms` or `elapsed_ns` is wrong about its unit, rename it; a `Duration` or a unit newtype makes the compiler catch the next one
 
 warning: 4 warnings emitted
 

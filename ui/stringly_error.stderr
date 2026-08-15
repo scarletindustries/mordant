@@ -1,57 +1,57 @@
-warning: public signature returns `Result<_, String>`
+warning: `public_string_err_is_flagged` is public and returns `Result<_, String>`, so its callers can only tell failures apart by reading the message text
   --> $DIR/stringly_error.rs:7:48
    |
 LL | pub fn public_string_err_is_flagged(x: u32) -> Result<u32, String> {
    |                                                ^^^^^^^^^^^^^^^^^^^
    |
-   = help: a string error has no variants to match on; define an error enum and return it
+   = help: define an error enum with a variant per way `public_string_err_is_flagged` can fail and return that; keep the text in its `Display` impl
    = note: `#[warn(stringly_error)]` on by default
 
-warning: public signature returns `Result<_, &str>`
+warning: `public_str_err_is_flagged` is public and returns `Result<_, &str>`, so its callers can only tell failures apart by reading the message text
   --> $DIR/stringly_error.rs:11:45
    |
 LL | pub fn public_str_err_is_flagged(x: u32) -> Result<u32, &'static str> {
    |                                             ^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-   = help: a string error has no variants to match on; define an error enum and return it
+   = help: define an error enum with a variant per way `public_str_err_is_flagged` can fail and return that; keep the text in its `Display` impl
 
-warning: public signature returns `Result<_, Cow<str>>`
+warning: `public_cow_err_is_flagged` is public and returns `Result<_, Cow<str>>`, so its callers can only tell failures apart by reading the message text
   --> $DIR/stringly_error.rs:15:45
    |
 LL | pub fn public_cow_err_is_flagged(x: u32) -> Result<u32, Cow<'static, str>> {
    |                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-   = help: a string error has no variants to match on; define an error enum and return it
+   = help: define an error enum with a variant per way `public_cow_err_is_flagged` can fail and return that; keep the text in its `Display` impl
 
-warning: public signature returns `Result<_, String>`
+warning: `req$DIRred_method_is_flagged` is public and returns `Result<_, String>`, so its callers can only tell failures apart by reading the message text
   --> $DIR/stringly_error.rs:20:58
    |
 LL |     fn req$DIRred_method_is_flagged(&self, input: &str) -> Result<u32, String>;
    |                                                          ^^^^^^^^^^^^^^^^^^^
    |
-   = help: a string error has no variants to match on; define an error enum and return it
+   = help: define an error enum with a variant per way `req$DIRred_method_is_flagged` can fail and return that; keep the text in its `Display` impl
 
-warning: typed error `std::num::ParseIntError` collapsed into a string
+warning: this `map_err` turns `std::num::ParseIntError` into `String`, so from here on callers cannot match on which failure it was
   --> $DIR/stringly_error.rs:42:9
    |
 LL |         s.parse().map(Numeric).map_err(|e| e.to_string())
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-   = help: return the error type, or an error enum with a variant that wraps it
+   = help: return `std::num::ParseIntError` itself, or an error enum with a variant that wraps it, and turn it into text only where it is displayed
    = note: `#[warn(stringified_error)]` on by default
 
-warning: `private_string_err_is_fine` has the same signature and body as `public_string_err_is_flagged`
+warning: `private_string_err_is_fine` has the same signature and, up to renamed locals, the same body as `public_string_err_is_flagged`, so one helper exists twice and a fix to either silently misses the other
   --> $DIR/stringly_error.rs:31:1
    |
 LL | fn private_string_err_is_fine(x: u32) -> Result<u32, String> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-note: the same body is here
+note: `public_string_err_is_flagged`, the other copy
   --> $DIR/stringly_error.rs:7:1
    |
 LL | pub fn public_string_err_is_flagged(x: u32) -> Result<u32, String> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   = help: one helper written twice drifts apart at the first fix; keep one and call it from the other's callers
+   = help: delete `private_string_err_is_fine` and call `public_string_err_is_flagged` from its callers (or the reverse)
    = note: `#[warn(reimplemented_helper)]` on by default
 
 warning: 6 warnings emitted

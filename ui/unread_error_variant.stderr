@@ -1,35 +1,55 @@
-warning: `LoadError::Corrupt` is constructed here, but no pattern outside `LoadError`'s trait impls ever names it
+warning: `LoadError::Corrupt` is constructed here, but no `match` arm or pattern anywhere (outside `LoadError`'s own trait impls) ever singles it out, so whatever it carries is never read and it is only ever handled by a catch-all
   --> $DIR/unread_error_variant.rs:26:18
    |
 LL |         1 => Err(LoadError::Corrupt("bad header".to_owned())),
    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-   = help: the variant's structure is never read; handle it distinctly or collapse it into another variant
+note: the variant, which nothing matches on
+  --> $DIR/unread_error_variant.rs:9:5
+   |
+LL |     Corrupt(String),
+   |     ^^^^^^^
+   = help: add an arm for `LoadError::Corrupt` where `LoadError` is matched, or fold it into the variant it is currently lumped with
    = note: `#[warn(unread_error_variant)]` on by default
 
-warning: `Mode::Slow` is constructed here, but no pattern outside `Mode`'s trait impls ever names it
+warning: `Mode::Slow` is constructed here, but no `match` arm or pattern anywhere (outside `Mode`'s own trait impls) ever singles it out, so whatever it carries is never read and it is only ever handled by a catch-all
   --> $DIR/unread_error_variant.rs:96:31
    |
 LL |     speed(Mode::Fast) + speed(Mode::Slow) + speed(Mode::Crawl) + speed(Mode::Off)
    |                               ^^^^^^^^^^
    |
-   = help: the variant's structure is never read; handle it distinctly or collapse it into another variant
+note: the variant, which nothing matches on
+  --> $DIR/unread_error_variant.rs:83:5
+   |
+LL |     Slow,
+   |     ^^^^
+   = help: add an arm for `Mode::Slow` where `Mode` is matched, or fold it into the variant it is currently lumped with
 
-warning: `Mode::Crawl` is constructed here, but no pattern outside `Mode`'s trait impls ever names it
+warning: `Mode::Crawl` is constructed here, but no `match` arm or pattern anywhere (outside `Mode`'s own trait impls) ever singles it out, so whatever it carries is never read and it is only ever handled by a catch-all
   --> $DIR/unread_error_variant.rs:96:51
    |
 LL |     speed(Mode::Fast) + speed(Mode::Slow) + speed(Mode::Crawl) + speed(Mode::Off)
    |                                                   ^^^^^^^^^^^
    |
-   = help: the variant's structure is never read; handle it distinctly or collapse it into another variant
+note: the variant, which nothing matches on
+  --> $DIR/unread_error_variant.rs:84:5
+   |
+LL |     Crawl,
+   |     ^^^^^
+   = help: add an arm for `Mode::Crawl` where `Mode` is matched, or fold it into the variant it is currently lumped with
 
-warning: `ParseError::Malformed` is constructed here, but no pattern outside `ParseError`'s trait impls ever names it
+warning: `ParseError::Malformed` is constructed here, but no `match` arm or pattern anywhere (outside `ParseError`'s own trait impls) ever singles it out, so whatever it carries is never read and it is only ever handled by a catch-all
   --> $DIR/unread_error_variant.rs:176:30
    |
 LL |     s.parse::<u32>().map_err(ParseError::Malformed)
    |                              ^^^^^^^^^^^^^^^^^^^^^
    |
-   = help: the variant's structure is never read; handle it distinctly or collapse it into another variant
+note: the variant, which nothing matches on
+  --> $DIR/unread_error_variant.rs:169:5
+   |
+LL |     Malformed(std::num::ParseIntError),
+   |     ^^^^^^^^^
+   = help: add an arm for `ParseError::Malformed` where `ParseError` is matched, or fold it into the variant it is currently lumped with
 
 warning: 4 warnings emitted
 

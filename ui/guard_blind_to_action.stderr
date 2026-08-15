@@ -1,27 +1,47 @@
-warning: `detach` is gated by `can_donate`, but touches `conns` which the guard never reads
+warning: `detach` runs only if `can_donate` says yes, but it changes `conns`, which `can_donate` never looks at, so the check cannot know whether `detach` is safe here
   --> $DIR/guard_blind_to_action.rs:22:9
    |
 LL |         self.detach();
    |         ^^^^^^^^^^^^^
    |
-   = help: a guard blind to part of the state its action manipulates cannot be sound; align what the pair reads
+note: `can_donate` reads only `queue`
+  --> $DIR/guard_blind_to_action.rs:9:5
+   |
+LL |     fn can_donate(&self) -> bool {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: make `can_donate` look at `conns` too, or move the `conns` work out from under this check
    = note: `#[warn(guard_blind_to_action)]` on by default
 
-warning: `drain` is gated by `can_donate`, but touches `conns` which the guard never reads
+warning: `drain` runs only if `can_donate` says yes, but it changes `conns`, which `can_donate` never looks at, so the check cannot know whether `drain` is safe here
   --> $DIR/guard_blind_to_action.rs:43:17
    |
 LL |         let n = self.drain();
    |                 ^^^^^^^^^^^^
    |
-   = help: a guard blind to part of the state its action manipulates cannot be sound; align what the pair reads
+note: `can_donate` reads only `queue`
+  --> $DIR/guard_blind_to_action.rs:9:5
+   |
+LL |     fn can_donate(&self) -> bool {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: make `can_donate` look at `conns` too, or move the `conns` work out from under this check
 
-warning: `detach` is gated by `can_donate` and `can_log`, but touches `conns` which none of the guards read
+warning: `detach` runs only if `can_donate` and `can_log` say yes, but it changes `conns`, which neither `can_donate` nor `can_log` looks at, so the checks cannot know whether `detach` is safe here
   --> $DIR/guard_blind_to_action.rs:120:13
    |
 LL |             self.detach();
    |             ^^^^^^^^^^^^^
    |
-   = help: a guard blind to part of the state its action manipulates cannot be sound; align what the pair reads
+note: `can_donate` reads only `queue`
+  --> $DIR/guard_blind_to_action.rs:9:5
+   |
+LL |     fn can_donate(&self) -> bool {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: `can_log` reads only `queue`
+  --> $DIR/guard_blind_to_action.rs:109:5
+   |
+LL |     fn can_log(&self) -> bool {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: make `can_donate` or `can_log` look at `conns` too, or move the `conns` work out from under this check
 
 warning: 3 warnings emitted
 

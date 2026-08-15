@@ -1,75 +1,105 @@
-warning: this arm absorbs every future variant of `Op` (3 variants today)
+warning: this catch-all also matches any variant added to `Op` later (3 today), so a new variant lands here silently instead of failing to compile
   --> $DIR/wildcard_over_own_enum.rs:12:9
    |
 LL |         _ => 0,
    |         ^
    |
+note: `Op`, whose new variants would fall into this arm
+  --> $DIR/wildcard_over_own_enum.rs:3:1
+   |
+LL | enum Op {
+   | ^^^^^^^
    = note: `#[warn(wildcard_over_own_enum)]` on by default
-help: list the remaining variants; the compiler then flags every new one added
+help: spell out the remaining variants instead; the compiler then points at this `match` whenever `Op` grows
    |
 LL -         _ => 0,
 LL +         Op::Sub | Op::Mul => 0,
    |
 
-warning: this arm absorbs every future variant of `Op` (3 variants today)
+warning: this catch-all also matches any variant added to `Op` later (3 today), so a new variant lands here silently instead of failing to compile
   --> $DIR/wildcard_over_own_enum.rs:19:9
    |
 LL |         other => cost(other),
    |         ^^^^^
    |
-help: list the remaining variants; the compiler then flags every new one added
+note: `Op`, whose new variants would fall into this arm
+  --> $DIR/wildcard_over_own_enum.rs:3:1
+   |
+LL | enum Op {
+   | ^^^^^^^
+help: spell out the remaining variants instead; the compiler then points at this `match` whenever `Op` grows
    |
 LL |         other @ (Op::Sub | Op::Mul) => cost(other),
    |               +++++++++++++++++++++
 
-warning: this arm absorbs every future variant of `Entry` (3 variants today)
+warning: this catch-all also matches any variant added to `Entry` later (3 today), so a new variant lands here silently instead of failing to compile
   --> $DIR/wildcard_over_own_enum.rs:96:9
    |
 LL |         _ => 0,
    |         ^
    |
-help: list the remaining variants; the compiler then flags every new one added
+note: `Entry`, whose new variants would fall into this arm
+  --> $DIR/wildcard_over_own_enum.rs:87:1
+   |
+LL | pub enum Entry {
+   | ^^^^^^^^^^^^^^
+help: spell out the remaining variants instead; the compiler then points at this `match` whenever `Entry` grows
    |
 LL -         _ => 0,
 LL +         Entry::Memory | Entry::Irq => 0,
    |
 
-warning: this arm absorbs every future variant of `Op` (3 variants today)
+warning: this catch-all also matches any variant added to `Op` later (3 today), so a new variant lands here silently instead of failing to compile
   --> $DIR/wildcard_over_own_enum.rs:163:9
    |
 LL |         _ => {
    |         ^
    |
-help: list the remaining variants; the compiler then flags every new one added
+note: `Op`, whose new variants would fall into this arm
+  --> $DIR/wildcard_over_own_enum.rs:3:1
+   |
+LL | enum Op {
+   | ^^^^^^^
+help: spell out the remaining variants instead; the compiler then points at this `match` whenever `Op` grows
    |
 LL -         _ => {
 LL +         Op::Sub | Op::Mul => {
    |
 
-warning: this arm absorbs every future variant of `Op` (3 variants today)
+warning: this catch-all also matches any variant added to `Op` later (3 today), so a new variant lands here silently instead of failing to compile
   --> $DIR/wildcard_over_own_enum.rs:208:13
    |
 LL |             _ => 0,
    |             ^
    |
-help: list the remaining variants; the compiler then flags every new one added
+note: `Op`, whose new variants would fall into this arm
+  --> $DIR/wildcard_over_own_enum.rs:3:1
+   |
+LL | enum Op {
+   | ^^^^^^^
+help: spell out the remaining variants instead; the compiler then points at this `match` whenever `Op` grows
    |
 LL -             _ => 0,
 LL +             Op::Add | Op::Mul => 0,
    |
 
-warning: this arm absorbs every future variant of `Op` (3 variants today)
+warning: this catch-all also matches any variant added to `Op` later (3 today), so a new variant lands here silently instead of failing to compile
   --> $DIR/wildcard_over_own_enum.rs:217:9
    |
 LL |         other => {
    |         ^^^^^
    |
-help: list the remaining variants; the compiler then flags every new one added
+note: `Op`, whose new variants would fall into this arm
+  --> $DIR/wildcard_over_own_enum.rs:3:1
+   |
+LL | enum Op {
+   | ^^^^^^^
+help: spell out the remaining variants instead; the compiler then points at this `match` whenever `Op` grows
    |
 LL |         other @ (Op::Sub | Op::Mul) => {
    |               +++++++++++++++++++++
 
-warning: this `match` on `Op` is written out arm for arm a second time
+warning: this `match` on `Op` repeats an earlier one arm for arm, so the same table from variants to results exists twice and a change to one copy silently misses the other
   --> $DIR/wildcard_over_own_enum.rs:219:13
    |
 LL | /             match other {
@@ -79,7 +109,7 @@ LL | |                 Op::Mul => 3,
 LL | |             }
    | |_____________^
    |
-note: the same match is here
+note: the other copy
   --> $DIR/wildcard_over_own_enum.rs:177:18
    |
 LL |           other => match other {
@@ -89,7 +119,7 @@ LL | |             Op::Sub => 2,
 LL | |             Op::Mul => 3,
 LL | |         },
    | |_________^
-   = help: the mapping lives in two places kept in step by hand; a method on the enum states it once
+   = help: move the mapping into a method on `Op` and call it from both places
    = note: `#[warn(same_match_twice)]` on by default
 
 warning: 7 warnings emitted

@@ -1,10 +1,10 @@
-warning: `.ok()` in statement position discards the error unobserved
+warning: `.ok();` turns this `Result` into an `Option` and drops it on the spot, so its `u32` error is thrown away by something that reads like handling
   --> $DIR/discarded_error.rs:8:5
    |
 LL |     fallible().ok();
    |     ^^^^^^^^^^^^^^^
    |
-   = help: handle the error, or state the discard with `let _ = ...`
+   = help: handle the `Err` or propagate it with `?`; if dropping it is intended, write `let _ = ...;` so the discard is stated
    = note: `#[warn(discarded_error)]` on by default
 
 warning: 1 warning emitted

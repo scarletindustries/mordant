@@ -1,19 +1,29 @@
-warning: parameters `w: u32` and `h: u32` pass unchanged between `decode`, `scale` and `checksum` (`decode` hands them to `scale` in one call): one value travelling as 2 parameters
+warning: `w: u32` and `h: u32` are declared alike by `decode`, `scale` and `checksum` and handed between them unchanged, so they are one value that only exists as 2 loose parameters a caller can mix up or pass by halves
   --> $DIR/parallel_params.rs:5:23
    |
 LL | fn decode(src: &[u8], w: u32, h: u32) -> Vec<u8> {
    |                       ^^^^^^
    |
-   = help: a struct with these fields names the value; each function then takes, checks and forwards one parameter
+note: `decode` hands them to `scale` here
+  --> $DIR/parallel_params.rs:6:15
+   |
+LL |     let out = scale(src, w, h, 2);
+   |               ^^^^^^^^^^^^^^^^^^^
+   = help: declare a struct with fields `w` and `h` and make `decode`, `scale` and `checksum` take it as one parameter
    = note: `#[warn(parallel_params)]` on by default
 
-warning: parameters `host: &str`, `port: u16` and `tls: Tls` pass unchanged between `send`, `dial` and `log_target` (`send` hands them to `dial` in one call): one value travelling as 3 parameters
+warning: `host: &str`, `port: u16` and `tls: Tls` are declared alike by `send`, `dial` and `log_target` and handed between them unchanged, so they are one value that only exists as 3 loose parameters a caller can mix up or pass by halves
   --> $DIR/parallel_params.rs:37:20
    |
 LL |     fn send(&self, host: &str, port: u16, tls: Tls, sink: &mut Vec<String>) {
    |                    ^^^^^^^^^^
    |
-   = help: a struct with these fields names the value; each function then takes, checks and forwards one parameter
+note: `send` hands them to `dial` here
+  --> $DIR/parallel_params.rs:39:13
+   |
+LL |             self.dial(host, port, tls, &mut *sink);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: declare a struct with fields `host`, `port` and `tls` and make `send`, `dial` and `log_target` take it as one parameter
 
 warning: 2 warnings emitted
 

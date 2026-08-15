@@ -3,7 +3,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::ops::ControlFlow;
 
 use crate::adt_facts::{field_ty, has_fixed_repr, is_option_ty, struct_field};
-use crate::baseline::emit;
+use crate::baseline::emit_with_note;
 use crate::hir_shapes::{assigned_field, field_chain, peel_blocks_unsafe};
 use clippy_utils::visitors::for_each_expr_without_closures;
 use clippy_utils::{as_some_expr, get_parent_expr, hash_expr, is_default_equivalent, is_none_expr};
@@ -21,13 +21,13 @@ use rustc_span::hygiene::{ExpnKind, MacroKind};
 use rustc_span::{Span, Symbol, sym};
 
 rustc_session::declare_lint! {
-    /// Flags a bool field that stores whether a sibling `Option` field is
-    /// `Some`: every write to either of them, struct literal or field
+    /// Flags a bool field that is only ever written together with a sibling
+    /// `Option` field, `true` with `Some(..)` and `false` with `None` (or
+    /// always the reverse): every write to either, struct literal or field
     /// assignment, sits beside a write to the other in the same struct
-    /// expression or straight-line block, `true` always with `Some(..)` and
-    /// `false` always with `None` (or always the reverse). The flag is the
-    /// `Option`'s discriminant kept a second time, and nothing but that habit
-    /// keeps the two agreeing.
+    /// expression or straight-line block. The flag is that field's
+    /// `is_some()` stored a second time, and nothing but habit keeps the two
+    /// equal.
     ///
     /// Only fires on named fields nothing outside the crate can name, when
     /// every write to the pair is a literal `true`/`false` and
@@ -73,6 +73,8 @@ struct FieldWrites {
     /// (site, set): where the field is written, and whether it is written
     /// `true` / `Some(..)` there.
     sites: HashSet<(Site, bool)>,
+    /// The first write recorded, for the note.
+    first: Option<Span>,
 }
 
 #[derive(Default)]
@@ -214,6 +216,7 @@ impl BoolBesideOption {
                 kind,
                 unprovable: false,
                 sites: HashSet::new(),
+                first: None,
             })
     }
 
@@ -223,6 +226,7 @@ impl BoolBesideOption {
         base_ty: ty::Ty<'tcx>,
         name: Symbol,
         site: Site,
+        at: Span,
         value: &Expr<'_>,
     ) {
         let Some((adt, kind)) = tracked_field(cx, base_ty, name) else {
@@ -235,6 +239,13 @@ impl BoolBesideOption {
             Some(set) if facts.sites.contains(&(site, !set)) => facts.unprovable = true,
             Some(set) => {
                 facts.sites.insert((site, set));
+                // A write the user spelled, over one a derive expanded to.
+                if facts
+                    .first
+                    .is_none_or(|f| f.from_expansion() && !at.from_expansion())
+                {
+                    facts.first = Some(at);
+                }
             }
             None => facts.unprovable = true,
         }
@@ -272,7 +283,7 @@ impl<'tcx> LateLintPass<'tcx> for BoolBesideOption {
                     place: 0,
                 };
                 for field in fields {
-                    self.record(cx, ty, field.ident.name, site, field.expr);
+                    self.record(cx, ty, field.ident.name, site, field.span, field.expr);
                 }
             }
             ExprKind::Assign(place, value, _) => {
@@ -290,7 +301,7 @@ impl<'tcx> LateLintPass<'tcx> for BoolBesideOption {
                             stretch,
                             place: place_key(cx, base),
                         };
-                        self.record(cx, base_ty, ident.name, site, value);
+                        self.record(cx, base_ty, ident.name, site, expr.span, value);
                     }
                     None => self.poison(cx, base_ty, ident.name),
                 }
@@ -365,7 +376,7 @@ impl<'tcx> LateLintPass<'tcx> for BoolBesideOption {
                 per_struct.entry(did).or_default().push((name, facts));
             }
         }
-        let mut findings: Vec<(Span, String)> = Vec::new();
+        let mut findings: Vec<(Span, String, Span, String)> = Vec::new();
         for (did, mut fields) in per_struct {
             fields.sort_by_key(|(name, _)| name.as_str().to_owned());
             let adt = cx.tcx.adt_def(did);
@@ -377,6 +388,9 @@ impl<'tcx> LateLintPass<'tcx> for BoolBesideOption {
                 {
                     continue;
                 }
+                let Some(first) = flag_facts.first else {
+                    continue;
+                };
                 for (opt, opt_facts) in fields.iter().filter(|(_, f)| f.kind == Kind::Opt) {
                     let inverted: HashSet<(Site, bool)> =
                         opt_facts.sites.iter().map(|&(s, set)| (s, !set)).collect();
@@ -397,23 +411,29 @@ impl<'tcx> LateLintPass<'tcx> for BoolBesideOption {
                     findings.push((
                         cx.tcx.def_span(field.did),
                         format!(
-                            "`{flag}` is only ever written beside `{opt}` of `{}`, `true` with `{with_true}` and `false` with `{with_false}` ({} sites): it stores `{opt}.{reading}()` a second time",
+                            "`{flag}` of `{}` is written only together with `{opt}` in all {} places, `true` with `{with_true}` and `false` with `{with_false}`, so it is `{opt}.{reading}()` stored a second time and kept equal only by habit",
                             cx.tcx.def_path_str(did),
                             flag_facts.sites.len(),
+                        ),
+                        first,
+                        format!(
+                            "delete `{flag}` and ask `{opt}.{reading}()` where it was read; the two then cannot disagree"
                         ),
                     ));
                     break;
                 }
             }
         }
-        findings.sort_by_key(|(span, _)| span.lo());
-        for (span, msg) in findings {
-            emit(
+        findings.sort_by_key(|(span, ..)| span.lo());
+        for (span, msg, first, help) in findings {
+            emit_with_note(
                 cx,
                 BOOL_BESIDE_OPTION,
                 span,
                 msg,
-                "the `Option` already carries this state; drop the flag and ask the `Option`, so the two cannot disagree",
+                first,
+                "one of the writes that pairs them",
+                help,
             );
         }
     }

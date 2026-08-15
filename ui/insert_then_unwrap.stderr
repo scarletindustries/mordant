@@ -1,35 +1,55 @@
-warning: this unwrap re-fetches `m[1]`, which the insert above just proved present
+warning: this looks `1` up in `m` again and unwraps it, straight after the `insert` above put it there with nothing in between that could remove it, so the lookup and its panic path are both redundant
   --> $DIR/insert_then_unwrap.rs:11:13
    |
 LL |     let v = m.get(&1).unwrap();
    |             ^^^^^^^^^^^^^^^^^^
    |
-   = help: keep the inserted value, or use the entry API; the panic path and the second lookup both vanish
+note: the insert that already proves it present
+  --> $DIR/insert_then_unwrap.rs:10:5
+   |
+LL |     m.insert(1, 2);
+   |     ^^^^^^^^^^^^^^
+   = help: keep the value you inserted (or use `m.entry(1)`, which hands it back) instead of fetching it again
    = note: `#[warn(insert_then_unwrap)]` on by default
 
-warning: this unwrap re-fetches `m[7]`, which the insert above just proved present
+warning: this looks `7` up in `m` again and unwraps it, straight after the `insert` above put it there with nothing in between that could remove it, so the lookup and its panic path are both redundant
   --> $DIR/insert_then_unwrap.rs:19:13
    |
 LL |     let v = m.get(&7).unwrap();
    |             ^^^^^^^^^^^^^^^^^^
    |
-   = help: keep the inserted value, or use the entry API; the panic path and the second lookup both vanish
+note: the insert that already proves it present
+  --> $DIR/insert_then_unwrap.rs:17:5
+   |
+LL |     m.insert(7, 8);
+   |     ^^^^^^^^^^^^^^
+   = help: keep the value you inserted (or use `m.entry(7)`, which hands it back) instead of fetching it again
 
-warning: this unwrap re-fetches `m[k]`, which the insert above just proved present
+warning: this looks `k` up in `m` again and unwraps it, straight after the `insert` above put it there with nothing in between that could remove it, so the lookup and its panic path are both redundant
   --> $DIR/insert_then_unwrap.rs:80:13
    |
 LL |     let v = m.get(k).unwrap();
    |             ^^^^^^^^^^^^^^^^^
    |
-   = help: keep the inserted value, or use the entry API; the panic path and the second lookup both vanish
+note: the insert that already proves it present
+  --> $DIR/insert_then_unwrap.rs:79:5
+   |
+LL |     m.insert(*k, 2);
+   |     ^^^^^^^^^^^^^^^
+   = help: keep the value you inserted (or use `m.entry(k)`, which hands it back) instead of fetching it again
 
-warning: this unwrap re-fetches `m[k]`, which the insert above just proved present
+warning: this looks `k` up in `m` again and unwraps it, straight after the `insert` above put it there with nothing in between that could remove it, so the lookup and its panic path are both redundant
   --> $DIR/insert_then_unwrap.rs:87:13
    |
 LL |     let k = m.get(&k).unwrap();
    |             ^^^^^^^^^^^^^^^^^^
    |
-   = help: keep the inserted value, or use the entry API; the panic path and the second lookup both vanish
+note: the insert that already proves it present
+  --> $DIR/insert_then_unwrap.rs:86:5
+   |
+LL |     m.insert(k, 2);
+   |     ^^^^^^^^^^^^^^
+   = help: keep the value you inserted (or use `m.entry(k)`, which hands it back) instead of fetching it again
 
 warning: 4 warnings emitted
 

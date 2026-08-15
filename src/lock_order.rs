@@ -7,15 +7,15 @@ use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::Span;
 
-use crate::baseline::emit;
+use crate::baseline::emit_with_note;
 use crate::hir_shapes::{FieldChain, dotted, field_chain, is_self_path, stmt_expr};
 
 rustc_session::declare_lint! {
-    /// Flags two lock acquisitions the crate performs in both orders: one
-    /// body takes `a` then `b` while `a`'s guard is still live, another takes
-    /// `b` then `a`. Each order alone is fine; both together are the shape of
-    /// a deadlock waiting for the right interleaving. The claim is only that
-    /// both orders exist, with the two locations named.
+    /// Flags two locks the crate takes in both orders: one body locks `b`
+    /// while `a` is held, another locks `a` while `b` is held. Each order
+    /// alone is fine; with both, two threads taking one path each can
+    /// deadlock. The claim is only that both orders exist, with the two
+    /// locations shown.
     ///
     /// Conservative on purpose: only `.lock()`, `.read()` and `.write()` on
     /// receivers whose type is a `Mutex` or `RwLock`, only guards bound by
@@ -156,8 +156,7 @@ impl<'tcx> LateLintPass<'tcx> for LockOrder {
     }
 
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
-        let sm = cx.tcx.sess.source_map();
-        let mut findings: Vec<(Span, String)> = Vec::new();
+        let mut findings: Vec<(Span, String, Span, String, String)> = Vec::new();
         for ((a, b), span) in &self.pairs {
             // Report each conflicting pair once, from the lexically smaller
             // side, so the two orders produce one finding, not two.
@@ -169,22 +168,20 @@ impl<'tcx> LateLintPass<'tcx> for LockOrder {
                 findings.push((
                     *span,
                     format!(
-                        "`{a}` is locked before `{b}` here, but `{b}` before `{a}` at {}",
-                        sm.span_to_diagnostic_string(*rev_span),
+                        "`{b}` is locked here while `{a}` is held, and another place locks `{a}` while `{b}` is held, so two threads taking one path each can deadlock"
+                    ),
+                    *rev_span,
+                    format!("the opposite order: `{a}` locked while `{b}` is held"),
+                    format!(
+                        "pick one order for `{a}` and `{b}` and take them that way in both places, or take both under one lock"
                     ),
                 ));
             }
         }
         // `pairs` is a HashMap; report in source order.
-        findings.sort_by_key(|(span, _)| span.lo());
-        for (span, msg) in findings {
-            emit(
-                cx,
-                LOCK_ORDER,
-                span,
-                msg,
-                "both orders existing is the shape of a deadlock; pick one order and hold to it everywhere",
-            );
+        findings.sort_by_key(|(span, ..)| span.lo());
+        for (span, msg, rev, note, help) in findings {
+            emit_with_note(cx, LOCK_ORDER, span, msg, rev, note, help);
         }
     }
 }

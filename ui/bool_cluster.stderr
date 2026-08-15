@@ -1,19 +1,19 @@
-warning: the 5 bool fields `fair`, `rr`, `census`, `stacks`, `counters` of `ShareVerdict` are 32 representable states
+warning: `ShareVerdict` has 5 bool fields (`fair`, `rr`, `census`, `stacks`, `counters`), which allows 32 combinations whether or not all 32 mean something
   --> $DIR/bool_cluster.rs:4:1
    |
 LL | struct ShareVerdict {
    | ^^^^^^^^^^^^^^^^^^^
    |
-   = help: if fewer are legal, name them in an enum; if the layout is fixed elsewhere, give it a repr
+   = help: if only some of the 32 are legal, replace these bools with an enum of the legal ones; if the layout is fixed from outside, say so with a `repr` on `ShareVerdict`
    = note: `#[warn(bool_cluster)]` on by default
 
-warning: the 3 bool fields `too_big`, `exhausted`, `fragmented` of `Refusals` are 8 representable states
+warning: `Refusals` has 3 bool fields (`too_big`, `exhausted`, `fragmented`), which allows 8 combinations whether or not all 8 mean something
   --> $DIR/bool_cluster.rs:14:1
    |
 LL | struct Refusals {
    | ^^^^^^^^^^^^^^^
    |
-   = help: if fewer are legal, name them in an enum; if the layout is fixed elsewhere, give it a repr
+   = help: if only some of the 8 are legal, replace these bools with an enum of the legal ones; if the layout is fixed from outside, say so with a `repr` on `Refusals`
 
 warning: 2 warnings emitted
 

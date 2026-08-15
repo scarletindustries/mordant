@@ -1,10 +1,18 @@
-warning: no construction of `Outcome` sets more than one of `ok`, `err` to `Some` (2 sites checked)
+warning: none of the 2 places `Outcome` is constructed sets more than one of `ok`, `err` to `Some`, so these fields are alternatives that the struct nevertheless lets be set together
   --> $DIR/options_as_enum.rs:4:1
    |
 LL | struct Outcome {
    | ^^^^^^^^^^^^^^
    |
-   = help: these fields encode one state; an enum with one variant per field represents it
+note: one of the constructions
+  --> $DIR/options_as_enum.rs:10:5
+   |
+LL | /     Outcome {
+LL | |         ok: Some(1),
+LL | |         err: None,
+LL | |     }
+   | |_____^
+   = help: replace `ok`, `err` with one enum field that has a variant per case; two `Some`s at once then cannot be written
    = note: `#[warn(options_as_enum)]` on by default
 
 warning: 1 warning emitted

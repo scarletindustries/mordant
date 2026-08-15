@@ -1,10 +1,15 @@
-warning: the bool fields `done`, `running` of `Task` are only ever assigned together (2 sites in 2 functions)
+warning: the bool fields `done`, `running` of `Task` are always assigned together (2 blocks in 2 functions), so between them they hold one state that the struct lets fall out of step
   --> $DIR/parallel_bools.rs:4:1
    |
 LL | struct Task {
    | ^^^^^^^^^^^
    |
-   = help: together these fields encode one state; an enum makes the unpaired combinations unrepresentable
+note: one of the blocks that assigns them together
+  --> $DIR/parallel_bools.rs:13:9
+   |
+LL |         self.done = false;
+   |         ^^^^^^^^^^^^^^^^^
+   = help: replace `done`, `running` with one enum field naming the states those blocks set; a combination no block writes then cannot exist
    = note: `#[warn(parallel_bools)]` on by default
 
 warning: 1 warning emitted

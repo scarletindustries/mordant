@@ -1,20 +1,20 @@
 use std::collections::HashMap;
 
 use crate::adt_facts::{field_ty, private_local_struct, struct_field};
-use crate::baseline::emit;
+use crate::baseline::emit_with_note;
 use crate::hir_shapes::assigned_field;
 use clippy_utils::get_enclosing_block;
 use rustc_hir::def_id::DefId;
 use rustc_hir::{Expr, ExprKind, HirId};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
-use rustc_span::Symbol;
+use rustc_span::{Span, Symbol};
 
 rustc_session::declare_lint! {
-    /// Flags bool fields that are never assigned separately: every write to
+    /// Flags bool fields that are always assigned together: every write to
     /// one sits in the same block as a write to the other, across at least two
-    /// functions. Together the fields encode one state; an enum names it and
-    /// makes the unpaired combinations unrepresentable.
+    /// functions, so between them they hold one state that the struct lets
+    /// fall out of step. One enum field naming those states cannot.
     ///
     /// Only fires on structs private to the crate. One lone write to either
     /// field anywhere — `s.f = ..`, `s.f |= ..`, or either through a `Box`,
@@ -25,10 +25,18 @@ rustc_session::declare_lint! {
     "bool fields only ever assigned together"
 }
 
+/// One assignment to a bool field: the body and block it sits in, and the
+/// assignment itself.
+struct Write {
+    body: DefId,
+    block: HirId,
+    at: Span,
+}
+
 #[derive(Default)]
 pub struct ParallelBools {
-    /// (struct, field) -> the (body, block) sites that assign it.
-    writes: HashMap<(DefId, Symbol), Vec<(DefId, HirId)>>,
+    /// (struct, field) -> the sites that assign it.
+    writes: HashMap<(DefId, Symbol), Vec<Write>>,
 }
 
 rustc_session::impl_lint_pass!(ParallelBools => [PARALLEL_BOOLS]);
@@ -71,32 +79,42 @@ impl<'tcx> LateLintPass<'tcx> for ParallelBools {
         self.writes
             .entry((adt.did(), ident.name))
             .or_default()
-            .push((body, block.hir_id));
+            .push(Write {
+                body,
+                block: block.hir_id,
+                at: expr.span,
+            });
     }
 
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
         // Group fields per struct, then find groups whose write-site sets are
         // identical. Sites are compared as sets of blocks.
         type Sites = std::collections::HashSet<(DefId, HirId)>;
-        let mut per_struct: HashMap<DefId, Vec<(Symbol, Sites)>> = HashMap::new();
-        for ((did, field), sites) in self.writes.drain() {
-            let sites: Sites = sites.into_iter().collect();
-            per_struct.entry(did).or_default().push((field, sites));
+        let mut per_struct: HashMap<DefId, Vec<(Symbol, Sites, Span)>> = HashMap::new();
+        for ((did, field), writes) in self.writes.drain() {
+            let Some(first) = writes.iter().map(|w| w.at).min() else {
+                continue;
+            };
+            let sites: Sites = writes.into_iter().map(|w| (w.body, w.block)).collect();
+            per_struct
+                .entry(did)
+                .or_default()
+                .push((field, sites, first));
         }
         for (did, mut fields) in per_struct {
             if fields.len() < 2 {
                 continue;
             }
-            fields.sort_by_key(|(f, _)| f.as_str().to_owned());
+            fields.sort_by_key(|(f, ..)| f.as_str().to_owned());
             // Partition by identical site-sets.
-            let mut groups: Vec<(&Sites, Vec<Symbol>)> = Vec::new();
-            for (field, sites) in &fields {
-                match groups.iter_mut().find(|(s, _)| *s == sites) {
-                    Some((_, members)) => members.push(*field),
-                    None => groups.push((sites, vec![*field])),
+            let mut groups: Vec<(&Sites, Vec<Symbol>, Span)> = Vec::new();
+            for (field, sites, first) in &fields {
+                match groups.iter_mut().find(|(s, ..)| *s == sites) {
+                    Some((_, members, _)) => members.push(*field),
+                    None => groups.push((sites, vec![*field], *first)),
                 }
             }
-            for (sites, members) in groups {
+            for (sites, members, first) in groups {
                 if members.len() < 2 || sites.len() < 2 {
                     continue;
                 }
@@ -106,18 +124,22 @@ impl<'tcx> LateLintPass<'tcx> for ParallelBools {
                     continue;
                 }
                 let names: Vec<String> = members.iter().map(|s| format!("`{s}`")).collect();
-                emit(
+                let names = names.join(", ");
+                emit_with_note(
                     cx,
                     PARALLEL_BOOLS,
                     cx.tcx.def_span(did),
                     format!(
-                        "the bool fields {} of `{}` are only ever assigned together ({} sites in {} functions)",
-                        names.join(", "),
+                        "the bool fields {names} of `{}` are always assigned together ({} blocks in {} functions), so between them they hold one state that the struct lets fall out of step",
                         cx.tcx.def_path_str(did),
                         sites.len(),
                         bodies.len(),
                     ),
-                    "together these fields encode one state; an enum makes the unpaired combinations unrepresentable",
+                    first,
+                    "one of the blocks that assigns them together",
+                    format!(
+                        "replace {names} with one enum field naming the states those blocks set; a combination no block writes then cannot exist"
+                    ),
                 );
             }
         }

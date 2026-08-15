@@ -1,35 +1,55 @@
-warning: `raw` is only read where `tag == Tag::Subproc` has been tested (3 reads), and every `Child` made with another `tag` fills it with a placeholder (1 site)
+warning: `raw` is read only after testing `tag == Tag::Subproc` (3 reads) and gets a placeholder wherever `Child` is constructed with another `tag` (1 site), so it only means something in that one case, yet the struct carries it in all of them
   --> $DIR/field_valid_only_when.rs:16:5
    |
 LL |     raw: *mut u8,
    |     ^^^^^^^^^^^^
    |
-   = help: the field is the payload of that one case, stored flat; an enum variant carrying it leaves the other cases nothing to fill in or misread
+note: one of the reads, under that test
+  --> $DIR/field_valid_only_when.rs:37:16
+   |
+LL |         return c.raw as usize;
+   |                ^^^^^
+   = help: turn the `Subproc` case of `tag` into an enum variant that carries `raw`, and delete the flat field; the other cases then have nothing to fill in or misread
    = note: `#[warn(field_valid_only_when)]` on by default
 
-warning: `reject` is only read where `request` has been tested (2 reads), and every `Verify` made with another `request` fills it with a placeholder (1 site)
+warning: `reject` is read only after testing `request` (2 reads) and gets a placeholder wherever `Verify` is constructed with another `request` (1 site), so it only means something in that one case, yet the struct carries it in all of them
   --> $DIR/field_valid_only_when.rs:57:5
    |
 LL |     reject: bool,
    |     ^^^^^^^^^^^^
    |
-   = help: the field is the payload of that one case, stored flat; an enum variant carrying it leaves the other cases nothing to fill in or misread
+note: one of the reads, under that test
+  --> $DIR/field_valid_only_when.rs:80:25
+   |
+LL |         out += u8::from(v.reject);
+   |                         ^^^^^^^^
+   = help: turn the `true` case of `request` into an enum variant that carries `reject`, and delete the flat field; the other cases then have nothing to fill in or misread
 
-warning: `result` is only read where `state == State::Done` has been tested (1 read), and every `Job` made with another `state` fills it with a placeholder (1 site)
+warning: `result` is read only after testing `state == State::Done` (1 read) and gets a placeholder wherever `Job` is constructed with another `state` (1 site), so it only means something in that one case, yet the struct carries it in all of them
   --> $DIR/field_valid_only_when.rs:100:5
    |
 LL |     result: u64,
    |     ^^^^^^^^^^^
    |
-   = help: the field is the payload of that one case, stored flat; an enum variant carrying it leaves the other cases nothing to fill in or misread
+note: one of the reads, under that test
+  --> $DIR/field_valid_only_when.rs:120:29
+   |
+LL |         State::Done => Some(j.result),
+   |                             ^^^^^^^^
+   = help: turn the `Done` case of `state` into an enum variant that carries `result`, and delete the flat field; the other cases then have nothing to fill in or misread
 
-warning: `href` is only read where `depth == 1` has been tested (1 read), and every `Nest` made with another `depth` fills it with a placeholder (1 site)
+warning: `href` is read only after testing `depth == 1` (1 read) and gets a placeholder wherever `Nest` is constructed with another `depth` (1 site), so it only means something in that one case, yet the struct carries it in all of them
   --> $DIR/field_valid_only_when.rs:129:5
    |
 LL |     href: Option<u8>,
    |     ^^^^^^^^^^^^^^^^
    |
-   = help: the field is the payload of that one case, stored flat; an enum variant carrying it leaves the other cases nothing to fill in or misread
+note: one of the reads, under that test
+  --> $DIR/field_valid_only_when.rs:147:33
+   |
+LL |     let out = if n.depth == 1 { n.href.take() } else { None };
+   |                                 ^^^^^^
+   = help: turn the `1` case of `depth` into an enum variant that carries `href`, and delete the flat field; the other cases then have nothing to fill in or misread
 
 warning: 4 warnings emitted
 

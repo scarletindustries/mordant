@@ -9,10 +9,10 @@ use rustc_hir::{
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty::{self, Ty};
 use rustc_span::hygiene::{ExpnKind, MacroKind};
-use rustc_span::{DesugaringKind, Ident, Symbol, sym};
+use rustc_span::{DesugaringKind, Ident, Span, Symbol, sym};
 
 use crate::adt_facts::field_ty;
-use crate::baseline::emit;
+use crate::baseline::emit_with_note;
 use crate::hir_shapes::{assigned_field, field_method_call, indexed_field};
 
 rustc_session::declare_lint! {
@@ -24,10 +24,10 @@ rustc_session::declare_lint! {
     /// other, on the same value, and every struct literal starts both empty
     /// -- and that some function reads at one index (`s.a[i]` with `s.b[i]`,
     /// `s.a.get(i)` with `s.b.get(i)`) or zips together. Element `i` of each
-    /// is one record kept in several places by hand: the type admits
-    /// sequences of different lengths, and only the discipline of every
-    /// writer keeps `a[i]` describing the same thing as `b[i]`. One `Vec` of
-    /// a struct with those fields holds the pairing in the type.
+    /// is one record split across several vecs whose lengths the struct lets
+    /// differ; only the discipline of every writer keeps `a[i]` describing
+    /// the same thing as `b[i]`. One `Vec` whose element struct has a field
+    /// for each has one length and one push.
     ///
     /// Only fields nothing outside the crate can write are considered: the
     /// struct is private to the crate, or the field is. One mutable access
@@ -132,8 +132,9 @@ pub struct ParallelVecs {
     candidates: HashMap<DefId, Vec<Symbol>>,
     /// (struct, field) -> the sites that change its length.
     writes: HashMap<(DefId, Symbol), HashSet<Site>>,
-    /// (struct, field, field), names ordered: read at one index somewhere.
-    in_step: HashSet<(DefId, Symbol, Symbol)>,
+    /// (struct, field, field), names ordered -> the first place the two are
+    /// read at one index.
+    in_step: HashMap<(DefId, Symbol, Symbol), Span>,
     reads: Vec<Read>,
 }
 
@@ -304,7 +305,9 @@ impl ParallelVecs {
             }
             let other = cx.tcx.hir_expect_expr(earlier.index);
             if SpanlessEq::new(cx).eq_expr(at.span.ctxt(), other, index) {
-                self.in_step.insert(ordered(adt, earlier.field, field));
+                self.in_step
+                    .entry(ordered(adt, earlier.field, field))
+                    .or_insert(at.span);
             }
         }
         self.reads.push(Read {
@@ -320,6 +323,7 @@ impl ParallelVecs {
     fn record_zip<'tcx>(
         &mut self,
         cx: &LateContext<'tcx>,
+        at: Span,
         l: &'tcx Expr<'tcx>,
         r: &'tcx Expr<'tcx>,
     ) {
@@ -333,7 +337,7 @@ impl ParallelVecs {
             return;
         };
         if adt == radt && lf != rf && lp == rp {
-            self.in_step.insert(ordered(adt, lf, rf));
+            self.in_step.entry(ordered(adt, lf, rf)).or_insert(at);
         }
     }
 }
@@ -436,7 +440,7 @@ impl<'tcx> LateLintPass<'tcx> for ParallelVecs {
     fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         match expr.kind {
             ExprKind::MethodCall(seg, recv, [arg], _) if seg.ident.name.as_str() == "zip" => {
-                self.record_zip(cx, recv, arg);
+                self.record_zip(cx, expr.span, recv, arg);
             }
             ExprKind::Call(callee, [l, r])
                 if matches!(callee.kind, ExprKind::Path(ref qp)
@@ -444,7 +448,7 @@ impl<'tcx> LateLintPass<'tcx> for ParallelVecs {
                         .is_some_and(|d| cx.tcx.opt_item_name(d)
                             .is_some_and(|n| n.as_str() == "zip"))) =>
             {
-                self.record_zip(cx, l, r);
+                self.record_zip(cx, expr.span, l, r);
             }
             ExprKind::MethodCall(_, recv, ..) => {
                 let Some(call) = field_method_call(expr) else {
@@ -526,7 +530,7 @@ impl<'tcx> LateLintPass<'tcx> for ParallelVecs {
         for ((adt, field), sites) in self.writes.drain() {
             per_struct.entry(adt).or_default().push((field, sites));
         }
-        let mut findings: Vec<(DefId, Vec<Symbol>, usize)> = Vec::new();
+        let mut findings: Vec<(DefId, Vec<Symbol>, usize, Span)> = Vec::new();
         for (adt, mut fields) in per_struct {
             fields.sort_by_key(|(f, _)| f.as_str().to_owned());
             let mut groups: Vec<(&HashSet<Site>, Vec<Symbol>)> = Vec::new();
@@ -537,32 +541,40 @@ impl<'tcx> LateLintPass<'tcx> for ParallelVecs {
                 }
             }
             for (sites, members) in groups {
-                let read_in_step = members.iter().any(|a| {
-                    members
-                        .iter()
-                        .any(|b| self.in_step.contains(&ordered(adt, *a, *b)))
-                });
-                if members.len() >= 2 && read_in_step {
-                    findings.push((adt, members, sites.len()));
+                let read_in_step = members
+                    .iter()
+                    .flat_map(|a| {
+                        members
+                            .iter()
+                            .filter_map(|b| self.in_step.get(&ordered(adt, *a, *b)).copied())
+                    })
+                    .min_by_key(|span| span.lo());
+                if members.len() >= 2
+                    && let Some(read) = read_in_step
+                {
+                    findings.push((adt, members, sites.len(), read));
                 }
             }
         }
         findings.sort_by_key(|(adt, ..)| cx.tcx.def_span(*adt).lo());
-        for (adt, members, sites) in findings {
+        for (adt, members, sites, read) in findings {
             let names: Vec<String> = members.iter().map(|m| format!("`{m}`")).collect();
-            emit(
+            let n = members.len();
+            emit_with_note(
                 cx,
                 PARALLEL_VECS,
                 cx.tcx.def_span(adt),
                 format!(
-                    "parallel vecs: the fields {} of `{}` only change length together ({} {}) and are read at one index, so element `i` of each is one record kept in {} places",
+                    "{} of `{}` only ever change length together ({sites} {}) and are read at the same index, so element `i` of each is one record split across {n} vecs whose lengths the struct lets differ",
                     names.join(", "),
                     cx.tcx.def_path_str(adt),
-                    sites,
                     if sites == 1 { "block" } else { "blocks" },
-                    members.len(),
                 ),
-                "one `Vec` of a struct with these fields holds the pairing in the type and cannot let the lengths differ",
+                read,
+                "one of the reads at a shared index",
+                format!(
+                    "replace the {n} fields with one `Vec` whose element struct has a field for each; then there is one length and one push"
+                ),
             );
         }
     }

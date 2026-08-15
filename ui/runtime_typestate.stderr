@@ -1,10 +1,15 @@
-warning: `ready` is tested and bailed on at the start of 2 methods of `Conn`
+warning: 2 methods of `Conn` start by testing `ready` and returning early, so whether they may be called yet is decided at runtime, method by method
   --> $DIR/runtime_typestate.rs:5:5
    |
 LL |     ready: bool,
    |     ^^^^^^^^^^^
    |
-   = help: the ordering invariant lives at runtime; a separate type for the guarded state enforces it at compile time
+note: the test at the top of one of those methods
+  --> $DIR/runtime_typestate.rs:11:12
+   |
+LL |         if !self.ready {
+   |            ^^^^^^^^^^^
+   = help: split `Conn` into one type per state and put those 2 methods only on the type where `ready` allows them; calling one too early is then a compile error
    = note: `#[warn(runtime_typestate)]` on by default
 
 warning: 1 warning emitted

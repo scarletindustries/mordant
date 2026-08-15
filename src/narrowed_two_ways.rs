@@ -16,13 +16,12 @@ use crate::hir_shapes::{Callee, callee_of};
 
 rustc_session::declare_lint! {
     /// Flags an integer place — a struct field, or a local or parameter
-    /// within one function — that the crate narrows two ways: at one site it
-    /// is converted into a smaller or differently signed integer through
-    /// `u32::try_from(x)` or `x.try_into()`, and at another the same place
-    /// goes through a bare `as`, which wraps silently. The check says the
-    /// value may not fit; the `as` site is where it will not. The place's
-    /// declared type is wider than what its readers need, so the range
-    /// invariant lives in whichever reader remembered it.
+    /// within one function — that is cut down with a bare `as` at one site,
+    /// which silently wraps a value that does not fit, while another site
+    /// converts the same place into a type no wider with `u32::try_from(x)`
+    /// or `x.try_into()` because it might not fit. The place's declared type
+    /// is wider than what its readers need, so the range check lives in
+    /// whichever reader remembered it.
     ///
     /// A field is one place whatever it is read through, keyed by the struct
     /// that declares it; a local is a place only inside its own body. Only
@@ -314,7 +313,7 @@ impl<'tcx> LateLintPass<'tcx> for NarrowedTwoWays {
     }
 
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
-        let mut findings: Vec<(Span, Span, String)> = Vec::new();
+        let mut findings: Vec<(Span, Span, String, String)> = Vec::new();
         for (place, sites) in &self.sites {
             // The widest checked target: a check into `i64` says the value
             // may exceed even that, so every narrower `as` is condemned; a
@@ -337,23 +336,31 @@ impl<'tcx> LateLintPass<'tcx> for NarrowedTwoWays {
                     site.span,
                     check.span,
                     format!(
-                        "narrowed two ways: `{}` is `{}` and becomes `{}` through `as` here, which wraps silently, while another site converts the same place into `{}` with a range check",
-                        site.shown, site.src, site.dst, check.dst,
+                        "`{shown}` is `{}` and is cut down to `{dst}` with `as` here, which silently wraps a value that does not fit, while another place converts the same `{shown}` to `{}` with `try_from`/`try_into` because it might not",
+                        site.src,
+                        check.dst,
+                        shown = site.shown,
+                        dst = site.dst,
+                    ),
+                    format!(
+                        "declare `{}` as `{dst}` (or a newtype whose constructor checks the range once) so no reader has to narrow it, or at least use `{dst}::try_from` here too",
+                        site.shown,
+                        dst = site.dst,
                     ),
                 ));
             }
         }
         // `sites` is a HashMap; report in source order.
         findings.sort_by_key(|(span, ..)| span.lo());
-        for (span, check, msg) in findings {
+        for (span, check, msg, help) in findings {
             emit_with_note(
                 cx,
                 NARROWED_TWO_WAYS,
                 span,
                 msg,
                 check,
-                "the same place, converted with a check here",
-                "the check says the value may not fit; declare the place with the narrow type, or a newtype whose constructor checks the range once, so no reader can truncate it (or convert with `try_from` here as well)",
+                "the checked conversion of the same place",
+                help,
             );
         }
     }

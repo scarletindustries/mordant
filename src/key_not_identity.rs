@@ -8,9 +8,12 @@ use rustc_span::sym;
 use crate::MordantConfig;
 
 rustc_session::declare_lint! {
-    /// Flags maps keyed on values that are not the canonical identity of the
-    /// thing they name. Which types and expression forms count is declared per
-    /// project in `dylint.toml`; with no configuration the lint is silent.
+    /// Flags a map keyed on something that does not identify the thing it
+    /// names, so distinct things can collide under one key or one thing can
+    /// land under several: a type or method the project lists as not an
+    /// identity, a float's `to_bits()`, a pointer cast to an integer. Which
+    /// types and expression forms count is declared per project in
+    /// `dylint.toml`; with no configuration the lint is silent.
     pub KEY_NOT_IDENTITY,
     Warn,
     "map keyed on a value that is not the canonical identity of what it names"
@@ -85,10 +88,15 @@ impl KeyNotIdentity {
     }
 
     /// A direct hit, or (opt-in) a denied type inside a tuple or one level of
-    /// struct fields with no declared identity-fixing component beside it.
-    fn denied_type_name<'tcx>(&self, cx: &LateContext<'tcx>, key_ty: Ty<'tcx>) -> Option<String> {
+    /// struct fields with no declared identity-fixing component beside it:
+    /// the key as the message shows it, and the denied type in it.
+    fn denied_type_name<'tcx>(
+        &self,
+        cx: &LateContext<'tcx>,
+        key_ty: Ty<'tcx>,
+    ) -> Option<(String, String)> {
         if let Some(path) = self.is_denied(cx, key_ty) {
-            return Some(path);
+            return Some((format!("`{path}`"), path));
         }
         if !self.config.key_not_identity_composite {
             return None;
@@ -107,8 +115,7 @@ impl KeyNotIdentity {
         if components.iter().any(|t| self.is_fixing(cx, *t)) {
             return None;
         }
-        // Renders as: map keyed on `(Span, u32)` carrying `Span`, ...
-        Some(format!("{key_ty}` carrying `{hit}"))
+        Some((format!("`{key_ty}`, which contains a `{hit}`"), hit))
     }
 }
 
@@ -181,13 +188,31 @@ impl<'tcx> LateLintPass<'tcx> for KeyNotIdentity {
             return;
         };
 
-        if let Some(path) = self.denied_type_name(cx, key_ty) {
+        if let Some((shown, denied)) = self.denied_type_name(cx, key_ty) {
+            let fixes: Vec<String> = self
+                .config
+                .key_not_identity_fixes
+                .iter()
+                .map(|f| format!("`{f}`"))
+                .collect();
+            let help = if fixes.is_empty() {
+                format!(
+                    "key on what does identify the value in this project instead of its `{denied}`"
+                )
+            } else {
+                format!(
+                    "key on what does identify the value: this project's `key-not-identity-fixes` names {} as what makes a `{denied}` unambiguous, so put that in the key beside it",
+                    fixes.join(", "),
+                )
+            };
             emit(
                 cx,
                 KEY_NOT_IDENTITY,
                 expr.span,
-                format!("map keyed on `{path}`, which this project declares is not an identity"),
-                "key on the canonical identity of the thing this names",
+                format!(
+                    "this map is keyed on {shown}, and `{denied}` is listed in this project's `key-not-identity-types`: equal `{denied}`s need not mean the same thing, so distinct entries can collide"
+                ),
+                help,
             );
             return;
         }
@@ -205,8 +230,8 @@ impl<'tcx> LateLintPass<'tcx> for KeyNotIdentity {
                 cx,
                 KEY_NOT_IDENTITY,
                 key_expr.span,
-                "map keyed on `to_bits()` of a float",
-                "for boxed or interned values the bits are a pointer, not the value; key on the canonical identity",
+                "this map is keyed on a float's `to_bits()`; for a NaN-boxed or interned value those bits are a pointer, so two equal values can land under different keys",
+                "key on the value itself or its canonical handle, not on its bit pattern",
             );
         }
         // Project-declared methods whose result is not an identity (e.g. a
@@ -217,15 +242,15 @@ impl<'tcx> LateLintPass<'tcx> for KeyNotIdentity {
             && let Some(mdid) = cx.typeck_results().type_dependent_def_id(key_expr.hir_id)
             && configured(cx, mdid, deny_methods).is_some()
         {
+            let method = kseg.ident;
             emit(
                 cx,
                 KEY_NOT_IDENTITY,
                 key_expr.span,
                 format!(
-                    "map keyed on `{}()`, which this project declares is not an identity",
-                    kseg.ident
+                    "this map is keyed on the result of `{method}()`, which this project's `key-not-identity-methods` lists as not an identity, so equal things can land under different keys"
                 ),
-                "key on the canonical identity of the thing this names",
+                format!("key on the value's identity rather than on what `{method}()` returns"),
             );
         }
         if self.forms.contains(&KeyForm::PtrCast) && is_ptr_to_int_cast(cx, key_expr) {
@@ -233,8 +258,8 @@ impl<'tcx> LateLintPass<'tcx> for KeyNotIdentity {
                 cx,
                 KEY_NOT_IDENTITY,
                 key_expr.span,
-                "map keyed on a pointer cast to an integer",
-                "pointer bits name an allocation, not a value; key on the canonical identity",
+                "this map is keyed on a pointer cast to an integer, which names an allocation rather than a value: equal values at two addresses get two entries, and a freed-and-reused address aliases an old one",
+                "key on the value, or on an id assigned when it is created, not on its address",
             );
         }
     }

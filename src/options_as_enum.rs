@@ -1,21 +1,21 @@
 use std::collections::HashMap;
 
 use crate::adt_facts::{field_ty, is_option_ty, private_local_struct};
-use crate::baseline::emit;
+use crate::baseline::emit_with_note;
 use crate::hir_shapes::assigned_field;
 use rustc_hir::def_id::DefId;
 use rustc_hir::{Expr, ExprKind, StructTailExpr};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
-use rustc_span::Symbol;
+use rustc_span::{Span, Symbol};
 
 use crate::MordantConfig;
 
 rustc_session::declare_lint! {
-    /// Flags structs where several `Option` fields together encode one state:
-    /// every construction site in the crate sets at most one of them to
-    /// `Some`. The type permits combinations the crate never builds; an enum
-    /// with one variant per field says what the code means.
+    /// Flags a struct whose `Option` fields are alternatives: none of the
+    /// places it is built sets more than one of them to `Some`, yet the
+    /// struct lets them be set together. One enum field with a variant per
+    /// case says what the code means and cannot hold two at once.
     ///
     /// Only fires on structs private to the crate, with every construction a
     /// literal `Some(..)`/`None` struct expression and no later field
@@ -29,8 +29,9 @@ rustc_session::declare_lint! {
 #[derive(Default)]
 struct Facts {
     unprovable: bool,
-    /// Per construction site: which option fields were `Some`.
-    sites: Vec<Vec<Symbol>>,
+    /// Per construction site: where it is and which option fields were
+    /// `Some`.
+    sites: Vec<(Span, Vec<Symbol>)>,
 }
 
 pub struct OptionsAsEnum {
@@ -95,7 +96,7 @@ impl<'tcx> LateLintPass<'tcx> for OptionsAsEnum {
                         return;
                     }
                 }
-                facts.sites.push(somes);
+                facts.sites.push((expr.span, somes));
             }
             // A later `s.field = ...` write re-opens every combination; the
             // construction sites alone no longer prove anything.
@@ -120,13 +121,13 @@ impl<'tcx> LateLintPass<'tcx> for OptionsAsEnum {
             if facts.unprovable || facts.sites.len() < 2 {
                 continue;
             }
-            if facts.sites.iter().any(|s| s.len() > 1) {
+            if facts.sites.iter().any(|(_, s)| s.len() > 1) {
                 continue;
             }
             // At least two distinct fields must actually appear as Some;
             // otherwise this is one live field and dead siblings, not a state.
             let mut seen: Vec<Symbol> = Vec::new();
-            for site in &facts.sites {
+            for (_, site) in &facts.sites {
                 for f in site {
                     if !seen.contains(f) {
                         seen.push(*f);
@@ -137,17 +138,21 @@ impl<'tcx> LateLintPass<'tcx> for OptionsAsEnum {
                 continue;
             }
             let names: Vec<String> = seen.iter().map(|s| format!("`{s}`")).collect();
-            emit(
+            let names = names.join(", ");
+            emit_with_note(
                 cx,
                 OPTIONS_AS_ENUM,
                 cx.tcx.def_span(*did),
                 format!(
-                    "no construction of `{}` sets more than one of {} to `Some` ({} sites checked)",
-                    cx.tcx.def_path_str(*did),
-                    names.join(", "),
+                    "none of the {} places `{}` is constructed sets more than one of {names} to `Some`, so these fields are alternatives that the struct nevertheless lets be set together",
                     facts.sites.len(),
+                    cx.tcx.def_path_str(*did),
                 ),
-                "these fields encode one state; an enum with one variant per field represents it",
+                facts.sites[0].0,
+                "one of the constructions",
+                format!(
+                    "replace {names} with one enum field that has a variant per case; two `Some`s at once then cannot be written"
+                ),
             );
         }
     }

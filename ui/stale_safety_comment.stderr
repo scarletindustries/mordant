@@ -1,11 +1,11 @@
-warning: this SAFETY comment names `frames_lock`, which appears nowhere in this file's code, this crate, or any crate it links
+warning: this SAFETY comment relies on `frames_lock`, but nothing by that name exists any more in this file's code, this crate, or any crate it links, so the justification describes code that is gone
   --> $DIR/stale_safety_comment.rs:9:1
    |
 LL | /     // SAFETY: `frames_lock` is held for the duration of this read.
 LL | |     unsafe { *p }
    | |_^
    |
-   = help: the guard this justification described has moved or gone; update the comment or restore the guard
+   = help: find what replaced `frames_lock` and restate the comment in its terms; if nothing did, this `unsafe` block has lost the guard it depended on and needs one
    = note: `#[warn(stale_safety_comment)]` on by default
 
 warning: 1 warning emitted
