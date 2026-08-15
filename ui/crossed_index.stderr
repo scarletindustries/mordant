@@ -1,0 +1,42 @@
+warning: `l.resolutions` is indexed by `pkg_id` here but by `dep_id` elsewhere in this function (1 site), while `pkg_id` is what indexes `l.packages`: the names claim different index kinds and both are plain integers, so the crossing compiles
+  --> $DIR/crossed_index.rs:15:17
+   |
+LL |     let stale = l.resolutions[pkg_id as usize];
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: indexed by the other kind here
+  --> $DIR/crossed_index.rs:12:20
+   |
+LL |     let resolved = l.resolutions[dep_id as usize];
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: an index newtype per table, with `Index` implemented only for its own, turns the crossing into a type error
+   = note: `#[warn(crossed_index)]` on by default
+
+warning: `parts` is indexed by `source_index` here but by `part_index` elsewhere in this function (1 site), while `source_index` is what indexes `sources`: the names claim different index kinds and both are plain integers, so the crossing compiles
+  --> $DIR/crossed_index.rs:29:19
+   |
+LL |     let crossed = parts.get(source_index);
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: indexed by the other kind here
+  --> $DIR/crossed_index.rs:26:16
+   |
+LL |     let part = parts.get(part_index);
+   |                ^^^^^^^^^^^^^^^^^^^^^
+   = help: an index newtype per table, with `Index` implemented only for its own, turns the crossing into a type error
+
+warning: `self.files` is indexed by `part_index` here but by `source_index` elsewhere in this function (1 site), while `part_index` is what indexes `self.parts[..]`: the names claim different index kinds and both are plain integers, so the crossing compiles
+  --> $DIR/crossed_index.rs:44:17
+   |
+LL |         let _ = self.files.get_mut(part_index as usize);
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: indexed by the other kind here
+  --> $DIR/crossed_index.rs:41:17
+   |
+LL |         let _ = self.files[source_index as usize];
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: an index newtype per table, with `Index` implemented only for its own, turns the crossing into a type error
+
+warning: 3 warnings emitted
+

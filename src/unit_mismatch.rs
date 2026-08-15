@@ -1,7 +1,8 @@
-use rustc_hir::{BinOpKind, Expr, ExprKind, QPath};
+use rustc_hir::{BinOpKind, Expr, ExprKind};
 use rustc_lint::{LateContext, LateLintPass};
 
 use crate::baseline::emit;
+use crate::hir_shapes::value_name;
 
 rustc_session::declare_lint! {
     /// Flags addition, subtraction, and comparison between values whose names
@@ -33,27 +34,13 @@ fn unit_class(suffix: &str) -> Option<&'static str> {
     })
 }
 
-/// The unit an expression's name claims, from the final identifier of a path,
-/// field access, or method call. Casts and references are transparent: they
-/// change representation, not the unit the name asserts.
+/// The unit an expression's name claims: the suffix after the last `_` of
+/// its `value_name`.
 fn claimed_unit(e: &Expr<'_>) -> Option<(&'static str, String)> {
-    let name = match &e.kind {
-        ExprKind::Cast(inner, _) | ExprKind::AddrOf(_, _, inner) | ExprKind::Unary(_, inner) => {
-            return claimed_unit(inner);
-        }
-        ExprKind::Field(_, ident) => ident.name.to_string(),
-        ExprKind::Path(QPath::Resolved(_, path)) => path.segments.last()?.ident.name.to_string(),
-        ExprKind::MethodCall(seg, ..) => seg.ident.name.to_string(),
-        ExprKind::Call(callee, _) => {
-            let ExprKind::Path(QPath::Resolved(_, path)) = &callee.kind else {
-                return None;
-            };
-            path.segments.last()?.ident.name.to_string()
-        }
-        _ => return None,
-    };
+    let name = value_name(e)?;
+    let name = name.name.as_str();
     let (_, suffix) = name.rsplit_once('_')?;
-    unit_class(suffix).map(|c| (c, name))
+    unit_class(suffix).map(|c| (c, name.to_string()))
 }
 
 impl<'tcx> LateLintPass<'tcx> for UnitMismatch {

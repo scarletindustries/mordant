@@ -240,3 +240,28 @@ pub(crate) fn strip_generic_segments(path: &str) -> String {
     }
     out
 }
+
+/// The identifier an expression is called by: the last segment of a path,
+/// the field of a field access, the method of a method call, the callee's
+/// last segment of a call. Casts, `&`, unary operators and HIR temporaries
+/// are transparent: they change representation, not what the name asserts.
+pub(crate) fn value_name(mut e: &Expr<'_>) -> Option<Ident> {
+    loop {
+        match &e.kind {
+            ExprKind::Cast(inner, _)
+            | ExprKind::AddrOf(_, _, inner)
+            | ExprKind::Unary(_, inner)
+            | ExprKind::DropTemps(inner) => e = inner,
+            ExprKind::Field(_, ident) => return Some(*ident),
+            ExprKind::Path(QPath::Resolved(_, path)) => return Some(path.segments.last()?.ident),
+            ExprKind::MethodCall(seg, ..) => return Some(seg.ident),
+            ExprKind::Call(callee, _) => {
+                let ExprKind::Path(QPath::Resolved(_, path)) = &callee.kind else {
+                    return None;
+                };
+                return Some(path.segments.last()?.ident);
+            }
+            _ => return None,
+        }
+    }
+}
