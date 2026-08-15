@@ -88,7 +88,7 @@ mod wildcard_over_own_enum;
 /// fills any omitted key from it too.
 #[derive(Default, serde::Deserialize)]
 #[cfg_attr(test, derive(Debug, PartialEq))]
-#[serde(rename_all = "kebab-case", default)]
+#[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
 #[cfg_attr(dylint_lib = "mordant", allow(bool_cluster))]
 pub struct MordantConfig {
     /// Lints, by name, that stay registered (so an `allow` of one still
@@ -445,6 +445,21 @@ fn config_explicit_zero_thresholds_are_honored() {
     assert_eq!(parsed.options_as_enum_min_fields, 0);
     assert_eq!(parsed.wildcard_over_own_enum_max_variants, 0);
     assert_eq!(parsed.bool_cluster_min_bools, 0);
+}
+
+/// A misspelled key must not vanish into `default`: `key_not_identity_types`'s real spelling
+/// is `key-not-identity-types`, and two consumers have carried a different, wrong spelling of
+/// two different keys in production with no error (`language`'s `nonidentity-key-types` and
+/// `scarlet`'s `wildcard-local-enum-max-variants`) — this is the shape that let both happen.
+#[test]
+fn unknown_key_is_an_error_naming_it() {
+    let err = toml::from_str::<MordantConfig>("wildcard-local-enum-max-variants = 64\n")
+        .expect_err("a key matching no field must not parse");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("wildcard-local-enum-max-variants"),
+        "error should name the offending key: {msg}"
+    );
 }
 
 #[test]
