@@ -55,6 +55,7 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 | `stringly_state`       | a string field or local only ever storing one of a closed set of literals and then compared against them: an undeclared enum, so a misspelt state still compiles          |
 | `parallel_params`      | opt-in via `parallel-params-enabled`: parameters several functions declare alike and hand each other unchanged in one call: one value with no type, passable by halves    |
 | `bool_params`          | a crate-private fn with two or more `bool` parameters that a call fills with bare `true`/`false`: `f(x, true, false)` names neither flag, and the swapped call compiles   |
+| `unnamed_tuple`        | a private fn's tuple return with two members of one type that every caller destructures under the same names: only the type lacks them, and it accepts them transposed    |
 
 Each diagnostic states what the lint found, why the type is wrong, and the type that replaces it.
 

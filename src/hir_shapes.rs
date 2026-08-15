@@ -17,10 +17,15 @@ pub(crate) fn is_self_path(e: &Expr<'_>) -> bool {
         if p.segments.len() == 1 && p.segments[0].ident.name == kw::SelfLower)
 }
 
-/// `self.field`, as the `self` expression it is read off and the field name.
-pub(crate) fn self_field<'h>(e: &Expr<'h>) -> Option<(&'h Expr<'h>, Ident)> {
+/// `self.field`: the `self` expression it is read off and the field name.
+pub(crate) struct SelfField<'h> {
+    pub base: &'h Expr<'h>,
+    pub ident: Ident,
+}
+
+pub(crate) fn self_field<'h>(e: &Expr<'h>) -> Option<SelfField<'h>> {
     match e.kind {
-        ExprKind::Field(base, ident) if is_self_path(base) => Some((base, ident)),
+        ExprKind::Field(base, ident) if is_self_path(base) => Some(SelfField { base, ident }),
         _ => None,
     }
 }
@@ -42,7 +47,12 @@ pub(crate) fn assigned_field<'h>(
 
 /// `root.a.b` as `root` and `[a, b]`, read through `&`, `*` and HIR
 /// temporaries at any level, which all name the same place.
-pub(crate) fn field_chain<'h>(mut e: &'h Expr<'h>) -> (&'h Expr<'h>, Vec<Symbol>) {
+pub(crate) struct FieldChain<'h> {
+    pub root: &'h Expr<'h>,
+    pub fields: Vec<Symbol>,
+}
+
+pub(crate) fn field_chain<'h>(mut e: &'h Expr<'h>) -> FieldChain<'h> {
     let mut fields = Vec::new();
     loop {
         match e.kind {
@@ -55,7 +65,7 @@ pub(crate) fn field_chain<'h>(mut e: &'h Expr<'h>) -> (&'h Expr<'h>, Vec<Symbol>
             | ExprKind::DropTemps(inner) => e = inner,
             _ => {
                 fields.reverse();
-                return (e, fields);
+                return FieldChain { root: e, fields };
             }
         }
     }

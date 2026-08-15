@@ -62,6 +62,7 @@ mod stringly_state;
 mod unchecked_input_len;
 mod uneven_narrowing;
 mod unit_mismatch;
+mod unnamed_tuple;
 mod unread_error_variant;
 mod unread_none;
 mod variant_flow;
@@ -191,8 +192,8 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
         stringified_error::StringifiedError, stringly_error::StringlyError,
         stringly_state::StringlyState, unchecked_input_len::UncheckedInputLen,
         uneven_narrowing::UnevenNarrowing, unit_mismatch::UnitMismatch,
-        unread_error_variant::UnreadErrorVariant, unread_none::UnreadNone,
-        wildcard_local_enum::WildcardLocalEnum,
+        unnamed_tuple::UnnamedTuple, unread_error_variant::UnreadErrorVariant,
+        unread_none::UnreadNone, wildcard_local_enum::WildcardLocalEnum,
     };
     dylint_linting::init_config(sess);
     let config: MordantConfig = dylint_linting::config_or_default(env!("CARGO_PKG_NAME"));
@@ -247,6 +248,7 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
         ParallelParams::new(config)
     });
     add(s, true, BoolParams::default);
+    add(s, true, UnnamedTuple::default);
     // Last, so its check_crate_post flushes after every lint has recorded.
     add(s, true, || BaselineWriter);
 }

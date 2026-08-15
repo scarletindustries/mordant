@@ -5,7 +5,7 @@ use rustc_middle::ty;
 use rustc_span::sym;
 
 use crate::baseline::emit;
-use crate::hir_shapes::{dotted, field_chain, stmt_expr};
+use crate::hir_shapes::{FieldChain, dotted, field_chain, stmt_expr};
 
 rustc_session::declare_lint! {
     /// Flags `map.get(&k).unwrap()` when the presence it bets on was proved a
@@ -28,7 +28,7 @@ rustc_session::declare_lint_pass!(InsertThenUnwrap => [INSERT_THEN_UNWRAP]);
 /// (which name the same value); `-k` and `!k` are different values from `k`.
 /// Anything else is `None`, and untrackable means unprovable means silent.
 fn identity(e: &Expr<'_>) -> Option<String> {
-    let (root, fields) = field_chain(e);
+    let FieldChain { root, fields } = field_chain(e);
     let head = match &root.kind {
         ExprKind::Path(QPath::Resolved(None, p)) if p.segments.len() == 1 => {
             p.segments[0].ident.name.to_string()

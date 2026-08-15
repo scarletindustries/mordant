@@ -1,0 +1,40 @@
+warning: all 2 call sites of `measure`, in 2 functions, destructure this as `(depth, width)`: the members are named everywhere except in the type; `.0` and `.1` are both `u32`, so transposing them still type-checks
+  --> $DIR/unnamed_tuple.rs:12:25
+   |
+LL | fn measure(n: &Node) -> (u32, u32) {
+   |                         ^^^^^^^^^^
+   |
+   = help: return a struct with these fields: the names move into the signature, and members of one type can no longer trade places
+   = note: `#[warn(unnamed_tuple)]` on by default
+
+warning: all 2 call sites of `clamped`, in 2 functions, destructure this as `(depth, width)`, but the body returns them as `(width, depth)`; `.0` and `.1` are both `u32`, so both orders type-check and one of them is wrong
+  --> $DIR/unnamed_tuple.rs:29:35
+   |
+LL | fn clamped(n: &Node, max: u32) -> (u32, u32) {
+   |                                   ^^^^^^^^^^
+   |
+note: returned in this order here
+  --> $DIR/unnamed_tuple.rs:33:16
+   |
+LL |         return (width, depth);
+   |                ^^^^^^^^^^^^^^
+   = help: return a struct with these fields: the names move into the signature, and members of one type can no longer trade places
+
+warning: all 4 call sites of `split`, in 3 functions, destructure this as `(key, value)`: the members are named everywhere except in the type; `.0` and `.1` are both `&str`, so transposing them still type-checks
+  --> $DIR/unnamed_tuple.rs:51:22
+   |
+LL | fn split(s: &str) -> Option<(&str, &str)> {
+   |                      ^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: return a struct with these fields: the names move into the signature, and members of one type can no longer trade places
+
+warning: all 2 call sites of `bounds`, in 2 functions, destructure this as `(low, high)`: the members are named everywhere except in the type; `.0` and `.1` are both `u8`, so transposing them still type-checks
+  --> $DIR/unnamed_tuple.rs:87:25
+   |
+LL |     fn bounds(&self) -> Result<(u8, u8), ()> {
+   |                         ^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: return a struct with these fields: the names move into the signature, and members of one type can no longer trade places
+
+warning: 4 warnings emitted
+
