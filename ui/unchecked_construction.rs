@@ -303,10 +303,20 @@ fn main() {
 // Every probe above gets one site here, in a module that is none of theirs:
 // the validated ones are flagged once each, the rest stay silent.
 mod outside {
+    use crate::foreign_return::{Cfg, Thing};
     use crate::not_validators::{Buf, Config, Narrow};
     use crate::not_validators_2::{Header, Parser};
     use crate::validators::{Checked, Even, Small};
     use crate::{Alias, Free, Node, gate, inner};
+
+    // `Cfg` breaks the `b <= a` invariant `Thing::new` exists to enforce, and
+    // nothing here says so: `Cfg` is the validator's argument, never its
+    // return type, so it was never registered. `Thing`, built the same way,
+    // IS flagged -- the control that shows the silence above is the gap this
+    // ticket names, not the fixture failing to notice either one.
+    fn foreign_return_gap() -> (Cfg, Thing) {
+        (Cfg { a: 1, b: 5 }, Thing { a: 1, b: 5 })
+    }
 
     // Writes to a checked field, through `&mut`, compound, and through a Box.
     fn header(h: &mut Header) {
@@ -379,6 +389,8 @@ mod outside {
         let (mut level, g1, g2, free) = conjured();
         level.reset();
         let _ = (level.value, g1.v, g2.v, free.n);
+        let (cfg, thing) = foreign_return_gap();
+        let _ = (cfg.a, cfg.b, thing.a, thing.b);
         if let Some(mut g) = gate::Gate::new(0) {
             gate::open(&mut g);
         }
@@ -512,6 +524,32 @@ mod tuple {
         // validator to go around.
         pub fn make() -> (Digit, Plain) {
             (Digit(10), Plain(10))
+        }
+    }
+}
+
+mod foreign_return {
+    // `Thing::new` checks `c.b <= c.a` and stores exactly that pair -- a real
+    // validator, just not one whose OWN return type is `Cfg`. Only `Thing`
+    // is ever registered, so `Cfg`'s pub fields and outside literals are
+    // invisible to this lint even though `Thing::new` is the only thing
+    // standing between `Cfg` and the invariant it was meant to guarantee.
+    pub struct Cfg {
+        pub a: u8,
+        pub b: u8,
+    }
+
+    pub struct Thing {
+        pub a: u8,
+        pub b: u8,
+    }
+
+    impl Thing {
+        pub fn new(c: Cfg) -> Result<Thing, ()> {
+            if c.b > c.a {
+                return Err(());
+            }
+            Ok(Thing { a: c.a, b: c.b })
         }
     }
 }

@@ -41,7 +41,14 @@ rustc_session::declare_lint! {
     /// `&mut s.f` handed to something else, which is not an assignment here.
     /// Constructors that only fail because their input did not parse or a
     /// resource ran out check nothing about the fields and are not
-    /// validators.
+    /// validators. A constructor whose OWN return type is not `Self` is not
+    /// seen at all, even when it checks and stores an argument's fields
+    /// unchanged: `Thing::new(c: Cfg) -> Result<Thing, _>` registers `Thing`,
+    /// never `Cfg`, because only a receiver-less fn returning `Self` is
+    /// looked at in the first place, and `Cfg` is never `Self` from inside
+    /// `impl Thing`. `Cfg`'s own fields and outside literals go unflagged
+    /// even though `Thing::new` is the only thing standing between them and
+    /// whatever `Cfg` was meant to guarantee.
     pub UNCHECKED_CONSTRUCTION,
     Warn,
     "value of a validated type made or changed without its validating constructor"
