@@ -89,6 +89,9 @@ mod wildcard_local_enum;
 #[serde(rename_all = "kebab-case", default)]
 #[cfg_attr(dylint_lib = "mordant", allow(flag_cluster))]
 pub struct MordantConfig {
+    /// Lints, by name, that stay registered (so an `allow` of one still
+    /// resolves) but never run.
+    pub disabled: Vec<String>,
     /// Fully qualified paths of types that are never a valid map key in this
     /// project (e.g. a span type with no file identity). Empty means silent.
     pub nonidentity_key_types: Vec<String>,
@@ -200,72 +203,110 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
     let config: MordantConfig = dylint_linting::config_or_default(env!("CARGO_PKG_NAME"));
     let config: &'static MordantConfig = Box::leak(Box::new(config));
     baseline::setup(&config.baseline);
-    add(s, true, move || StringlyError { config });
-    add(s, true, move || NonidentityKey::new(config));
-    add(s, true, || StringifiedError);
-    add(s, true, move || ExclusiveOptions::new(config));
-    add(s, true, ParallelBools::default);
-    add(s, config.flag_cluster_enabled, move || FlagCluster {
-        config,
-    });
-    add(s, true, move || BypassedValidator::new(config));
-    add(s, true, UnreadErrorVariant::default);
-    add(s, true, AsymmetricGuard::default);
-    add(
-        s,
+    let mut r = Registrar {
+        store: s,
+        disabled: &config.disabled,
+        known: Vec::new(),
+    };
+    r.add(true, move || StringlyError { config });
+    r.add(true, move || NonidentityKey::new(config));
+    r.add(true, || StringifiedError);
+    r.add(true, move || ExclusiveOptions::new(config));
+    r.add(true, ParallelBools::default);
+    r.add(config.flag_cluster_enabled, move || FlagCluster { config });
+    r.add(true, move || BypassedValidator::new(config));
+    r.add(true, UnreadErrorVariant::default);
+    r.add(true, AsymmetricGuard::default);
+    r.add(
         config.stale_safety_comment_enabled,
         StaleSafetyComment::default,
     );
-    add(s, true, || UnitMismatch);
-    add(s, true, StalePanicMessage::default);
-    add(s, true, LockOrder::default);
-    add(s, true, move || ForbiddenReach::new(config));
-    add(s, true, GuardFlag::default);
-    add(s, true, UnreadNone::default);
-    add(s, true, || InsertThenUnwrap);
-    add(s, true, OverwideParameter::default);
-    add(s, true, NarrowedReturn::default);
-    add(s, true, move || WildcardLocalEnum { config });
-    add(s, true, || DiscardedError);
-    add(s, true, move || StoredProjection::new(config));
-    add(s, true, move || StaleAcrossReentry { config });
-    add(s, true, move || DefaultedFailure::new(config));
-    add(s, config.unchecked_input_len_enabled, || UncheckedInputLen);
-    add(s, true, || MisboundArg);
-    add(s, true, move || BypassedConversion::new(config));
-    add(s, true, same_match_twice::SameMatchTwice::default);
-    add(s, true, move || {
+    r.add(true, || UnitMismatch);
+    r.add(true, StalePanicMessage::default);
+    r.add(true, LockOrder::default);
+    r.add(true, move || ForbiddenReach::new(config));
+    r.add(true, GuardFlag::default);
+    r.add(true, UnreadNone::default);
+    r.add(true, || InsertThenUnwrap);
+    r.add(true, OverwideParameter::default);
+    r.add(true, NarrowedReturn::default);
+    r.add(true, move || WildcardLocalEnum { config });
+    r.add(true, || DiscardedError);
+    r.add(true, move || StoredProjection::new(config));
+    r.add(true, move || StaleAcrossReentry { config });
+    r.add(true, move || DefaultedFailure::new(config));
+    r.add(config.unchecked_input_len_enabled, || UncheckedInputLen);
+    r.add(true, || MisboundArg);
+    r.add(true, move || BypassedConversion::new(config));
+    r.add(true, same_match_twice::SameMatchTwice::default);
+    r.add(true, move || {
         reimplemented_helper::ReimplementedHelper::new(config)
     });
-    add(s, true, DependentField::default);
-    add(s, true, CollapsedError::default);
-    add(s, true, UnevenNarrowing::default);
-    add(s, true, || CrossedIndex);
-    add(s, true, ParallelVecs::default);
-    add(s, true, bool_beside_option::BoolBesideOption::default);
-    add(s, true, SentinelInt::default);
-    add(s, true, StringlyState::default);
-    add(s, config.parallel_params_enabled, move || {
+    r.add(true, DependentField::default);
+    r.add(true, CollapsedError::default);
+    r.add(true, UnevenNarrowing::default);
+    r.add(true, || CrossedIndex);
+    r.add(true, ParallelVecs::default);
+    r.add(true, bool_beside_option::BoolBesideOption::default);
+    r.add(true, SentinelInt::default);
+    r.add(true, StringlyState::default);
+    r.add(config.parallel_params_enabled, move || {
         ParallelParams::new(config)
     });
-    add(s, true, BoolParams::default);
-    add(s, true, UnnamedTuple::default);
-    add(s, true, || CrossedAlias);
+    r.add(true, BoolParams::default);
+    r.add(true, UnnamedTuple::default);
+    r.add(true, || CrossedAlias);
     // Last, so its check_crate_post flushes after every lint has recorded.
-    add(s, true, || BaselineWriter);
+    r.add(true, || BaselineWriter);
+    let unknown = unknown_names(&config.disabled, &r.known);
+    if !unknown.is_empty() {
+        sess.dcx().warn(format!(
+            "mordant: `disabled` in dylint.toml names no lint of this pack: {}",
+            unknown.join(", ")
+        ));
+    }
 }
 
-/// Registers the pass's lints unconditionally, so `allow(..)` / `-A` of an
-/// opt-in lint still resolves when only its pass is skipped.
-fn add<T: for<'tcx> rustc_lint::LateLintPass<'tcx> + 'static>(
-    s: &mut rustc_lint::LintStore,
-    enabled: bool,
-    make: impl Fn() -> T + sync::DynSend + sync::DynSync + 'static,
-) {
-    s.register_lints(&make().get_lints());
-    if enabled {
-        s.register_late_pass(move |_| Box::new(make()));
+/// Registers lints and passes through one seam, so a pass that is off (an
+/// opt-in whose key is absent, or a lint listed under `disabled`) still has
+/// its lint registered and `allow(..)` / `-A` of it still resolves.
+struct Registrar<'a> {
+    store: &'a mut rustc_lint::LintStore,
+    disabled: &'a [String],
+    /// Every lint name registered so far, to tell which `disabled` entries
+    /// name nothing.
+    known: Vec<String>,
+}
+
+impl Registrar<'_> {
+    fn add<T: for<'tcx> rustc_lint::LateLintPass<'tcx> + 'static>(
+        &mut self,
+        enabled: bool,
+        make: impl Fn() -> T + sync::DynSend + sync::DynSync + 'static,
+    ) {
+        let lints = make().get_lints();
+        self.store.register_lints(&lints);
+        let names: Vec<String> = lints.iter().map(|l| l.name_lower()).collect();
+        let run = enabled && !all_disabled(&names, self.disabled);
+        self.known.extend(names);
+        if run {
+            self.store.register_late_pass(move |_| Box::new(make()));
+        }
     }
+}
+
+/// A pass is skipped when every lint it declares is disabled. A pass with
+/// no lints (the baseline writer) always runs.
+fn all_disabled(lints: &[String], disabled: &[String]) -> bool {
+    !lints.is_empty() && lints.iter().all(|l| disabled.contains(l))
+}
+
+fn unknown_names<'a>(disabled: &'a [String], known: &[String]) -> Vec<&'a str> {
+    disabled
+        .iter()
+        .filter(|d| !known.contains(d))
+        .map(String::as_str)
+        .collect()
 }
 
 #[test]
@@ -350,4 +391,38 @@ fn config_explicit_zero_thresholds_are_honored() {
     assert_eq!(parsed.exclusive_options_min_fields, 0);
     assert_eq!(parsed.wildcard_local_enum_max_variants, 0);
     assert_eq!(parsed.flag_cluster_min_bools, 0);
+}
+
+#[test]
+fn config_disabled_parses_and_defaults_empty() {
+    assert!(MordantConfig::default().disabled.is_empty());
+    let parsed: MordantConfig =
+        toml::from_str("disabled = [\"guard_flag\", \"lock_order\"]\n").expect("disabled parses");
+    assert_eq!(parsed.disabled, ["guard_flag", "lock_order"]);
+}
+
+#[test]
+fn disabled_skips_a_pass_only_when_every_lint_it_declares_is_named() {
+    let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert!(all_disabled(
+        &names(&["guard_flag"]),
+        &names(&["guard_flag"])
+    ));
+    assert!(!all_disabled(
+        &names(&["guard_flag"]),
+        &names(&["lock_order"])
+    ));
+    assert!(!all_disabled(&names(&["a", "b"]), &names(&["a"])));
+    assert!(!all_disabled(&[], &names(&["guard_flag"])));
+}
+
+#[test]
+fn disabled_names_that_match_no_lint_are_reported() {
+    let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let disabled = names(&["guard_flag", "gaurd_flag", "clippy::unwrap_used"]);
+    let known = names(&["guard_flag", "lock_order"]);
+    assert_eq!(
+        unknown_names(&disabled, &known),
+        ["gaurd_flag", "clippy::unwrap_used"]
+    );
 }

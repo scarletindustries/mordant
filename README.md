@@ -81,6 +81,8 @@ Run the lints:
 cargo dylint --all
 ```
 
+Findings are warnings, so a workspace that denies warnings (`[workspace.lints.rust] warnings = "deny"`, `RUSTFLAGS=-Dwarnings`) turns the first one in a crate into an error and never sees the rest. Run under a baseline instead (see [Ratchet](#ratchet)): with one configured, mordant reports new findings as warnings that no lint level can raise, and such a workspace needs no extra flags.
+
 Some lints carry machine-applicable fixes. `wildcard_local_enum` rewrites each catch-all arm into the variants it was hiding, in the same path style the file already uses:
 
 ```sh
@@ -91,6 +93,12 @@ Configure per project in `dylint.toml` at the workspace root:
 
 ```toml
 [mordant]
+# Lints this project does not want, by name. A disabled lint never runs, but
+# it stays registered, so an `#[allow(guard_flag)]` left in the code still
+# resolves instead of tripping `unknown_lints`. A name that matches no lint
+# gets a warning naming it, not an error.
+disabled = ["guard_flag", "unit_mismatch"]
+
 nonidentity-key-types = ["my_crate::span::Span"]
 nonidentity-key-forms = ["ptr-cast"]
 nonidentity-key-methods = ["my_crate::value::Value::to_bits"]
@@ -166,7 +174,17 @@ Generate or regenerate it:
 MORDANT_BASELINE_WRITE=1 cargo dylint --all
 ```
 
-The file records a count per lint and file. A run suppresses that many findings and reports anything beyond them, so new problems surface while the existing ones stay recorded. When you fix a finding, regenerate and commit the file; the count falls and stays down.
+The file records a count per lint and file. A run suppresses that many findings and reports anything beyond them, so new problems surface while the existing ones stay recorded. When you fix a finding, regenerate and commit the file; the count falls and stays down. Findings under an `#[allow]` or `#[expect]` are neither recorded nor counted.
+
+With a baseline configured, the baseline decides what fails the run, not the lint level. A finding over the recorded count is printed as a plain warning naming its lint (`` `guard_flag` over the mordant baseline (2 recorded for src/sched.rs) ``), which `-D warnings`, `[lints] warnings = "deny"` and `--cap-lints` leave alone, so one new finding cannot stop its crate and hide the findings after it or in the crates that depend on it. Each crate that goes over prints `warning: mordant: N finding(s) over the baseline in <crate>` and appends `<crate> <N>` to `target/mordant/over-baseline.txt` (under `CARGO_TARGET_DIR` when that is set, otherwise `target/` beside the baseline file). A clean run writes nothing there, and neither does a `MORDANT_BASELINE_WRITE=1` run. Every crate is a separate compiler process, so none of them can truncate the file first; remove it before the run and test it afterwards:
+
+```sh
+rm -f target/mordant/over-baseline.txt
+cargo dylint --all --workspace -- --keep-going
+test ! -s target/mordant/over-baseline.txt
+```
+
+The last line is the gate: it fails when any crate went over, and the file lists which.
 
 ## Name
 
