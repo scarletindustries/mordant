@@ -13,12 +13,12 @@ use crate::hir_shapes::value_name;
 rustc_session::declare_lint! {
     /// Flags an index whose name claims one kind (`source_index`, `pkg_id`:
     /// the non-empty prefix before `_index`, `_idx`, `_id` or `_i`) landing
-    /// on a place the same function otherwise indexes by names of another
-    /// kind, when the function also shows the crossing name indexing a table
-    /// named after it: `sources[source_index]`, `parts[part_index]` twice,
-    /// then `parts[source_index]`. Both indices are plain integers, so
-    /// `parts` accepts a source index and returns whichever element sits at
-    /// that offset. `[]`, `.get`, `.get_mut` and `get_unchecked*` with an
+    /// on a place that everywhere else in the function is indexed by names
+    /// of another kind, when the function also shows the crossing name
+    /// indexing a table named after it: `sources[source_index]`,
+    /// `parts[part_index]` twice, then `parts[source_index]`. This looks
+    /// like the wrong table, and since both indices are plain integers it
+    /// compiles. `[]`, `.get`, `.get_mut` and `get_unchecked*` with an
     /// integer operand all count as indexing (a newtyped index is already
     /// told apart by the compiler); a place is the binding or item at the
     /// root plus the
@@ -359,25 +359,27 @@ impl<'tcx> LateLintPass<'tcx> for IndexOfOtherKind {
             } else {
                 format!("`{}` (the same kind as `{}`)", home.name, site.name)
             };
+            let place = &sites.places[site.place].shown;
+            let home_place = &sites.places[home.place].shown;
+            let name = site.name;
             emit_with_note(
                 cx,
                 INDEX_OF_OTHER_KIND,
                 site.span,
                 format!(
-                    "`{place}` is indexed by `{name}` here but by `{major}` elsewhere in this \
-                     function ({major_n} site{s}), while {by} is what indexes `{home}`: \
-                     the names claim different index kinds and both are plain integers, so \
-                     the crossing compiles",
-                    place = sites.places[site.place].shown,
-                    name = site.name,
+                    "`{place}` is indexed by `{name}` here. Elsewhere in this function it is \
+                     indexed by `{major}` ({major_n} place{s}), and {by} indexes `{home_place}`. \
+                     This looks like the wrong table",
                     major = major_first.name,
                     s = if major_n == 1 { "" } else { "s" },
-                    home = sites.places[home.place].shown,
                 ),
                 major_first.span,
-                "indexed by the other kind here",
-                "an index newtype per table, with `Index` implemented only for its own, turns \
-                 the crossing into a type error",
+                format!("`{place}` indexed the usual way"),
+                format!(
+                    "give `{place}` and `{home_place}` their own index newtypes so \
+                     `{place}[{name}]` cannot compile. If this line is intended, rename the \
+                     index to say so"
+                ),
             );
         }
     }

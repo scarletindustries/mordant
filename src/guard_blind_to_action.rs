@@ -10,18 +10,17 @@ use rustc_span::def_id::LocalDefId;
 use rustc_span::{Span, Symbol};
 
 use crate::adt_facts::impl_self_adt;
-use crate::baseline::emit;
+use crate::baseline::emit_hir_then;
 use crate::hir_shapes::{
     Callee, SelfField, callee_of, ends_in_return, is_self_path, peel_not, self_field, stmt_expr,
 };
 
 rustc_session::declare_lint! {
-    /// Flags a guarded call whose guard cannot be sound: `self.can_x()` gates
-    /// `self.y()`, but `y` touches a field of `self` that `can_x` never reads,
-    /// directly or through anything it calls. A predicate blind to part of the
-    /// state its action manipulates answers a different question than the one
-    /// being asked. The guard/mutator pair drifting apart is how a live
-    /// connection gets evicted by a donation its guard approved.
+    /// Flags a call that only runs when `self.can_x()` returns true, but
+    /// changes a field of `self` that `can_x` never reads, directly or
+    /// through anything it calls. The check cannot tell whether the call is
+    /// safe. The guard/mutator pair drifting apart is how a live connection
+    /// gets evicted by a donation its guard approved.
     ///
     /// Only calls at the guard's own level count as its actions. A call
     /// nested under a further `if`, `match` or loop is gated by that
@@ -184,6 +183,32 @@ impl GuardBlindToAction {
     }
 }
 
+impl GuardBlindToAction {
+    /// The fields `guard` reads, directly or through the same-type methods
+    /// it calls, sorted by name; None when it hands `self` to something the
+    /// walk cannot follow, so its coverage is not computable.
+    fn coverage(&self, guard: DefId) -> Option<Vec<Symbol>> {
+        let mut read: HashSet<Symbol> = HashSet::new();
+        let mut queue = vec![guard];
+        let mut seen: HashSet<DefId> = HashSet::new();
+        while let Some(m) = queue.pop() {
+            if !seen.insert(m) {
+                continue;
+            }
+            if let Some(f) = self.facts.get(&m) {
+                if f.escapes {
+                    return None;
+                }
+                read.extend(f.touched.iter().copied());
+                queue.extend(f.calls.iter().copied());
+            }
+        }
+        let mut read: Vec<Symbol> = read.into_iter().collect();
+        read.sort_by_key(|s| s.as_str().to_owned());
+        Some(read)
+    }
+}
+
 impl<'tcx> LateLintPass<'tcx> for GuardBlindToAction {
     fn check_fn(
         &mut self,
@@ -278,27 +303,24 @@ impl<'tcx> LateLintPass<'tcx> for GuardBlindToAction {
             if !mutates {
                 continue;
             }
-            // The guards' coverage is everything they touch transitively
+            // A guard's coverage is everything it touches transitively
             // through same-type calls, so a guard delegating to helpers is
             // never accused falsely; one delegating to something the walk
             // cannot follow has no computable coverage, and is not judged.
-            let mut covered: HashSet<Symbol> = HashSet::new();
-            let mut queue = gate.guards.clone();
-            let mut seen: HashSet<DefId> = HashSet::new();
-            let mut computable = true;
-            while let Some(m) = queue.pop() {
-                if !seen.insert(m) {
-                    continue;
-                }
-                if let Some(f) = self.facts.get(&m) {
-                    computable &= !f.escapes;
-                    covered.extend(f.touched.iter().copied());
-                    queue.extend(f.calls.iter().copied());
-                }
+            let mut guards: Vec<(String, DefId, Vec<Symbol>)> = Vec::new();
+            for &g in &gate.guards {
+                let Some(reads) = self.coverage(g) else {
+                    break;
+                };
+                guards.push((format!("`{}`", cx.tcx.item_name(g)), g, reads));
             }
-            if !computable {
+            if guards.len() != gate.guards.len() {
                 continue;
             }
+            let covered: HashSet<Symbol> = guards
+                .iter()
+                .flat_map(|(.., r)| r.iter().copied())
+                .collect();
             let mut missed: Vec<&Symbol> = action
                 .touched
                 .iter()
@@ -309,26 +331,58 @@ impl<'tcx> LateLintPass<'tcx> for GuardBlindToAction {
             }
             missed.sort_by_key(|s| s.as_str().to_owned());
             let fields: Vec<String> = missed.iter().map(|s| format!("`{s}`")).collect();
-            let mut guards: Vec<String> = gate
-                .guards
-                .iter()
-                .map(|&g| format!("`{}`", cx.tcx.item_name(g)))
-                .collect();
-            guards.sort();
-            let (guards, reader) = match guards.as_slice() {
-                [one] => (one.clone(), "the guard never reads"),
-                many => (many.join(" and "), "none of the guards read"),
+            let fields = fields.join(", ");
+            guards.sort_by(|a, b| a.0.cmp(&b.0));
+            let names: Vec<&str> = guards.iter().map(|(n, ..)| n.as_str()).collect();
+            let (named, returns, blind, checks, either) = match names.as_slice() {
+                [one] => (
+                    (*one).to_owned(),
+                    "returns",
+                    format!("{one} never reads"),
+                    "The check",
+                    (*one).to_owned(),
+                ),
+                [a, b] => (
+                    format!("{a} and {b}"),
+                    "return",
+                    format!("neither {a} nor {b} reads"),
+                    "The checks",
+                    format!("{a} or {b}"),
+                ),
+                [head @ .., last] => (
+                    format!("{} and {last}", head.join(", ")),
+                    "return",
+                    format!("none of {} and {last} reads", head.join(", ")),
+                    "The checks",
+                    format!("{} or {last}", head.join(", ")),
+                ),
+                [] => continue,
             };
-            emit(
+            let action = cx.tcx.item_name(gate.action);
+            emit_hir_then(
                 cx,
                 GUARD_BLIND_TO_ACTION,
+                cx.last_node_with_lint_attrs,
                 gate.span,
                 format!(
-                    "`{}` is gated by {guards}, but touches {} which {reader}",
-                    cx.tcx.item_name(gate.action),
-                    fields.join(", "),
+                    "`{action}` only runs when {named} {returns} true, but it changes {fields}, which {blind}. {checks} cannot tell whether `{action}` is safe"
                 ),
-                "a guard blind to part of the state its action manipulates cannot be sound; align what the pair reads",
+                |diag| {
+                    // What each guard does read: the other half of the
+                    // mismatch, shown at the guard.
+                    for (name, g, reads) in &guards {
+                        let read: Vec<String> = reads.iter().map(|s| format!("`{s}`")).collect();
+                        let what = if read.is_empty() {
+                            "no field of `self`".to_owned()
+                        } else {
+                            format!("only {}", read.join(", "))
+                        };
+                        diag.span_note(cx.tcx.def_span(*g), format!("{name} reads {what}"));
+                    }
+                    diag.help(format!(
+                        "make {either} look at {fields} too, or move the {fields} work out from under this check"
+                    ));
+                },
             );
         }
     }

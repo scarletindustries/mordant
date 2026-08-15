@@ -1,19 +1,29 @@
-warning: `a` is locked before `b` here, but `b` before `a` at $DIR/lock_order.rs:21:18: 21:31
+warning: `b` is locked here while `a` is held. Another place locks `a` while `b` is held. Two threads, one on each path, can deadlock
   --> $DIR/lock_order.rs:14:18
    |
 LL |         let gb = self.b.lock().unwrap();
    |                  ^^^^^^^^^^^^^
    |
-   = help: both orders existing is the shape of a deadlock; pick one order and hold to it everywhere
+note: the opposite order is here
+  --> $DIR/lock_order.rs:21:18
+   |
+LL |         let ga = self.a.lock().unwrap();
+   |                  ^^^^^^^^^^^^^
+   = help: pick one order for `a` and `b` and use it in both places, or guard both with one lock
    = note: `#[warn(lock_order)]` on by default
 
-warning: `g` is locked before `h` here, but `h` before `g` at $DIR/lock_order.rs:123:22: 123:35
+warning: `h` is locked here while `g` is held. Another place locks `g` while `h` is held. Two threads, one on each path, can deadlock
   --> $DIR/lock_order.rs:114:18
    |
 LL |         let gh = self.h.lock().unwrap();
    |                  ^^^^^^^^^^^^^
    |
-   = help: both orders existing is the shape of a deadlock; pick one order and hold to it everywhere
+note: the opposite order is here
+  --> $DIR/lock_order.rs:123:22
+   |
+LL |             let gg = self.g.lock().unwrap();
+   |                      ^^^^^^^^^^^^^
+   = help: pick one order for `g` and `h` and use it in both places, or guard both with one lock
 
 warning: 2 warnings emitted
 

@@ -9,17 +9,17 @@ use rustc_middle::ty;
 use rustc_span::Span;
 use rustc_span::def_id::LocalDefId;
 
-use crate::baseline::emit;
+use crate::baseline::emit_with_note;
 use crate::enum_facts::{arm_variant, is_panic_arm};
 use crate::hir_shapes::{Callee, callee_of};
 use crate::variant_flow::returned_variants;
 
 rustc_session::declare_lint! {
-    /// Flags a panicking match arm for a variant the matched call can never
-    /// produce: the callee's return type is a crate-local enum, every value
+    /// Flags a match arm that panics on a variant the matched call never
+    /// returns: the callee's return type is a crate-local enum, every value
     /// its body returns is a constructor literal, and the panicked-on variant
-    /// is not among them. The return type promises more than the function
-    /// delivers; narrowing it deletes the caller's panic arm at compile time.
+    /// is not among them. The return type is wider than what the function
+    /// produces. Narrowing it deletes the arm at compile time.
     ///
     /// The return set comes from MIR dataflow: constructor aggregates traced
     /// through plain copies between locals, so `let t = ...; t` and branches
@@ -112,17 +112,22 @@ impl<'tcx> LateLintPass<'tcx> for ReturnWiderThanBody {
                 .map(|v| format!("`{}`", adt.variant(*v).name))
                 .collect();
             names.sort();
-            emit(
+            let fn_name = cx.tcx.item_name(*callee);
+            let variant = cx.tcx.item_name(*variant);
+            let enum_name = cx.tcx.item_name(*enum_did);
+            emit_with_note(
                 cx,
                 RETURN_WIDER_THAN_BODY,
                 *span,
                 format!(
-                    "`{}` only ever returns {}; this arm panics on `{}`, which it never constructs",
-                    cx.tcx.item_name(*callee),
+                    "this arm panics on `{variant}`, but `{fn_name}` only ever returns {}. The return type `{enum_name}` is wider than what the function produces",
                     names.join(", "),
-                    cx.tcx.item_name(*variant),
                 ),
-                "the return type promises more than the function delivers; narrow it and this arm becomes unnecessary at compile time",
+                cx.tcx.def_span(*callee),
+                format!("`{fn_name}`'s signature"),
+                format!(
+                    "give `{fn_name}` a return type without `{variant}`. This arm then cannot be written"
+                ),
             );
         }
     }

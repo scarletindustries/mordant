@@ -12,19 +12,17 @@ use rustc_middle::ty::{self, Ty, TypeVisitableExt};
 use rustc_span::{Symbol, sym};
 
 rustc_session::declare_lint! {
-    /// Flags a value of a struct, enum or union produced by reinterpreting
-    /// the bits of some other type -- `mem::transmute` /
-    /// `mem::transmute_copy`, or a pointer cast (`p as *const T`,
-    /// `p.cast::<T>()`) between different pointee types -- when a conversion
-    /// from that same source type to that same target type already exists:
-    /// an `impl From<A> for B`, an `impl TryFrom<A> for B`, or a safe
-    /// receiver-less associated function of `B` taking one `A` (or `&A`) and
-    /// returning `B`, `Option<B>` or `Result<B, _>`, by value or by
-    /// reference. That function is where the crate decided which `A` values
-    /// are a `B` and how; the reinterpreting site takes any bit pattern, so
-    /// whatever the conversion rejects or remaps arrives as a `B` anyway, and
-    /// for an enum an unlisted discriminant is undefined behaviour on the
-    /// spot.
+    /// Flags a `mem::transmute` / `mem::transmute_copy`, or a pointer cast
+    /// (`p as *const T`, `p.cast::<T>()`) between different pointee types,
+    /// that turns some other type into a struct, enum or union when a
+    /// conversion from that same source type to that same target type
+    /// already exists: an `impl From<A> for B`, an `impl TryFrom<A> for B`,
+    /// or a safe receiver-less associated function of `B` taking one `A` (or
+    /// `&A`) and returning `B`, `Option<B>` or `Result<B, _>`, by value or by
+    /// reference. That function is where the crate says how an `A` becomes a
+    /// `B`. The cast accepts any bit pattern, including the ones the
+    /// conversion would reject or remap, and for an enum an unlisted
+    /// discriminant is undefined behaviour on the spot.
     ///
     /// For a transmute of a value, every integer type counts as the same
     /// source: `transmute::<u16, E>(n as u16)` had to pick the repr width,
@@ -242,19 +240,28 @@ impl CastBypassesFrom {
         if how == TRANSMUTE && shape == Shape::Value && self.has_validator(cx, adt) {
             return;
         }
-        let consequence = if conv.fallible {
-            format!(
-                "`{}` converts `{}` to `{to}` and can refuse a value; this site accepts any bit pattern",
-                conv.name, conv.from
+        let (name, input) = (&conv.name, conv.from);
+        let (existing, note, skipped) = if conv.fallible {
+            (
+                format!(
+                    "`{name}` is the checked conversion from `{input}` and would reject some of them"
+                ),
+                format!("`{name}`, the checked conversion"),
+                "the check",
             )
         } else {
-            format!(
-                "`{}` is how `{}` becomes `{to}`; this site goes around it",
-                conv.name, conv.from
+            (
+                format!("`{name}` is where the crate says how `{input}` becomes `{to}`"),
+                format!("`{name}`, the conversion this skips"),
+                "it",
             )
         };
-        let msg = format!("`{from}` is reinterpreted as `{to}` by {how} here, but {consequence}");
-        let help = "convert through that function, or put an unchecked constructor beside it so both sit with the layout they depend on";
+        let msg = format!(
+            "{how} turns `{from}` into `{to}` here and accepts any bit pattern. {existing}"
+        );
+        let help = format!(
+            "call `{name}` instead. If this path must skip {skipped}, add an unchecked constructor next to it so both live beside the layout"
+        );
         if conv.def.is_local() {
             emit_with_note(
                 cx,
@@ -262,7 +269,7 @@ impl CastBypassesFrom {
                 expr.span,
                 msg,
                 tcx.def_span(conv.def),
-                "the conversion this site skips",
+                note,
                 help,
             );
         } else {

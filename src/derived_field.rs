@@ -4,19 +4,19 @@ use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::DefId;
 use rustc_hir::{Expr, ExprKind, StructTailExpr};
 use rustc_lint::{LateContext, LateLintPass};
-use rustc_span::Symbol;
+use rustc_span::{Span, Symbol};
 
 use crate::MordantConfig;
 use crate::adt_facts::{has_fixed_repr, has_positional_fields};
-use crate::baseline::emit;
+use crate::baseline::emit_with_note;
 use crate::enum_facts::ctor_literal_variant;
 use crate::hir_shapes::{assigned_adt_field, peel_blocks_unsafe};
 
 rustc_session::declare_lint! {
-    /// Flags two fields of one type whose constant values agree one-for-one
-    /// across every place the type is built: field `a` is a stored projection
-    /// of field `b`, so the type admits pairings the constructors never make
-    /// and nothing rejects one written by hand.
+    /// Flags a field that always has the same value for a given value of a
+    /// sibling field, in every place the type is built. It is a stored copy
+    /// of something the sibling decides, and nothing rejects a mismatched
+    /// pair written by hand. A method on the sibling's enum replaces it.
     ///
     /// Fires only when one of the two is a variant of an enum *this crate
     /// defined* at every site — a closed set of states, which is what makes
@@ -58,6 +58,7 @@ impl DerivedField {
 }
 
 struct Site {
+    span: Span,
     fields: BTreeMap<Symbol, Val>,
 }
 
@@ -176,10 +177,10 @@ impl<'tcx> LateLintPass<'tcx> for DerivedField {
                 vals.insert(f.ident.name, v);
             }
         }
-        self.seen
-            .entry(variant.def_id)
-            .or_default()
-            .push(Site { fields: vals });
+        self.seen.entry(variant.def_id).or_default().push(Site {
+            span: expr.span,
+            fields: vals,
+        });
     }
 
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
@@ -223,20 +224,31 @@ impl<'tcx> LateLintPass<'tcx> for DerivedField {
                     if !bijective(&va, &vb) {
                         continue;
                     }
-                    emit(
+                    // The side drawn from a local enum decides the other; the
+                    // repair is a method on that enum.
+                    let (deciding, derived, by) = if va.iter().all(|v| v.decides()) {
+                        (a, b, va[0])
+                    } else {
+                        (b, a, vb[0])
+                    };
+                    let Val::Variant(variant) = by else { continue };
+                    let enum_name = cx.tcx.item_name(cx.tcx.parent(*variant));
+                    emit_with_note(
                         cx,
                         DERIVED_FIELD,
                         cx.tcx.def_span(did),
                         format!(
-                            "`{}` and `{}` of `{}` agree one-for-one across all {} places it is \
-                             constructed, so one is a stored projection of the other",
-                            a,
-                            b,
-                            cx.tcx.def_path_str(did),
+                            "`{derived}` always has the same value for a given `{deciding}`, in all \
+                             {} places `{}` is built. It is a stored copy of something `{deciding}` \
+                             decides",
                             sites.len(),
+                            cx.tcx.def_path_str(did),
                         ),
-                        "give the deciding field a method returning the other and drop the stored \
-                         copy, so a pairing the constructors never make cannot be written",
+                        sites[0].span,
+                        "one of the constructions",
+                        format!(
+                            "add `fn {derived}(&self)` to `{enum_name}` and delete the `{derived}` field"
+                        ),
                     );
                 }
             }

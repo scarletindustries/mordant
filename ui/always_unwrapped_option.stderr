@@ -1,10 +1,15 @@
-warning: every read of `Conn.sock` assumes `Some` (2 unwraps, 0 sites handle `None`)
+warning: `Conn.sock` is unwrapped at all 2 of its reads and `None` is never handled, so `None` can only crash
   --> $DIR/always_unwrapped_option.rs:5:5
    |
 LL |     sock: Option<u32>,
    |     ^^^^^^^^^^^^^^^^^
    |
-   = help: `None` is a state no reader survives; split the phases into types, or store `T` directly
+note: one of the reads
+  --> $DIR/always_unwrapped_option.rs:20:9
+   |
+LL |         self.sock.unwrap()
+   |         ^^^^^^^^^
+   = help: store the `sock` value itself and b$DIRld `Conn` once you have it. Or split `Conn` into a type without `sock` and one with it
    = note: `#[warn(always_unwrapped_option)]` on by default
 
 warning: 1 warning emitted

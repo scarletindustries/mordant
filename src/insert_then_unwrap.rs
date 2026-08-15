@@ -4,15 +4,14 @@ use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::sym;
 
-use crate::baseline::emit;
+use crate::baseline::emit_with_note;
 use crate::hir_shapes::{FieldChain, dotted, field_chain, stmt_expr};
 
 rustc_session::declare_lint! {
-    /// Flags `map.get(&k).unwrap()` when the presence it bets on was proved a
-    /// few statements up by `map.insert(k, ..)`, with nothing in between that
-    /// could touch the map or the key: no calls, no assignments to either.
-    /// The unwrap re-fetches a value the code already held, and the panic
-    /// path plus the second hash both disappear by keeping it.
+    /// Flags `map.get(&k).unwrap()` right after a `map.insert(k, ..)` put
+    /// the key there, with nothing in between that could touch the map or the
+    /// key: no calls, no assignments to either. The lookup and its panic are
+    /// redundant. Keeping the inserted value (or the entry API) removes them.
     ///
     /// Silent once a `let` in between rebinds the name the map or key was
     /// spelled with, and treats `-k` / `!k` as a different key from `k`.
@@ -146,14 +145,18 @@ impl<'tcx> LateLintPass<'tcx> for InsertThenUnwrap {
                     && gkey == key
                 {
                     let map_shown = map.strip_prefix("self.").unwrap_or(&map);
-                    emit(
+                    emit_with_note(
                         cx,
                         INSERT_THEN_UNWRAP,
                         at,
                         format!(
-                            "this unwrap re-fetches `{map_shown}[{shown}]`, which the insert above just proved present"
+                            "this looks up `{shown}` in `{map_shown}` and unwraps it right after the `insert` above put it there. Nothing in between could remove it, so the lookup and its panic are redundant"
                         ),
-                        "keep the inserted value, or use the entry API; the panic path and the second lookup both vanish",
+                        e.span,
+                        "the insert",
+                        format!(
+                            "keep the value you inserted, or use `{map_shown}.entry({shown})` which hands it back"
+                        ),
                     );
                     return;
                 }

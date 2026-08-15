@@ -11,19 +11,18 @@ use rustc_middle::ty;
 use rustc_span::Span;
 use rustc_span::def_id::LocalDefId;
 
-use crate::baseline::emit;
+use crate::baseline::emit_with_note;
 use crate::hir_shapes::{Callee, callee_of};
 
 rustc_session::declare_lint! {
-    /// Flags a panicking match arm for an enum variant that no existing call
-    /// site can send: the function takes the full enum, panics on `E::C`, and
-    /// every call site in the crate provably passes a different variant
-    /// (constructor literals only — anything else makes the set unknowable
-    /// and the lint silent; a method's receiver is the value sent to `self`,
-    /// so `m.run()` makes `run`'s domain unknowable while `Mode::Off.run()`
-    /// passes `Off`). The parameter type is wider than the function's
-    /// real domain; narrowing it turns the panic into a compile error for
-    /// future callers.
+    /// Flags a match arm that panics on an enum variant no existing call
+    /// passes: the function takes the full enum, panics on `E::C`, and every
+    /// call in the crate provably passes a different variant (constructor
+    /// literals only, anything else makes the set unknowable and the lint
+    /// silent. A method's receiver is the value sent to `self`, so `m.run()`
+    /// makes `run`'s domain unknowable while `Mode::Off.run()` passes `Off`).
+    /// The parameter type allows a case no caller uses. Narrowing the type
+    /// turns it into a compile error for future callers.
     pub PARAM_WIDER_THAN_CALLERS,
     Warn,
     "panicking arm for a variant no existing call site passes"
@@ -33,6 +32,8 @@ rustc_session::declare_lint! {
 struct CallFacts {
     passed: HashSet<DefId>,
     sites: usize,
+    /// The first argument recorded, for the note.
+    first: Option<Span>,
     unknown: bool,
 }
 
@@ -59,6 +60,7 @@ impl ParamWiderThanCallers {
         for (i, value) in values {
             let facts = self.calls.entry((def, i)).or_default();
             facts.sites += 1;
+            facts.first.get_or_insert(value.span);
             match crate::enum_facts::ctor_literal_variant(cx, value) {
                 Some(v) => {
                     facts.passed.insert(v);
@@ -174,7 +176,7 @@ impl<'tcx> LateLintPass<'tcx> for ParamWiderThanCallers {
     }
 
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
-        let mut findings: Vec<(Span, String)> = Vec::new();
+        let mut findings: Vec<(Span, String, Span, String)> = Vec::new();
         for (key @ (fn_def, _), arms) in &self.panicking {
             if self.poisoned.contains(fn_def) {
                 continue;
@@ -183,7 +185,10 @@ impl<'tcx> LateLintPass<'tcx> for ParamWiderThanCallers {
                 // Never called: nothing provable about its domain.
                 continue;
             };
-            if calls.unknown || calls.sites == 0 {
+            let Some(first) = calls.first else {
+                continue;
+            };
+            if calls.unknown {
                 continue;
             }
             for (variant, span) in arms {
@@ -196,27 +201,33 @@ impl<'tcx> LateLintPass<'tcx> for ParamWiderThanCallers {
                     .map(|v| format!("`{}`", cx.tcx.item_name(*v)))
                     .collect();
                 passed.sort();
+                let fn_name = cx.tcx.item_name(*fn_def);
+                let variant = cx.tcx.item_name(*variant);
                 findings.push((
                     *span,
                     format!(
-                        "all {} call sites of `{}` pass {}; this arm panics on `{}`, which no existing caller sends",
+                        "this arm panics on `{variant}`, but all {} calls to `{fn_name}` pass only {}. The parameter type allows a case no caller uses",
                         calls.sites,
-                        cx.tcx.item_name(*fn_def),
                         passed.join(", "),
-                        cx.tcx.item_name(*variant),
+                    ),
+                    first,
+                    format!(
+                        "narrow `{fn_name}`'s parameter to a type that cannot be `{variant}`, such as a smaller enum or the payload itself. A caller passing `{variant}` then fails to compile"
                     ),
                 ));
             }
         }
         // `panicking` is a HashMap; report in source order.
-        findings.sort_by_key(|(span, _)| span.lo());
-        for (span, msg) in findings {
-            emit(
+        findings.sort_by_key(|(span, ..)| span.lo());
+        for (span, msg, first, help) in findings {
+            emit_with_note(
                 cx,
                 PARAM_WIDER_THAN_CALLERS,
                 span,
                 msg,
-                "the parameter is wider than the function's domain; narrow the type and the panic becomes a compile error for future callers",
+                first,
+                "one of the calls",
+                help,
             );
         }
     }

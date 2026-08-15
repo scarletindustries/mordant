@@ -6,10 +6,9 @@ use rustc_lint::{LateContext, LateLintPass};
 use crate::MordantConfig;
 
 rustc_session::declare_lint! {
-    /// Flags a named-field struct carrying `bool-cluster-min-bools` or more
-    /// `bool` fields, however they are assigned. `n` bools is `2^n`
-    /// representable states; if fewer are legal, an enum names the ones that
-    /// are.
+    /// Flags a named-field struct with `bool-cluster-min-bools` or more
+    /// `bool` fields, however they are assigned. `n` bools are `2^n`
+    /// possible combinations. If only some are valid, an enum names those.
     ///
     /// Silent on any struct with an explicit `repr` — its layout is dictated
     /// from outside Rust (a hardware register, a wire format), so all `2^n`
@@ -53,18 +52,20 @@ impl<'tcx> LateLintPass<'tcx> for BoolCluster {
             return;
         }
         let names: Vec<String> = bools.iter().map(|s| format!("`{s}`")).collect();
+        let n = states(bools.len());
+        let path = cx.tcx.def_path_str(did);
         emit(
             cx,
             BOOL_CLUSTER,
             cx.tcx.def_span(did),
             format!(
-                "the {} bool fields {} of `{}` are {} representable states",
+                "`{path}` has {} bool fields ({}). That is {n} possible combinations",
                 bools.len(),
                 names.join(", "),
-                cx.tcx.def_path_str(did),
-                states(bools.len()),
             ),
-            "if fewer are legal, name them in an enum; if the layout is fixed elsewhere, give it a repr",
+            format!(
+                "if only some combinations are valid, replace the bools with an enum of those. If the layout is fixed from outside, add a `repr` to `{path}` to say so"
+            ),
         );
     }
 }

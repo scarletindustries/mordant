@@ -14,12 +14,12 @@ use crate::baseline::emit_with_note;
 use crate::hir_clone::{bodies_equal, body_hash, fn_sigs_equal};
 
 rustc_session::declare_lint! {
-    /// Flags a function whose signature and body are the same as another
-    /// function's in the crate: the same parameter and return types and
-    /// bounds, parameters destructured the same way, and the same
-    /// computation once parameters and locals are renamed. One helper
-    /// exists twice under two names, nothing ties the copies together, and a
-    /// fix made to one is silently missing from the other.
+    /// Flags a function with the same signature and the same body as
+    /// another function in the crate, apart from local names: the same
+    /// parameter and return types and bounds, parameters destructured the
+    /// same way, and the same computation. One helper exists twice under two
+    /// names, nothing ties the copies together, and a fix to one will miss
+    /// the other.
     ///
     /// Bodies smaller than `reimplemented-helper-min-nodes` expression nodes
     /// (default 12) are not compared, so one-line accessors and constructors
@@ -121,18 +121,22 @@ impl<'tcx> LateLintPass<'tcx> for ReimplementedHelper {
         }
         findings.sort_by_key(|(f, _)| f.span.lo());
         for (copy, original) in findings {
+            let (copy_name, original_name) = (
+                cx.tcx.def_path_str(copy.def),
+                cx.tcx.def_path_str(original.def),
+            );
             emit_with_note(
                 cx,
                 REIMPLEMENTED_HELPER,
                 cx.tcx.def_span(copy.def),
                 format!(
-                    "`{}` has the same signature and body as `{}`",
-                    cx.tcx.def_path_str(copy.def),
-                    cx.tcx.def_path_str(original.def),
+                    "`{copy_name}` has the same signature and the same body as `{original_name}`, apart from local names. A fix to one will miss the other"
                 ),
                 cx.tcx.def_span(original.def),
-                "the same body is here",
-                "one helper written twice drifts apart at the first fix; keep one and call it from the other's callers",
+                format!("`{original_name}`, the other copy"),
+                format!(
+                    "delete `{copy_name}` and call `{original_name}` instead, or the other way round"
+                ),
             );
         }
     }

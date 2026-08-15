@@ -7,19 +7,20 @@ use rustc_hir::def_id::DefId;
 use rustc_hir::{BinOpKind, Expr, ExprKind, QPath, UnOp};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty::Ty;
-use rustc_span::Symbol;
+use rustc_span::{Span, Symbol};
 
-use crate::baseline::emit;
+use crate::baseline::{emit, emit_with_note};
 use crate::hir_shapes::{Callee, callee_of};
 
 rustc_session::declare_lint! {
-    /// Flags a call argument whose own name is the name of a *different*
-    /// parameter of the callee than the one it is bound to, when both
-    /// parameters have the same type: `resize(height, width)` against
+    /// Flags a call argument passed where the callee expects a parameter of
+    /// another name, when the callee also has a parameter of the argument's
+    /// own name and the same type: `resize(height, width)` against
     /// `fn resize(width: u32, height: u32)`, or `spawn(opts.inherit_stderr,
-    /// opts.inherit_stdout)`. The two values are told apart by position and
-    /// by nothing else, so the transposition type-checks; distinct types
-    /// per parameter (a newtype per quantity, an enum per flag) reject it.
+    /// opts.inherit_stdout)`. It looks like an argument in the wrong
+    /// position, and since the two share a type the swap compiles. Distinct
+    /// types per parameter (a newtype per quantity, an enum per flag) would
+    /// make it a compile error.
     ///
     /// The argument's name is a local or parameter it is spelled as, or the
     /// last field of a field access. Silent when the names agree after
@@ -211,6 +212,23 @@ impl<'tcx> LateLintPass<'tcx> for ArgNamedLikeOtherParam {
             });
         }
         let fn_name = cx.tcx.item_name(def);
+        // The callee's signature is the other half of the crossing, when this
+        // crate has it to show.
+        let report = |span: Span, msg: String, help: String| {
+            if def.is_local() {
+                emit_with_note(
+                    cx,
+                    ARG_NAMED_LIKE_OTHER_PARAM,
+                    span,
+                    msg,
+                    cx.tcx.def_span(def),
+                    format!("`{fn_name}` declares them in this order"),
+                    help,
+                );
+            } else {
+                emit(cx, ARG_NAMED_LIKE_OTHER_PARAM, span, msg, help);
+            }
+        };
         let mut reported = vec![false; crossings.len()];
         for (k, c) in crossings.iter().enumerate() {
             if reported[k] {
@@ -221,34 +239,40 @@ impl<'tcx> LateLintPass<'tcx> for ArgNamedLikeOtherParam {
                 let d = &crossings[j];
                 d.arg + offset == c.names_param && c.arg + offset == d.names_param
             });
+            let other = param_name(c.names_param).unwrap_or(c.name);
+            let types = format!(
+                "Distinct types for `{}` and `{other}` would make the next swap a compile error",
+                c.bound_to,
+            );
             if let Some(j) = partner {
                 reported[j] = true;
                 let d = &crossings[j];
-                emit(
-                    cx,
-                    ARG_NAMED_LIKE_OTHER_PARAM,
+                report(
                     expr.span,
                     format!(
-                        "arguments `{}` and `{}` are bound to `{fn_name}`'s parameters `{}` and `{}`; \
-                         all are `{}`, so the transposition type-checks",
+                        "`{}` and `{}` are passed where `{fn_name}` expects `{}` then `{}`. All \
+                         are `{}`, so the swap compiles",
                         c.name, d.name, c.bound_to, d.bound_to, c.ty,
                     ),
-                    "give the two parameters distinct types (a newtype per quantity, an enum per flag) so a swap is a type error",
+                    format!(
+                        "swap the arguments. If the call is right, rename the values to match. \
+                         {types}"
+                    ),
                 );
             } else {
-                emit(
-                    cx,
-                    ARG_NAMED_LIKE_OTHER_PARAM,
+                report(
                     args[c.arg].span,
                     format!(
-                        "argument `{}` is bound to `{fn_name}`'s parameter `{}`, but `{fn_name}` also takes \
-                         a parameter `{}` of the same type `{}`",
-                        c.name,
-                        c.bound_to,
-                        param_name(c.names_param).unwrap_or(c.name),
-                        c.ty,
+                        "`{}` is passed as `{fn_name}`'s `{}` parameter, but `{fn_name}` also \
+                         has a parameter named `{other}` and both are `{}`. This looks like an \
+                         argument in the wrong position",
+                        c.name, c.bound_to, c.ty,
                     ),
-                    "give the two parameters distinct types (a newtype per quantity, an enum per flag) so a swap is a type error",
+                    format!(
+                        "move `{}` to the `{other}` position. If it really is the `{}` here, \
+                         rename it. {types}",
+                        c.name, c.bound_to,
+                    ),
                 );
             }
         }

@@ -13,14 +13,15 @@ use crate::enum_facts::{arm_variant, ctor_literal_variant};
 use crate::hir_shapes::{callee_of, peel_blocks_unsafe, sole_expr};
 
 rustc_session::declare_lint! {
-    /// Flags a call whose failure is replaced by a fixed value and never
-    /// looked at -- `f(x).unwrap_or(0)`, `.unwrap_or_default()`,
+    /// Flags a call to a function that can reject its input, where the
+    /// rejection is replaced with a fixed value and never looked at:
+    /// `f(x).unwrap_or(0)`, `.unwrap_or_default()`,
     /// `.unwrap_or_else(|_| CONST)`, `.ok()` feeding one of those, `let
     /// Ok(v) = f(x) else { return Ok(()) }` or `let Some(v) = f(x).ok() else {
-    /// return }` -- when `f` is a `Result`-returning function of this crate
+    /// return }`, when `f` is a `Result`-returning function of this crate
     /// whose body rejects some of what it is handed (see
-    /// `ctor_flow::argument_decided_failure`): the value that failed `f`'s
-    /// check goes on being processed as if it had passed. Callees the
+    /// `ctor_flow::argument_decided_failure`). Rejected input carries on as
+    /// if it were fine. Callees the
     /// analysis cannot see into (other crates, `Option` returners,
     /// combinator-built failures) are covered only when listed in
     /// `defaulted-failure-callees`.
@@ -88,14 +89,20 @@ impl DefaultedFailure {
         cx: &LateContext<'tcx>,
         call: &Expr<'tcx>,
         at: Span,
-        replaced: &str,
+        replaced: Replaced,
     ) {
         let Some(FallibleCall { callee, wrapper }) = fallible_call(cx, call) else {
             return;
         };
         let name = cx.tcx.def_path_str(callee);
+        let consequence = match replaced {
+            Replaced::Default(method) => format!(
+                "`.{method}` here replaces the rejection with a fixed value. Rejected input carries on as if it were fine"
+            ),
+            Replaced::ElseSuccess => "the `else` here returns success when that happens. Rejected input is reported as handled".to_string(),
+        };
         let help =
-            "propagate the failure, or handle the failing arm where its cause is still visible";
+            "pass the error on with `?`, or match on it here while the reason is still attached";
         if wrapper == Wrapper::Result
             && let Some(local) = callee.as_local()
             && let Some(check) = self.fact(cx, local)
@@ -104,11 +111,9 @@ impl DefaultedFailure {
                 cx,
                 DEFAULTED_FAILURE,
                 at,
-                format!(
-                    "`{name}` rejects some of what it is handed, and {replaced} in place of the rejection"
-                ),
+                format!("`{name}` can reject its input, and {consequence}"),
                 check,
-                "the check whose failure is replaced",
+                format!("the check in `{name}` that gets overridden"),
                 help,
             );
         } else if self.is_listed(cx, callee) {
@@ -117,12 +122,21 @@ impl DefaultedFailure {
                 DEFAULTED_FAILURE,
                 at,
                 format!(
-                    "`{name}` is listed in `defaulted-failure-callees`, and {replaced} in place of its failure"
+                    "`{name}` is listed in `defaulted-failure-callees` as able to reject its input, and {consequence}"
                 ),
                 help,
             );
         }
     }
+}
+
+/// How the caller disposed of the failure.
+#[derive(Clone, Copy)]
+enum Replaced {
+    /// `.unwrap_or(..)` and kin, by method name.
+    Default(rustc_span::Symbol),
+    /// `let Ok(v) = .. else { return <success> }`.
+    ElseSuccess,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -341,12 +355,7 @@ impl<'tcx> LateLintPass<'tcx> for DefaultedFailure {
             return;
         }
         let call = through_ok(cx, recv);
-        self.report(
-            cx,
-            call,
-            expr.span,
-            &format!("`{name}` carries on with a fixed value"),
-        );
+        self.report(cx, call, expr.span, Replaced::Default(name));
     }
 
     /// `let Ok(v) = f(x) else { return Ok(()) };`, or the same with the
@@ -377,6 +386,6 @@ impl<'tcx> LateLintPass<'tcx> for DefaultedFailure {
         if !head_is_failure_of_call || !else_reports_success(cx, els) {
             return;
         }
-        self.report(cx, call, *span, "the `else` returns success");
+        self.report(cx, call, *span, Replaced::ElseSuccess);
     }
 }

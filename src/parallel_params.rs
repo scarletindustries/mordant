@@ -16,18 +16,17 @@ use rustc_span::symbol::kw;
 use rustc_span::{Span, Symbol};
 
 use crate::MordantConfig;
-use crate::baseline::emit;
+use crate::baseline::{emit_with_note, join};
 use crate::hir_shapes::{Callee, callee_of};
 
 rustc_session::declare_lint! {
     /// Flags two or more plain-data parameters that `parallel-params-min-fns`
-    /// or more crate-private functions declare under the same names and
-    /// types and pass among themselves: every counted function hands the
-    /// group, unchanged and in one call, to another of them, or receives it
-    /// that way. The group arrives together, is checked together and leaves
-    /// together: it is one value, and the only place it has no name is the
-    /// type system, so nothing keeps a caller from passing half of it, or two
-    /// halves of different wholes.
+    /// or more crate-private functions declare alike (same names and types)
+    /// and pass between them unchanged: every counted function passes the
+    /// group in one call to another of them, or receives it that way. The
+    /// group is one value travelling as loose parameters, so nothing keeps a
+    /// caller from mixing them up or passing half of it. A struct with those
+    /// fields does.
     ///
     /// Plain data is scalars, `&str`, shared slices, and structs and enums
     /// made only of those. `&mut` borrows, references and pointers to
@@ -336,7 +335,7 @@ impl<'tcx> LateLintPass<'tcx> for ParallelParams {
             }
             witnesses.extend(links[key].iter().copied());
         }
-        let mut findings: Vec<(Span, String)> = Vec::new();
+        let mut findings: Vec<(Span, String, Span, String, String)> = Vec::new();
         for (sig, (mut slots, mut witnesses)) in groups {
             let anchor = &self.fns[&sig[0]];
             // Slots in the anchor's declaration order, printed as written there.
@@ -373,37 +372,28 @@ impl<'tcx> LateLintPass<'tcx> for ParallelParams {
                 }
             };
             let names: Vec<String> = sig.iter().map(name).collect();
+            let fields: Vec<String> = slots.iter().map(|(n, _)| format!("`{n}`")).collect();
+            let fns = listed(&names);
             findings.push((
                 at,
                 format!(
-                    "parameters {} pass unchanged between {} ({} hands them to {} in one call): one value travelling as {} parameters",
-                    join(&shown),
-                    listed(&names),
-                    name(&witness.from),
-                    name(&witness.to),
+                    "{} are declared the same way by {fns} and passed between them unchanged. They are one value travelling as {} loose parameters",
+                    join(&shown, "and"),
                     slots.len(),
                 ),
+                witness.span,
+                format!(
+                    "{} hands them to {} here",
+                    name(&witness.from),
+                    name(&witness.to)
+                ),
+                format!("put {} in a struct and pass that", join(&fields, "and")),
             ));
         }
-        findings.sort_by_key(|(span, _)| span.lo());
-        for (span, msg) in findings {
-            emit(
-                cx,
-                PARALLEL_PARAMS,
-                span,
-                msg,
-                "a struct with these fields names the value; each function then takes, checks and forwards one parameter",
-            );
+        findings.sort_by_key(|(span, ..)| span.lo());
+        for (span, msg, witness, note, help) in findings {
+            emit_with_note(cx, PARALLEL_PARAMS, span, msg, witness, note, help);
         }
-    }
-}
-
-/// `a`, `a and b`, `a, b and c`.
-fn join(items: &[String]) -> String {
-    match items {
-        [] => String::new(),
-        [one] => one.clone(),
-        [head @ .., last] => format!("{} and {last}", head.join(", ")),
     }
 }
 
@@ -411,7 +401,7 @@ fn join(items: &[String]) -> String {
 fn listed(names: &[String]) -> String {
     const SHOWN: usize = 4;
     if names.len() <= SHOWN {
-        join(names)
+        join(names, "and")
     } else {
         format!(
             "{} and {} more functions",
@@ -423,7 +413,8 @@ fn listed(names: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{join, listed};
+    use super::listed;
+    use crate::baseline::join;
 
     fn owned(xs: &[&str]) -> Vec<String> {
         xs.iter().map(|s| (*s).to_owned()).collect()
@@ -431,9 +422,9 @@ mod tests {
 
     #[test]
     fn join_reads_as_prose() {
-        assert_eq!(join(&owned(&["a"])), "a");
-        assert_eq!(join(&owned(&["a", "b"])), "a and b");
-        assert_eq!(join(&owned(&["a", "b", "c"])), "a, b and c");
+        assert_eq!(join(&owned(&["a"]), "and"), "a");
+        assert_eq!(join(&owned(&["a", "b"]), "and"), "a and b");
+        assert_eq!(join(&owned(&["a", "b", "c"]), "or"), "a, b or c");
     }
 
     #[test]

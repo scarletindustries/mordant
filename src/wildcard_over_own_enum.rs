@@ -15,9 +15,10 @@ use crate::hir_shapes::{callee_of, peel_blocks_unsafe};
 
 rustc_session::declare_lint! {
     /// Flags `_` (or a catch-all binding) matching over a small crate-local
-    /// enum. The wildcard absorbs every future variant: adding one compiles
-    /// without a whisper, and this match silently routes it to the old
-    /// behavior. Listing the variants keeps exhaustiveness checking alive.
+    /// enum. The catch-all will also match any variant added to the enum
+    /// later, so a new variant lands in it silently instead of failing to
+    /// compile. Listing the remaining variants keeps exhaustiveness checking
+    /// alive.
     ///
     /// Silent on an arm that answers "not this shape" (`None`, `false`, an
     /// empty slice, string or collection, or a `return` of one of those, with
@@ -225,21 +226,25 @@ impl<'tcx> LateLintPass<'tcx> for WildcardOverOwnEnum {
             // Emitted against the ARM's hir id, so an #[allow] placed on the
             // arm itself is honored; a plain span emission would only see the
             // enclosing match's lint level.
+            let name = cx.tcx.def_path_str(adt.did());
             emit_hir_then(
                 cx,
                 WILDCARD_OVER_OWN_ENUM,
                 arm.hir_id,
                 arm.pat.span,
                 format!(
-                    "this arm absorbs every future variant of `{}` ({n} variants today)",
-                    cx.tcx.def_path_str(adt.did()),
+                    "this catch-all will also match any variant added to `{name}` later ({n} today). A new variant lands here silently instead of failing to compile"
                 ),
                 |diag| {
-                    let msg =
-                        "list the remaining variants; the compiler then flags every new one added";
+                    diag.span_note(
+                        cx.tcx.def_span(adt.did()),
+                        format!("`{name}` is defined here"),
+                    );
+                    let wildcard = snippet_opt(cx, arm.pat.span).unwrap_or_else(|| "_".into());
+                    let msg = format!("list the remaining variants instead of `{wildcard}`");
                     match &fix {
                         Some(sugg) => {
-                            diag.span_suggestion(
+                            diag.span_suggestion_verbose(
                                 arm.pat.span,
                                 msg,
                                 sugg,

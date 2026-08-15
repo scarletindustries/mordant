@@ -1,4 +1,4 @@
-warning: this `match` on `Step` is written out arm for arm a second time
+warning: this `match` on `Step` repeats an earlier one arm for arm. The mapping exists twice, and a change to one copy will miss the other
   --> $DIR/same_match_twice.rs:31:10
    |
 LL |       Some(match cause.step {
@@ -9,7 +9,7 @@ LL | |         Step::Parse => (cause.code + 2, "parse"),
 LL | |     })
    | |_____^
    |
-note: the same match is here
+note: the other copy
   --> $DIR/same_match_twice.rs:18:5
    |
 LL | /     match f.step {
@@ -18,10 +18,10 @@ LL | |         Step::Read => (f.code + 1, "read"),
 LL | |         Step::Parse => (f.code + 2, "parse"),
 LL | |     }
    | |_____^
-   = help: the mapping lives in two places kept in step by hand; a method on the enum states it once
+   = help: move the mapping into a method on `Step` and call it from both places
    = note: `#[warn(same_match_twice)]` on by default
 
-warning: this `match` on `Step` is written out arm for arm a second time
+warning: this `match` on `Step` repeats an earlier one arm for arm. The mapping exists twice, and a change to one copy will miss the other
   --> $DIR/same_match_twice.rs:41:13
    |
 LL |       let d = match f.step {
@@ -32,7 +32,7 @@ LL | |         Step::Parse => (f.code + 2, "parse"),
 LL | |     };
    | |_____^
    |
-note: the same match is here
+note: the other copy
   --> $DIR/same_match_twice.rs:18:5
    |
 LL | /     match f.step {
@@ -41,9 +41,9 @@ LL | |         Step::Read => (f.code + 1, "read"),
 LL | |         Step::Parse => (f.code + 2, "parse"),
 LL | |     }
    | |_____^
-   = help: the mapping lives in two places kept in step by hand; a method on the enum states it once
+   = help: move the mapping into a method on `Step` and call it from both places
 
-warning: this `match` on `Shape` is written out arm for arm a second time
+warning: this `match` on `Shape` repeats an earlier one arm for arm. The mapping exists twice, and a change to one copy will miss the other
   --> $DIR/same_match_twice.rs:186:17
    |
 LL |       let cells = match shape {
@@ -56,7 +56,7 @@ LL | |         },
 LL | |     };
    | |_____^
    |
-note: the same match is here
+note: the other copy
   --> $DIR/same_match_twice.rs:173:5
    |
 LL | /     match s {
@@ -67,9 +67,9 @@ LL | |         Shape::Rect(w, h) => match (w, h) {
 LL | |         },
 LL | |     }
    | |_____^
-   = help: the mapping lives in two places kept in step by hand; a method on the enum states it once
+   = help: move the mapping into a method on `Shape` and call it from both places
 
-warning: this `match` on `Axis` is written out arm for arm a second time
+warning: this `match` on `Axis` repeats an earlier one arm for arm. The mapping exists twice, and a change to one copy will miss the other
   --> $DIR/same_match_twice.rs:218:15
    |
 LL |       let far = match axis {
@@ -79,7 +79,7 @@ LL | |         Axis::Down => h + 1,
 LL | |     };
    | |_____^
    |
-note: the same match is here
+note: the other copy
   --> $DIR/same_match_twice.rs:214:16
    |
 LL |       let near = match axis {
@@ -88,7 +88,7 @@ LL | |         Axis::Across => w,
 LL | |         Axis::Down => h + 1,
 LL | |     };
    | |_____^
-   = help: the mapping lives in two places kept in step by hand; a method on the enum states it once
+   = help: move the mapping into a method on `Axis` and call it from both places
 
 warning: 4 warnings emitted
 

@@ -6,9 +6,10 @@ use crate::hir_shapes::value_name;
 
 rustc_session::declare_lint! {
     /// Flags addition, subtraction, and comparison between values whose names
-    /// claim different units: `timeout_ms + deadline_ns` compiles and is
-    /// always wrong. Multiplication and division stay silent, since they are
-    /// how units legitimately convert.
+    /// say they are in different units: `timeout_ms + deadline_ns` mixes
+    /// them, compiles, and is always wrong.
+    /// Multiplication and division stay silent, since they are how units
+    /// legitimately convert.
     pub UNIT_MISMATCH,
     Warn,
     "arithmetic between values whose names claim different units"
@@ -20,15 +21,15 @@ rustc_session::declare_lint_pass!(UnitMismatch => [UNIT_MISMATCH]);
 /// operands from different classes.
 fn unit_class(suffix: &str) -> Option<&'static str> {
     Some(match suffix {
-        "ns" | "nanos" => "ns",
-        "us" | "micros" => "us",
-        "ms" | "millis" => "ms",
-        "sec" | "secs" | "seconds" => "s",
-        "mins" | "minutes" => "min",
+        "ns" | "nanos" => "nanoseconds",
+        "us" | "micros" => "microseconds",
+        "ms" | "millis" => "milliseconds",
+        "sec" | "secs" | "seconds" => "seconds",
+        "mins" | "minutes" => "minutes",
         "bytes" => "bytes",
-        "kb" | "kib" => "kb",
-        "mb" | "mib" => "mb",
-        "gb" | "gib" => "gb",
+        "kb" | "kib" => "kilobytes",
+        "mb" | "mib" => "megabytes",
+        "gb" | "gib" => "gigabytes",
         "tenths" => "tenths",
         _ => return None,
     })
@@ -68,19 +69,17 @@ impl<'tcx> LateLintPass<'tcx> for UnitMismatch {
             return;
         };
         if lc != rc {
+            let op = if matches!(op.node, BinOpKind::Add | BinOpKind::Sub) {
+                "arithmetic"
+            } else {
+                "comparison"
+            };
             emit(
                 cx,
                 UNIT_MISMATCH,
                 expr.span,
-                format!(
-                    "`{ln}` claims {lc} and `{rn}` claims {rc}; {} between them mixes units",
-                    if matches!(op.node, BinOpKind::Add | BinOpKind::Sub) {
-                        "arithmetic"
-                    } else {
-                        "comparison"
-                    }
-                ),
-                "convert one side, or rename whichever name is lying about its unit",
+                format!("`{ln}` says {lc} and `{rn}` says {rc}, and this {op} mixes them"),
+                "convert one side first. If a name is wrong about its unit, rename it. A `Duration` or a unit newtype would catch the next one",
             );
         }
     }

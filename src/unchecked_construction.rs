@@ -14,9 +14,9 @@ use rustc_middle::ty;
 use rustc_span::{Span, Symbol, sym};
 
 rustc_session::declare_lint! {
-    /// Flags a value of a validated type made or changed without its
-    /// validating constructor running. A validating constructor is a
-    /// receiver-less inherent function returning `Result<Self, _>` or
+    /// Flags a value of a validated type built or changed by hand, skipping
+    /// the check its validating constructor makes. A validating constructor
+    /// is a receiver-less inherent function returning `Result<Self, _>` or
     /// `Option<Self>` whose body rejects some value it then stores in a field
     /// (see `ctor_flow`). Outside the type's own module and impls, each of
     /// these skips that check:
@@ -24,8 +24,8 @@ rustc_session::declare_lint! {
     /// * a struct literal, `S(x)` on a tuple struct included -- one with a
     ///   `..base` tail only when it names a field some validator checks,
     ///   since the fields it takes from `base` were checked when `base` was
-    ///   made;
-    /// * an assignment, plain or compound, to a checked field;
+    ///   made,
+    /// * an assignment, plain or compound, to a checked field,
     /// * `mem::zeroed`, `mem::transmute` or `MaybeUninit::assume_init`
     ///   producing the type.
     ///
@@ -303,6 +303,8 @@ impl<'tcx> LateLintPass<'tcx> for UncheckedConstruction {
                     .iter()
                     .find_map(|v| v.checks().find(|c| is_hit(c.field)).map(|c| (v, c)))
             };
+            let path = cx.tcx.def_path_str(site.adt);
+            let ty = cx.tcx.item_name(site.adt);
             let (msg, check, note, help) = match &site.kind {
                 SiteKind::Literal(literal) => {
                     let by = match literal {
@@ -312,34 +314,32 @@ impl<'tcx> LateLintPass<'tcx> for UncheckedConstruction {
                     let Some((by, check)) = by else {
                         continue;
                     };
+                    let (ctor, checked) = (by.ctor, checked(by));
                     (
                         format!(
-                            "`{}` is constructed by literal here, but `{}::{}` checks {} before constructing one",
-                            cx.tcx.def_path_str(site.adt),
-                            cx.tcx.item_name(site.adt),
-                            by.ctor,
-                            checked(by),
+                            "`{path}` is built by hand here, skipping the check on {checked} that `{ty}::{ctor}` makes"
                         ),
                         check.check,
-                        "the check this literal never runs",
-                        "construct through the validating function, or move this literal into the type's module",
+                        format!("the check in `{ty}::{ctor}`"),
+                        format!(
+                            "build it with `{ty}::{ctor}(..)`, or make {checked} private so a literal like this only compiles inside `{ty}`'s module"
+                        ),
                     )
                 }
                 SiteKind::Conjured(what) => {
                     let Some(by) = ctors.first() else {
                         continue;
                     };
+                    let (ctor, checked) = (by.ctor, checked(by));
                     (
                         format!(
-                            "`{}` is produced by `{what}` here, but `{}::{}` checks {} before constructing one",
-                            cx.tcx.def_path_str(site.adt),
-                            cx.tcx.item_name(site.adt),
-                            by.ctor,
-                            checked(by),
+                            "`{path}` is produced with `{what}` here, skipping the check on {checked} that `{ty}::{ctor}` makes"
                         ),
                         by.first.check,
-                        "the check this value never went through",
-                        "construct through the validating function",
+                        format!("the check in `{ty}::{ctor}`"),
+                        format!(
+                            "build it with `{ty}::{ctor}(..)`. If this path must skip the check, add an unchecked constructor next to `{ty}::{ctor}` and call that"
+                        ),
                     )
                 }
                 SiteKind::Write(field) => {
@@ -347,16 +347,16 @@ impl<'tcx> LateLintPass<'tcx> for UncheckedConstruction {
                         continue;
                     };
                     let name = fields[*field].name;
+                    let ctor = by.ctor;
                     (
                         format!(
-                            "`{}::{name}` is written directly here, but `{}::{}` rejects some values of `{name}` before storing one",
-                            cx.tcx.def_path_str(site.adt),
-                            cx.tcx.item_name(site.adt),
-                            by.ctor,
+                            "`{path}::{name}` is assigned directly here, skipping the check on `{name}` that `{ty}::{ctor}` makes"
                         ),
                         check.check,
-                        "the check this write never runs",
-                        "change the value through the validating function, or make the field private and move this write into the type's module",
+                        format!("the check in `{ty}::{ctor}`"),
+                        format!(
+                            "change `{name}` through a method of `{ty}` that repeats the check, or make `{name}` private so this write only compiles inside `{ty}`'s module"
+                        ),
                     )
                 }
             };

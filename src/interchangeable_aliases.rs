@@ -4,9 +4,10 @@ use rustc_hir::def_id::DefId;
 use rustc_hir::{BinOpKind, Body, Expr, ExprKind, LetStmt, Node, Ty as HirTy};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty::{self, Ty, VariantDef};
+use rustc_span::Span;
 
 use crate::adt_facts::cfg_selected;
-use crate::baseline::emit;
+use crate::baseline::emit_with_note;
 use crate::hir_shapes::{
     Callee, assigned_adt_field, callee_of, declared_ty, field_decl_ty, param_decl_ty,
     return_decl_ty, value_expr, written_alias,
@@ -19,9 +20,10 @@ rustc_session::declare_lint! {
     /// `let p: PackageId = ..`, returned from a `-> PackageId` function,
     /// defining a `PackageId` const, or compared with a `PackageId` value,
     /// where both aliases name the same primitive integer. Two aliases over
-    /// one integer exist to tell two kinds of number apart, and rustc erases
-    /// both, so nothing rejects the crossing; a newtype per kind would. The
-    /// kinds are read off the written types of this crate's locals,
+    /// one integer exist to tell two kinds of number apart, but both are the
+    /// plain integer, so the mix-up compiles. A newtype per kind would
+    /// reject it. The kinds are read off the written types of this crate's
+    /// locals,
     /// parameters, fields, consts and signatures, so the lint stays quiet
     /// when either side has no alias (a literal, a plain `u32`, arithmetic
     /// between two values), when one alias is declared as the other, through
@@ -42,6 +44,8 @@ struct Kind<'tcx> {
     written: DefId,
     root: DefId,
     int: Ty<'tcx>,
+    /// Where the type was written.
+    decl: Span,
 }
 
 /// `type A = B;` names `B`'s kind; follow the chain while it stays visible.
@@ -82,7 +86,12 @@ fn kind_of<'tcx>(cx: &LateContext<'tcx>, ty: &HirTy<'_>) -> Option<Kind<'tcx>> {
         .type_of(root)
         .instantiate_identity()
         .skip_normalization();
-    matches!(int.kind(), ty::Int(_) | ty::Uint(_)).then_some(Kind { written, root, int })
+    matches!(int.kind(), ty::Int(_) | ty::Uint(_)).then_some(Kind {
+        written,
+        root,
+        int,
+        decl: ty.span,
+    })
 }
 
 fn is_lit(e: &Expr<'_>) -> bool {
@@ -212,27 +221,34 @@ fn check_value<'tcx>(cx: &LateContext<'tcx>, src: &'tcx Expr<'tcx>, to: &Kind<'t
                 .flatten()
                 .map_or_else(|| format!("#{idx}"), |i| i.to_string());
             format!(
-                "is passed as `{to_name}` parameter `{param}` of `{}`",
+                "is passed as the `{to_name}` parameter `{param}` of `{}`",
                 def_name(cx, callee)
             )
         }
-        &Slot::Field(f) => format!("is stored in `{to_name}` field `{}`", def_name(cx, f)),
+        &Slot::Field(f) => format!("is stored in the `{to_name}` field `{}`", def_name(cx, f)),
         Slot::Local(pat) => format!("is bound to `{pat}: {to_name}`"),
-        &Slot::Return(f) => format!("is returned from `{}` as `{to_name}`", def_name(cx, f)),
-        &Slot::Const(c) => format!("defines `{to_name}` const `{}`", def_name(cx, c)),
-        Slot::Compared(other) => format!("is compared with `{other}`, declared `{to_name}`"),
+        &Slot::Return(f) => format!("is returned from `{}` as a `{to_name}`", def_name(cx, f)),
+        &Slot::Const(c) => format!(
+            "is used to define the `{to_name}` const `{}`",
+            def_name(cx, c)
+        ),
+        Slot::Compared(other) => format!("is compared with `{other}`, a `{to_name}`"),
     };
-    emit(
+    let from_name = def_name(cx, from.written);
+    emit_with_note(
         cx,
         INTERCHANGEABLE_ALIASES,
         src.span,
         format!(
-            "`{}` is declared `{}` but {lands}; both are `{}`, so nothing rejects the crossing",
+            "`{}` is a `{from_name}` but {lands}. Both are plain `{}`, so the mix-up compiles",
             snippet(cx, src.span, ".."),
-            def_name(cx, from.written),
             to.int,
         ),
-        "a newtype per id kind makes this a type error",
+        from.decl,
+        format!("the `{from_name}` this value comes from"),
+        format!(
+            "make `{from_name}` and `{to_name}` newtypes instead of aliases. This line then fails to compile until the right id is used"
+        ),
     );
 }
 

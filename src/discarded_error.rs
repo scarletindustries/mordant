@@ -4,13 +4,13 @@ use rustc_hir::{ExprKind, Stmt, StmtKind};
 use rustc_lint::{LateContext, LateLintPass};
 
 rustc_session::declare_lint! {
-    /// Flags `.ok();` in statement position: the `Result` becomes an `Option`
-    /// that is immediately dropped, so the error value is unobservable. A
-    /// deliberate discard is written `let _ = ...`, which states the intent
-    /// and survives review; `.ok();` reads like handling and handles nothing.
+    /// Flags `.ok();` as a statement: it converts the `Result` to an
+    /// `Option` and drops it, so the error disappears in a line that looks
+    /// like handling. A deliberate discard is written `let _ = ...`, which
+    /// states the intent and survives review.
     pub DISCARDED_ERROR,
     Warn,
-    "statement-position .ok() makes the error unobservable"
+    "statement-position .ok() drops the error in a line that looks like handling"
 }
 
 rustc_session::declare_lint_pass!(DiscardedError => [DISCARDED_ERROR]);
@@ -27,15 +27,17 @@ impl<'tcx> LateLintPass<'tcx> for DiscardedError {
             return;
         }
         let recv_ty = cx.typeck_results().expr_ty_adjusted(recv).peel_refs();
-        if result_err_ty(cx.tcx, recv_ty).is_none() {
+        let Some(err_ty) = result_err_ty(cx.tcx, recv_ty) else {
             return;
-        }
+        };
         emit(
             cx,
             DISCARDED_ERROR,
             expr.span,
-            "`.ok()` in statement position discards the error unobserved",
-            "handle the error, or state the discard with `let _ = ...`",
+            format!(
+                "`.ok();` converts this `Result` to an `Option` and drops it, so the `{err_ty}` error disappears in a line that looks like handling"
+            ),
+            "handle the `Err` or pass it on with `?`. If dropping it is intended, write `let _ = ...;` to say so",
         );
     }
 }

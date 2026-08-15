@@ -5,11 +5,9 @@ use crate::baseline::emit;
 use crate::claims::{self, DefNames};
 
 rustc_session::declare_lint! {
-    /// Flags a `// SAFETY:` comment whose backticked identifiers no longer
-    /// exist: not in the file's code, and not the name of any definition in
-    /// this crate or a crate it links. A safety justification that names a
-    /// guard which a refactor has since removed is documentation asserting an
-    /// invariant nothing provides.
+    /// Flags a `// SAFETY:` comment that relies on a backticked identifier
+    /// when nothing with that name exists in the file, this crate, or any
+    /// crate it links. The justification describes code that is gone.
     ///
     /// Runs only with `stale-safety-comment-enabled = true` in `dylint.toml`.
     /// The crate cannot see names defined in C++, in scripts, or in crates
@@ -66,9 +64,11 @@ impl<'tcx> LateLintPass<'tcx> for StaleSafetyComment {
                     STALE_SAFETY_COMMENT,
                     comment_span,
                     format!(
-                        "this SAFETY comment names `{ident}`, which appears nowhere in this file's code, this crate, or any crate it links"
+                        "this SAFETY comment relies on `{ident}`, but nothing with that name exists in this file, this crate, or any crate it links. The justification describes code that is gone"
                     ),
-                    "the guard this justification described has moved or gone; update the comment or restore the guard",
+                    format!(
+                        "restate the comment in terms of what replaced `{ident}`. If nothing did, this `unsafe` block has lost its guard and needs one"
+                    ),
                 );
             }
         }
