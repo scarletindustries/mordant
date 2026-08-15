@@ -1,9 +1,9 @@
 use clippy_utils::source::snippet;
-use rustc_hir::def::{DefKind, Res};
+use rustc_hir::def::{CtorKind, DefKind, Res};
 use rustc_hir::def_id::DefId;
 use rustc_hir::{BinOpKind, Body, Expr, ExprKind, LetStmt, Node, Ty as HirTy};
 use rustc_lint::{LateContext, LateLintPass};
-use rustc_middle::ty::{self, Ty};
+use rustc_middle::ty::{self, Ty, VariantDef};
 
 use crate::adt_facts::cfg_selected;
 use crate::baseline::emit;
@@ -107,6 +107,49 @@ fn source_kind<'tcx>(cx: &LateContext<'tcx>, e: &'tcx Expr<'tcx>) -> Option<Kind
     kind_of(cx, declared_ty(cx, e)?)
 }
 
+/// Each expression `e` may take its value from: every branch of an `if` and
+/// arm of a `match`, recursively; otherwise the value expression itself.
+fn each_value<'tcx>(e: &'tcx Expr<'tcx>, f: &mut impl FnMut(&'tcx Expr<'tcx>)) {
+    let e = value_expr(e);
+    match e.kind {
+        ExprKind::If(_, then, other) => {
+            each_value(then, f);
+            if let Some(other) = other {
+                each_value(other, f);
+            }
+        }
+        ExprKind::Match(_, arms, _) => {
+            for arm in arms {
+                each_value(arm.body, f);
+            }
+        }
+        _ => f(e),
+    }
+}
+
+/// The variant a tuple-struct or tuple-variant call `P(..)` / `Self(..)`
+/// constructs, with its positional arguments.
+fn constructed_variant<'tcx>(
+    cx: &LateContext<'tcx>,
+    expr: &Expr<'tcx>,
+) -> Option<(&'tcx VariantDef, &'tcx [Expr<'tcx>])> {
+    let ExprKind::Call(callee, args) = expr.kind else {
+        return None;
+    };
+    let ExprKind::Path(qpath) = &callee.kind else {
+        return None;
+    };
+    let res = cx.qpath_res(qpath, callee.hir_id);
+    if !matches!(
+        res,
+        Res::Def(DefKind::Ctor(_, CtorKind::Fn), _) | Res::SelfCtor(_)
+    ) {
+        return None;
+    }
+    let adt = cx.typeck_results().expr_ty(expr).ty_adt_def()?;
+    Some((adt.variant_of_res(res), args))
+}
+
 /// Where the value lands, worded for the message.
 enum Slot {
     Param {
@@ -145,7 +188,13 @@ fn check_edge<'tcx>(cx: &LateContext<'tcx>, src: &'tcx Expr<'tcx>, dest: &HirTy<
     }
 }
 
+/// `src` against the kind of the place it lands in, one check per value it
+/// may evaluate to.
 fn check_kinds<'tcx>(cx: &LateContext<'tcx>, src: &'tcx Expr<'tcx>, to: &Kind<'tcx>, slot: Slot) {
+    each_value(src, &mut |value| check_value(cx, value, to, &slot));
+}
+
+fn check_value<'tcx>(cx: &LateContext<'tcx>, src: &'tcx Expr<'tcx>, to: &Kind<'tcx>, slot: &Slot) {
     let Some(from) = source_kind(cx, src) else {
         return;
     };
@@ -154,7 +203,7 @@ fn check_kinds<'tcx>(cx: &LateContext<'tcx>, src: &'tcx Expr<'tcx>, to: &Kind<'t
     }
     let to_name = def_name(cx, to.written);
     let lands = match slot {
-        Slot::Param { callee, idx } => {
+        &Slot::Param { callee, idx } => {
             let param = cx
                 .tcx
                 .fn_arg_idents(callee)
@@ -167,13 +216,12 @@ fn check_kinds<'tcx>(cx: &LateContext<'tcx>, src: &'tcx Expr<'tcx>, to: &Kind<'t
                 def_name(cx, callee)
             )
         }
-        Slot::Field(f) => format!("is stored in `{to_name}` field `{}`", def_name(cx, f)),
+        &Slot::Field(f) => format!("is stored in `{to_name}` field `{}`", def_name(cx, f)),
         Slot::Local(pat) => format!("is bound to `{pat}: {to_name}`"),
-        Slot::Return(f) => format!("is returned from `{}` as `{to_name}`", def_name(cx, f)),
-        Slot::Const(c) => format!("defines `{to_name}` const `{}`", def_name(cx, c)),
+        &Slot::Return(f) => format!("is returned from `{}` as `{to_name}`", def_name(cx, f)),
+        &Slot::Const(c) => format!("defines `{to_name}` const `{}`", def_name(cx, c)),
         Slot::Compared(other) => format!("is compared with `{other}`, declared `{to_name}`"),
     };
-    let src = value_expr(src);
     emit(
         cx,
         CROSSED_ALIAS,
@@ -198,6 +246,14 @@ impl<'tcx> LateLintPass<'tcx> for CrossedAlias {
                 }
             }
             ExprKind::Call(..) | ExprKind::MethodCall(..) => {
+                if let Some((variant, args)) = constructed_variant(cx, expr) {
+                    for (field, arg) in variant.fields.iter().zip(args) {
+                        if let Some(dest) = field_decl_ty(cx, field.did) {
+                            check_edge(cx, arg, dest, Slot::Field(field.did));
+                        }
+                    }
+                    return;
+                }
                 let (def, first, args) = match callee_of(cx, expr) {
                     Some(Callee::Path { def, args }) => (def, 0, args),
                     Some(Callee::Method { def, args, .. }) => (def, 1, args),

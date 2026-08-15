@@ -48,28 +48,52 @@ LL |     let pkg: PackageId = first_dependency(r);
    = help: a newtype per id kind makes this a type error
 
 warning: `dep` is declared `DependencyId` but is returned from `return_is_flagged` as `PackageId`; both are `u32`, so nothing rejects the crossing
-  --> $DIR/crossed_alias.rs:63:5
+  --> $DIR/crossed_alias.rs:64:5
    |
 LL |     dep
    |     ^^^
    |
    = help: a newtype per id kind makes this a type error
 
+warning: `r.dependency` is declared `DependencyId` but is returned from `branch_tail_is_flagged` as `PackageId`; both are `u32`, so nothing rejects the crossing
+  --> $DIR/crossed_alias.rs:70:9
+   |
+LL |         r.dependency
+   |         ^^^^^^^^^^^^
+   |
+   = help: a newtype per id kind makes this a type error
+
+warning: `first_dependency(r)` is declared `DependencyId` but is returned from `branch_tail_is_flagged` as `PackageId`; both are `u32`, so nothing rejects the crossing
+  --> $DIR/crossed_alias.rs:74:18
+   |
+LL |             _ => first_dependency(r),
+   |                  ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: a newtype per id kind makes this a type error
+
 warning: `r.dependency` is declared `DependencyId` but is returned from `explicit_return_is_flagged` as `PackageId`; both are `u32`, so nothing rejects the crossing
-  --> $DIR/crossed_alias.rs:69:16
+  --> $DIR/crossed_alias.rs:82:16
    |
 LL |         return r.dependency;
    |                ^^^^^^^^^^^^
    |
    = help: a newtype per id kind makes this a type error
 
+warning: `dep` is declared `DependencyId` but is stored in `PackageId` field `0`; both are `u32`, so nothing rejects the crossing
+  --> $DIR/crossed_alias.rs:92:13
+   |
+LL |     (Pinned(dep, dep), Pinned(pkg, dep))
+   |             ^^^
+   |
+   = help: a newtype per id kind makes this a type error
+
 warning: `dep` is declared `DependencyId` but is compared with `INVALID_PACKAGE`, declared `PackageId`; both are `u32`, so nothing rejects the crossing
-  --> $DIR/crossed_alias.rs:76:8
+  --> $DIR/crossed_alias.rs:97:8
    |
 LL |     if dep == INVALID_PACKAGE {
    |        ^^^
    |
    = help: a newtype per id kind makes this a type error
 
-warning: 9 warnings emitted
+warning: 12 warnings emitted
 

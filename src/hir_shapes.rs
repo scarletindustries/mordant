@@ -322,17 +322,24 @@ pub(crate) fn indexed_field<'h>(e: &'h Expr<'h>) -> Option<IndexedField<'h>> {
     Some(IndexedField { base, field, index })
 }
 
-/// The expression whose value `e` carries, through `&`, `*`, tail-only
-/// blocks and HIR temporaries: the layers that move or borrow a value
-/// without computing a new one.
+/// The expression whose value `e` carries, through `&`, `*`, HIR
+/// temporaries and unlabeled blocks down to their tail (whatever statements
+/// precede it): the layers that move or borrow a value without computing a
+/// new one.
 pub(crate) fn value_expr<'h>(mut e: &'h Expr<'h>) -> &'h Expr<'h> {
-    loop {
-        let peeled = peel_blocks_unsafe(e);
-        match peeled.kind {
-            ExprKind::AddrOf(_, _, inner) | ExprKind::Unary(UnOp::Deref, inner) => e = inner,
-            _ => return peeled,
-        }
+    while let ExprKind::AddrOf(_, _, inner)
+    | ExprKind::Unary(UnOp::Deref, inner)
+    | ExprKind::DropTemps(inner)
+    | ExprKind::Block(
+        &Block {
+            expr: Some(inner), ..
+        },
+        None,
+    ) = e.kind
+    {
+        e = inner;
     }
+    e
 }
 
 /// The type alias a written type names, through `&`/`&mut`: `A` and `&A`

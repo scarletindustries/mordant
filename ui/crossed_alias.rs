@@ -60,7 +60,20 @@ pub fn let_annotation_is_flagged(r: &Resolution) -> PackageId {
 
 pub fn return_is_flagged(dep: DependencyId) -> PackageId {
     // Flagged: the tail is declared `DependencyId`, the signature `PackageId`.
+    let _seen = dep;
     dep
+}
+
+pub fn branch_tail_is_flagged(r: &Resolution, pick: u8) -> PackageId {
+    // Flagged: each branch is a value the function may return; two cross.
+    if pick == 0 {
+        r.dependency
+    } else {
+        match pick {
+            1 => r.package,
+            _ => first_dependency(r),
+        }
+    }
 }
 
 pub fn explicit_return_is_flagged(r: &Resolution, early: bool) -> PackageId {
@@ -69,6 +82,14 @@ pub fn explicit_return_is_flagged(r: &Resolution, early: bool) -> PackageId {
         return r.dependency;
     }
     r.package
+}
+
+pub struct Pinned(pub PackageId, pub u32);
+
+pub fn tuple_constructor_is_flagged(pkg: PackageId, dep: DependencyId) -> (Pinned, Pinned) {
+    // Flagged: the first positional field is declared `PackageId`. Fine: the
+    // second has no alias, and `pkg` matches.
+    (Pinned(dep, dep), Pinned(pkg, dep))
 }
 
 pub fn comparison_is_flagged(r: &Resolution, dep: DependencyId) -> bool {
