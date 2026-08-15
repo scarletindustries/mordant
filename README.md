@@ -43,6 +43,8 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 | `unchecked_input_len`  | opt-in via `unchecked-input-len-enabled`: a received integer bounded on one path and turned into memory (`split_at`, `set_len`, `ptr.add`) on a path no check dominates   |
 | `misbound_arg`         | `resize(height, width)` against `fn resize(width: u32, height: u32)`: an argument named as another parameter of the same type, so only its position says which it is      |
 | `bypassed_conversion`  | `mem::transmute` or a pointer cast into a type outside its own module and impls, when a `From`/`TryFrom` impl or constructor already converts that same source into it    |
+| `same_match_twice`     | the same `match` over one enum written out arm for arm in two places: a mapping the enum should state once as a method, kept in step by hand instead                      |
+| `reimplemented_helper` | a function whose signature and body repeat another function in the crate under a different name: one helper written twice, so a fix to one copy misses the other          |
 
 Each diagnostic states what the lint found, why the type is wrong, and the type that replaces it.
 
@@ -84,6 +86,7 @@ wildcard-local-enum-max-variants = 12
 exclusive-options-min-fields = 2
 flag-cluster-min-bools = 3
 stored-projection-min-sites = 2
+reimplemented-helper-min-nodes = 12
 
 # Opt-in: also count `Box<dyn Error>` as a stringly error type.
 stringly-error-include-box-dyn = true

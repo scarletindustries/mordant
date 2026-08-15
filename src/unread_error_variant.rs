@@ -5,7 +5,7 @@ use rustc_hir::{BinOpKind, Expr, ExprKind, Pat};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 
-use crate::adt_facts::impl_self_adt;
+use crate::adt_facts::inside_own_trait_impl;
 use crate::baseline::emit;
 use crate::enum_facts::{arm_variant, private_enum_of};
 
@@ -40,28 +40,6 @@ pub struct UnreadErrorVariant {
 }
 
 rustc_session::impl_lint_pass!(UnreadErrorVariant => [UNREAD_ERROR_VARIANT]);
-
-/// True when `hir_id` sits inside a TRAIT impl whose self type is `enum_did`.
-/// `Display`, `Debug`, `From` and derive expansions must match every variant
-/// to exist, so their patterns prove nothing. Inherent methods are not
-/// excluded: an accessor like `fn tenths(&self)` is the crate genuinely
-/// reading the structure.
-fn inside_own_trait_impl(cx: &LateContext<'_>, hir_id: rustc_hir::HirId, enum_did: DefId) -> bool {
-    let mut cur = hir_id.owner.def_id.to_def_id();
-    loop {
-        if matches!(
-            cx.tcx.def_kind(cur),
-            rustc_hir::def::DefKind::Impl { of_trait: true }
-        ) && impl_self_adt(cx, cur).is_some_and(|adt| adt.did() == enum_did)
-        {
-            return true;
-        }
-        match cx.tcx.opt_parent(cur) {
-            Some(p) => cur = p,
-            None => return false,
-        }
-    }
-}
 
 /// The private-enum variant `expr` constructs, if it is a variant path
 /// (including a bare tuple constructor passed as a function), call or struct

@@ -40,5 +40,19 @@ LL |         s.parse().map(Numeric).map_err(|e| e.to_string())
    = help: return the error type, or an error enum with a variant that wraps it
    = note: `#[warn(stringified_error)]` on by default
 
-warning: 5 warnings emitted
+warning: `private_string_err_is_fine` has the same signature and body as `public_string_err_is_flagged`
+  --> $DIR/stringly_error.rs:31:1
+   |
+LL | fn private_string_err_is_fine(x: u32) -> Result<u32, String> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the same body is here
+  --> $DIR/stringly_error.rs:7:1
+   |
+LL | pub fn public_string_err_is_flagged(x: u32) -> Result<u32, String> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: one helper written twice drifts apart at the first fix; keep one and call it from the other's callers
+   = note: `#[warn(reimplemented_helper)]` on by default
+
+warning: 6 warnings emitted
 

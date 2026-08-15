@@ -32,6 +32,7 @@ mod exclusive_options;
 mod flag_cluster;
 mod forbidden_reach;
 mod guard_flag;
+mod hir_clone;
 mod hir_shapes;
 mod insert_then_unwrap;
 mod lock_order;
@@ -41,6 +42,8 @@ mod narrowed_return;
 mod nonidentity_key;
 mod overwide_parameter;
 mod parallel_bools;
+mod reimplemented_helper;
+mod same_match_twice;
 mod stale_across_reentry;
 mod stale_panic_message;
 mod stale_safety_comment;
@@ -104,6 +107,9 @@ pub struct MordantConfig {
     /// Construction sites at which `stored_projection` will read a
     /// correspondence between two fields.
     pub stored_projection_min_sites: usize = 2,
+    /// Expression nodes below which `reimplemented_helper` does not compare
+    /// a body, so one-line accessors and constructors never pair up.
+    pub reimplemented_helper_min_nodes: usize = 12,
     /// Ratchet file name, resolved upward from each crate's manifest dir. Runs
     /// suppress up to the recorded count per (lint, file) and surface only new
     /// findings. Regenerate with `MORDANT_BASELINE_WRITE=1`.
@@ -203,6 +209,10 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
     add(s, config.unchecked_input_len_enabled, || UncheckedInputLen);
     add(s, true, || MisboundArg);
     add(s, true, || BypassedConversion);
+    add(s, true, same_match_twice::SameMatchTwice::default);
+    add(s, true, move || {
+        reimplemented_helper::ReimplementedHelper::new(config)
+    });
     // Last, so its check_crate_post flushes after every lint has recorded.
     add(s, true, || BaselineWriter);
 }
@@ -274,6 +284,7 @@ fn config_default_thresholds_match_docs() {
     assert_eq!(c.wildcard_local_enum_max_variants, 12);
     assert_eq!(c.flag_cluster_min_bools, 3);
     assert_eq!(c.stored_projection_min_sites, 2);
+    assert_eq!(c.reimplemented_helper_min_nodes, 12);
     assert!(!c.flag_cluster_enabled);
     assert!(!c.stale_safety_comment_enabled);
     assert!(!c.unchecked_input_len_enabled);

@@ -130,3 +130,23 @@ pub(crate) fn in_own_code_of(cx: &LateContext<'_>, at: HirId, adt: DefId) -> boo
     }
     false
 }
+
+/// True when `hir_id` sits inside a TRAIT impl whose self type is `adt_did`.
+/// `Display`, `Debug`, `From` and derive expansions must match every variant
+/// to exist, so their patterns prove nothing. Inherent methods are not
+/// excluded: an accessor like `fn tenths(&self)` is the crate genuinely
+/// reading the structure.
+pub(crate) fn inside_own_trait_impl(cx: &LateContext<'_>, hir_id: HirId, adt_did: DefId) -> bool {
+    let mut cur = hir_id.owner.def_id.to_def_id();
+    loop {
+        if matches!(cx.tcx.def_kind(cur), DefKind::Impl { of_trait: true })
+            && impl_self_adt(cx, cur).is_some_and(|adt| adt.did() == adt_did)
+        {
+            return true;
+        }
+        match cx.tcx.opt_parent(cur) {
+            Some(p) => cur = p,
+            None => return false,
+        }
+    }
+}
