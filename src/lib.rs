@@ -231,7 +231,7 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
     add(s, true, move || DefaultedFailure::new(config));
     add(s, config.unchecked_input_len_enabled, || UncheckedInputLen);
     add(s, true, || MisboundArg);
-    add(s, true, || BypassedConversion);
+    add(s, true, move || BypassedConversion::new(config));
     add(s, true, same_match_twice::SameMatchTwice::default);
     add(s, true, move || {
         reimplemented_helper::ReimplementedHelper::new(config)

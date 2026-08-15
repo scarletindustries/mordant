@@ -78,7 +78,7 @@ LL |             if port > 65535 {
    = help: construct through the validating function, or move this literal into the type's module
 
 warning: `inner::Level` is produced by `mem::zeroed` here, but `Level::new` checks `value` before constructing one
-  --> $DIR/bypassed_validator.rs:338:17
+  --> $DIR/bypassed_validator.rs:337:17
    |
 LL |                 std::mem::zeroed::<inner::Level>(),
    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -91,78 +91,78 @@ LL |             if v <= 10 { Ok(Level { value: v }) } else { Err(()) }
    = help: construct through the validating function
 
 warning: `gate::Gate` is produced by `mem::transmute` here, but `Gate::new` checks `v` before constructing one
-  --> $DIR/bypassed_validator.rs:339:17
+  --> $DIR/bypassed_validator.rs:338:17
    |
 LL |                 std::mem::transmute::<u8, gate::Gate>(0),
    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
 note: the check this value never went through
-  --> $DIR/bypassed_validator.rs:407:16
+  --> $DIR/bypassed_validator.rs:406:16
    |
 LL |             if v < 2 { Some(Gate { v }) } else { None }
    |                ^^^^^
    = help: construct through the validating function
 
 warning: `gate::Gate` is produced by `MaybeUninit::assume_init` here, but `Gate::new` checks `v` before constructing one
-  --> $DIR/bypassed_validator.rs:340:17
+  --> $DIR/bypassed_validator.rs:339:17
    |
 LL |                 std::mem::MaybeUninit::<gate::Gate>::zeroed().assume_init(),
    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
 note: the check this value never went through
-  --> $DIR/bypassed_validator.rs:407:16
+  --> $DIR/bypassed_validator.rs:406:16
    |
 LL |             if v < 2 { Some(Gate { v }) } else { None }
    |                ^^^^^
    = help: construct through the validating function
 
 warning: `widened::Tag::s` is written directly here, but `Tag::new` rejects some values of `s` before storing one
-  --> $DIR/bypassed_validator.rs:433:13
+  --> $DIR/bypassed_validator.rs:432:13
    |
 LL |             u.s = "";
    |             ^^^^^^^^
    |
 note: the check this write never runs
-  --> $DIR/bypassed_validator.rs:423:16
+  --> $DIR/bypassed_validator.rs:422:16
    |
 LL |             if s.is_empty() { None } else { Some(Tag { s }) }
    |                ^^^^^^^^^^^^
    = help: change the value through the validating function, or make the field private and move this write into the type's module
 
 warning: `promoted::Slot` is produced by `mem::transmute` here, but `Slot::promote` checks `n` before constructing one
-  --> $DIR/bypassed_validator.rs:466:22
+  --> $DIR/bypassed_validator.rs:465:22
    |
 LL |             unsafe { std::mem::transmute::<Slot<Raw>, Slot<Ok>>(s) }
    |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
 note: the check this value never went through
-  --> $DIR/bypassed_validator.rs:452:16
+  --> $DIR/bypassed_validator.rs:451:16
    |
 LL |             if n == 0 { None } else { Some(Slot { n, state: PhantomData }) }
    |                ^^^^^^
    = help: construct through the validating function
 
 warning: `two_validators::Pair` is constructed by literal here, but `Pair::parse` checks `b` before constructing one
-  --> $DIR/bypassed_validator.rs:493:13
+  --> $DIR/bypassed_validator.rs:492:13
    |
 LL |             Pair { b: 200, ..base }
    |             ^^^^^^^^^^^^^^^^^^^^^^^
    |
 note: the check this literal never runs
-  --> $DIR/bypassed_validator.rs:483:16
+  --> $DIR/bypassed_validator.rs:482:16
    |
 LL |             if b > 99 { None } else { Some(Pair { a: 0, b }) }
    |                ^^^^^^
    = help: construct through the validating function, or move this literal into the type's module
 
 warning: `tuple::Digit` is constructed by literal here, but `Digit::new` checks `0` before constructing one
-  --> $DIR/bypassed_validator.rs:515:14
+  --> $DIR/bypassed_validator.rs:514:14
    |
 LL |             (Digit(10), Plain(10))
    |              ^^^^^^^^^
    |
 note: the check this literal never runs
-  --> $DIR/bypassed_validator.rs:503:16
+  --> $DIR/bypassed_validator.rs:502:16
    |
 LL |             if d > 9 { None } else { Some(Digit(d)) }
    |                ^^^^^

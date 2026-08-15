@@ -331,7 +331,6 @@ mod outside {
     }
 
     // Values that never went through the constructor at all.
-    #[allow(unknown_lints, bypassed_conversion)]
     fn conjured() -> (inner::Level, gate::Gate, gate::Gate, Free) {
         unsafe {
             (

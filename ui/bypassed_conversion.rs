@@ -107,12 +107,87 @@ mod raw {
     }
 }
 
+mod px {
+    use std::marker::PhantomData;
+
+    pub struct Screen;
+    pub struct World;
+
+    #[repr(transparent)]
+    pub struct Px<S>(pub(crate) f32, PhantomData<S>);
+
+    // Only screen pixels are made from a bare float; nothing converts into
+    // `Px<World>`.
+    impl From<f32> for Px<Screen> {
+        fn from(v: f32) -> Px<Screen> {
+            Px(v.max(0.0), PhantomData)
+        }
+    }
+}
+
+mod hdr {
+    #[repr(transparent)]
+    pub struct Hdr(pub(crate) [u8; 4]);
+
+    // A borrow-taking conversion: the usual shape for buffer newtypes.
+    impl<'a> From<&'a [u8; 4]> for Hdr {
+        fn from(b: &'a [u8; 4]) -> Hdr {
+            Hdr([b[0] & 0x7f, b[1], b[2], b[3]])
+        }
+    }
+}
+
+mod name {
+    // An unsized view type: its checked constructor returns a reference.
+    #[repr(transparent)]
+    pub struct NameRef(pub(crate) [u8]);
+
+    impl NameRef {
+        pub fn new(b: &[u8]) -> Option<&NameRef> {
+            if b.contains(&0) {
+                return None;
+            }
+            Some(unsafe { &*(b as *const [u8] as *const NameRef) })
+        }
+    }
+
+    // A wrapper over a borrow whose constructor takes an elided lifetime.
+    #[derive(Clone, Copy)]
+    #[repr(transparent)]
+    pub struct Str<'a>(pub(crate) &'a [u8]);
+
+    impl Str<'_> {
+        pub fn new(b: &[u8]) -> Option<Str<'_>> {
+            std::str::from_utf8(b).ok().map(|_| Str(b))
+        }
+    }
+}
+
+mod gate {
+    // A struct whose `Option<Self>` constructor checks the field it stores:
+    // `bypassed_validator` names that check, so this lint leaves a
+    // `mem::transmute` into it alone.
+    pub struct Gate {
+        pub(crate) v: u8,
+    }
+
+    impl Gate {
+        pub fn new(v: u8) -> Option<Gate> {
+            if v < 2 { Some(Gate { v }) } else { None }
+        }
+    }
+}
+
 use std::convert::TryFrom;
 
 use code::Code;
 use fd::Fd;
+use gate::Gate;
+use hdr::Hdr;
 use level::Level;
 use meters::Meters;
+use name::{NameRef, Str};
+use px::{Px, Screen, World};
 use raw::{Raw, Slot, View};
 
 // Flagged: `Level::try_from` exists for exactly this pair.
@@ -148,6 +223,55 @@ fn meters_read(p: *const u32) -> Meters {
 // Flagged: transmuting references compares the pointees.
 fn meters_ref(n: &u32) -> &Meters {
     unsafe { core::mem::transmute::<&u32, &Meters>(n) }
+}
+
+// Flagged: the transmute is `&u32 -> &Meters` whatever the argument coerced from.
+fn meters_boxed(v: &Box<u32>) -> &Meters {
+    unsafe { core::mem::transmute::<&u32, &Meters>(v) }
+}
+
+// Flagged: `.cast()` through an auto-deref'd `&*const u32` still casts `*const u32`.
+fn meters_each(ptrs: &[*const u32]) -> u32 {
+    let mut sum = 0;
+    for p in ptrs.iter() {
+        sum += unsafe { p.cast::<Meters>().read() }.0;
+    }
+    sum
+}
+
+// Flagged: `From<f32> for Px<Screen>` covers exactly this instantiation.
+fn px_screen(v: f32) -> Px<Screen> {
+    unsafe { core::mem::transmute::<f32, Px<Screen>>(v) }
+}
+
+// Fine: nothing converts an f32 into `Px<World>`; the `Px<Screen>` impl is not it.
+fn px_world(v: f32) -> Px<World> {
+    unsafe { core::mem::transmute::<f32, Px<World>>(v) }
+}
+
+// Flagged: `From<&[u8; 4]> for Hdr` is the conversion, borrow or not.
+fn hdr_value(b: &[u8; 4]) -> Hdr {
+    unsafe { core::mem::transmute::<[u8; 4], Hdr>(*b) }
+}
+
+// Flagged: the same conversion against a pointer view of the same bytes.
+fn hdr_view(b: &[u8; 4]) -> &Hdr {
+    unsafe { &*(b as *const [u8; 4] as *const Hdr) }
+}
+
+// Flagged: `NameRef::new` returns the checked reference this cast makes unchecked.
+fn name_view(b: &[u8]) -> &NameRef {
+    unsafe { &*(b as *const [u8] as *const NameRef) }
+}
+
+// Flagged: `Str::new(&[u8])` takes an elided lifetime and is still the conversion.
+fn str_from_bytes(b: &[u8]) -> Str<'_> {
+    unsafe { core::mem::transmute::<&[u8], Str<'_>>(b) }
+}
+
+// Fine here: `bypassed_validator` reports this one and names the check.
+fn gate_from_wire(n: u8) -> Gate {
+    unsafe { core::mem::transmute::<u8, Gate>(n) }
 }
 
 // Fine: a byte buffer viewed as the type; pointer casts need the exact source.
@@ -202,6 +326,15 @@ fn main() {
     let _ = meters_in_place(&3);
     let _ = meters_read(&3);
     let _ = meters_ref(&3);
+    let _ = meters_boxed(&Box::new(3)).0;
+    let _ = meters_each(&[&3u32 as *const u32]);
+    let _ = px_screen(1.0).0;
+    let _ = px_world(1.0).0;
+    let _ = hdr_value(&[0; 4]).0;
+    let _ = hdr_view(&[0; 4]).0;
+    let _ = name_view(b"x").0.len();
+    let _ = str_from_bytes(b"x").0;
+    let _ = gate_from_wire(0).v;
     let _ = meters_from_bytes(&[0, 0, 0, 0]);
     let _ = raw_from_wire(0);
     let _ = slot_from_wire(0);
@@ -217,4 +350,9 @@ fn main() {
     let _ = Meters::from(1).0;
     let _ = Level::try_from(9);
     let _ = unsafe { Slot::from_raw(0) }.0;
+    let _ = Px::<Screen>::from(1.0).0;
+    let _ = Hdr::from(&[0; 4]).0;
+    let _ = NameRef::new(b"x").map(|n| n.0.len());
+    let _ = Str::new(b"x").map(|s| s.0);
+    let _ = Gate::new(0).map(|g| g.v);
 }
