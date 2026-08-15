@@ -15,8 +15,9 @@ use crate::hir_clone::{bodies_equal, body_hash, fn_sigs_equal};
 
 rustc_session::declare_lint! {
     /// Flags a function whose signature and body are the same as another
-    /// function's in the crate: the same parameter and return types, and the
-    /// same computation once parameters and locals are renamed. One helper
+    /// function's in the crate: the same parameter and return types and
+    /// bounds, parameters destructured the same way, and the same
+    /// computation once parameters and locals are renamed. One helper
     /// exists twice under two names, nothing ties the copies together, and a
     /// fix made to one is silently missing from the other.
     ///

@@ -69,5 +69,26 @@ LL | |     }
    | |_____^
    = help: the mapping lives in two places kept in step by hand; a method on the enum states it once
 
-warning: 3 warnings emitted
+warning: this `match` on `Axis` is written out arm for arm a second time
+  --> $DIR/same_match_twice.rs:218:15
+   |
+LL |       let far = match axis {
+   |  _______________^
+LL | |         Axis::Across => w,
+LL | |         Axis::Down => h + 1,
+LL | |     };
+   | |_____^
+   |
+note: the same match is here
+  --> $DIR/same_match_twice.rs:214:16
+   |
+LL |       let near = match axis {
+   |  ________________^
+LL | |         Axis::Across => w,
+LL | |         Axis::Down => h + 1,
+LL | |     };
+   | |_____^
+   = help: the mapping lives in two places kept in step by hand; a method on the enum states it once
+
+warning: 4 warnings emitted
 

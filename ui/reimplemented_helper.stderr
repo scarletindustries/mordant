@@ -25,5 +25,18 @@ LL |     pub fn extent(&self) -> u32 {
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
    = help: one helper written twice drifts apart at the first fix; keep one and call it from the other's callers
 
-warning: 2 warnings emitted
+warning: `first_third` has the same signature and body as `low_third`
+  --> $DIR/reimplemented_helper.rs:105:1
+   |
+LL | pub fn first_third((first, _): (u32, u32), k: u32) -> u32 {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the same body is here
+  --> $DIR/reimplemented_helper.rs:92:1
+   |
+LL | pub fn low_third((lo, _): (u32, u32), bias: u32) -> u32 {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: one helper written twice drifts apart at the first fix; keep one and call it from the other's callers
+
+warning: 3 warnings emitted
 

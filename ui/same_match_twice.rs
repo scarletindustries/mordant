@@ -203,6 +203,40 @@ pub fn area_scaled(s: &Shape, k: u32) -> u32 {
     }
 }
 
+#[derive(Clone, Copy)]
+pub enum Axis {
+    Across,
+    Down,
+}
+
+// Flagged: the same match a second time in one body, over the same locals.
+pub fn reach(axis: Axis, w: u32, h: u32) -> (u32, u32) {
+    let near = match axis {
+        Axis::Across => w,
+        Axis::Down => h + 1,
+    };
+    let far = match axis {
+        Axis::Across => w,
+        Axis::Down => h + 1,
+    };
+    (near, far * 2)
+}
+
+// Fine: two matches in one body reading the same locals in different
+// places. `w` stands where `h` does in the first arm and where `w` itself
+// does in the second, so no renaming of locals turns one into the other.
+pub fn corners(axis: Axis, w: u32, h: u32, scale: u32) -> ((u32, u32), (u32, u32)) {
+    let p = match axis {
+        Axis::Across => (w, scale),
+        Axis::Down => (scale, w),
+    };
+    let q = match axis {
+        Axis::Across => (h, w),
+        Axis::Down => (w, w),
+    };
+    (p, q)
+}
+
 // Fine: a macro that expands its argument twice makes two matches out of
 // one piece of source, which is still one copy.
 macro_rules! both_ways {

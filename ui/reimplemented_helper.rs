@@ -89,6 +89,59 @@ impl Resize for Row {
     }
 }
 
+pub fn low_third((lo, _): (u32, u32), bias: u32) -> u32 {
+    let v = lo.saturating_mul(3).saturating_add(bias);
+    if v > 255 { 255 } else { v }
+}
+
+// Fine: the same body over the other half of the pair. The parameter
+// patterns differ, so `hi` is not `lo` renamed.
+pub fn high_third((_, hi): (u32, u32), bias: u32) -> u32 {
+    let v = hi.saturating_mul(3).saturating_add(bias);
+    if v > 255 { 255 } else { v }
+}
+
+// Flagged: destructures the same half as `low_third`.
+pub fn first_third((first, _): (u32, u32), k: u32) -> u32 {
+    let n = first.saturating_mul(3).saturating_add(k);
+    if n > 255 { 255 } else { n }
+}
+
+pub struct Extent {
+    pub start: u32,
+    pub end: u32,
+}
+
+pub fn lead(Extent { start, .. }: Extent, pad: u32) -> u32 {
+    start.saturating_sub(pad).saturating_mul(2).min(4096) / 8 + pad * 2
+}
+
+// Fine: reads the other field of `Extent` through a pattern of the same
+// shape, so `end` is not `start` renamed.
+pub fn trail(Extent { end, .. }: Extent, pad: u32) -> u32 {
+    end.saturating_sub(pad).saturating_mul(2).min(4096) / 8 + pad * 2
+}
+
+pub trait Near {
+    fn step(&self) -> u32;
+}
+
+pub trait Far {
+    fn step(&self) -> u32;
+}
+
+pub fn walk_near<T: Near>(t: &T, from: u32, budget: u32) -> u32 {
+    let hop = t.step().max(1);
+    from.saturating_add(hop.saturating_mul(budget)) / hop + 1
+}
+
+// Fine: `t.step()` is `Far::step` here and `Near::step` above; the bound is
+// part of the signature, so the two are different functions spelled alike.
+pub fn walk_far<T: Far>(t: &T, from: u32, budget: u32) -> u32 {
+    let hop = t.step().max(1);
+    from.saturating_add(hop.saturating_mul(budget)) / hop + 1
+}
+
 // Quiet: closures are never compared structurally, so two bodies built
 // around one never pair up even when they are copies.
 pub fn doubled_evens(xs: &[u32]) -> Vec<u32> {
