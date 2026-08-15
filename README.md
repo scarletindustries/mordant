@@ -34,6 +34,7 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 | `lock_order`           | two locks the crate acquires in both orders, with both locations named: the shape of a deadlock                                                                           |
 | `forbidden_reach`      | a config-declared ban ("from `sched::pick`, never reach `Vec::push`") violated by a concrete call path, printed as a witness chain                                        |
 | `unread_none`          | an `Option` field every reader unwraps and no reader handles: a state nobody survives, usually a two-phase object wanting two types                                       |
+| `some_if`              | `Some(x) if x.ready() => .., _ => wait()` over an `Option`, or as `if let .. &&`: a `Some` failing the check is handled as `None` is, so `Some` alone never meant present |
 | `insert_then_unwrap`   | `map.get(&k).unwrap()` re-fetching what `map.insert(k, ..)` just proved present, with nothing in between that could disturb either                                        |
 | `stored_projection`    | two fields whose constant values agree one-for-one at every construction site: one is a projection of the other, so the type admits pairings the constructors never make  |
 | `overwide_parameter`   | a panicking arm for a variant no existing call site passes: the parameter type is wider than the function's domain, and narrowing it turns the panic into a compile error |
