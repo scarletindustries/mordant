@@ -26,6 +26,7 @@ mod bypassed_validator;
 mod claims;
 mod ctor_flow;
 mod defaulted_failure;
+mod dependent_field;
 mod discarded_error;
 mod enum_facts;
 mod exclusive_options;
@@ -159,9 +160,9 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
     use {
         asymmetric_guard::AsymmetricGuard, baseline::BaselineWriter,
         bypassed_conversion::BypassedConversion, bypassed_validator::BypassedValidator,
-        defaulted_failure::DefaultedFailure, discarded_error::DiscardedError,
-        exclusive_options::ExclusiveOptions, flag_cluster::FlagCluster,
-        forbidden_reach::ForbiddenReach, guard_flag::GuardFlag,
+        defaulted_failure::DefaultedFailure, dependent_field::DependentField,
+        discarded_error::DiscardedError, exclusive_options::ExclusiveOptions,
+        flag_cluster::FlagCluster, forbidden_reach::ForbiddenReach, guard_flag::GuardFlag,
         insert_then_unwrap::InsertThenUnwrap, lock_order::LockOrder, misbound_arg::MisboundArg,
         narrowed_return::NarrowedReturn, nonidentity_key::NonidentityKey,
         overwide_parameter::OverwideParameter, parallel_bools::ParallelBools,
@@ -213,6 +214,7 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
     add(s, true, move || {
         reimplemented_helper::ReimplementedHelper::new(config)
     });
+    add(s, true, DependentField::default);
     // Last, so its check_crate_post flushes after every lint has recorded.
     add(s, true, || BaselineWriter);
 }

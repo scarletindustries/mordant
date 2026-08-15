@@ -45,6 +45,7 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 | `bypassed_conversion`  | `mem::transmute` or a pointer cast into a type outside its own module and impls, when a `From`/`TryFrom` impl or constructor already converts that same source into it    |
 | `same_match_twice`     | the same `match` over one enum written out arm for arm in two places: a mapping the enum should state once as a method, kept in step by hand instead                      |
 | `reimplemented_helper` | a function whose signature and body repeat another function in the crate under a different name: one helper written twice, so a fix to one copy misses the other          |
+| `dependent_field`      | a field every reader tests a sibling for one value before touching, and every other construction fills with a placeholder: an enum payload stored flat beside its tag     |
 
 Each diagnostic states what the lint found, why the type is wrong, and the type that replaces it.
 

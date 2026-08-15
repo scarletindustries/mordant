@@ -1,0 +1,19 @@
+warning: `raw` is only read where `tag == Tag::Subproc` has been tested (3 reads), and every `Child` made with another `tag` fills it with a placeholder (1 site)
+  --> $DIR/dependent_field.rs:16:5
+   |
+LL |     raw: *mut u8,
+   |     ^^^^^^^^^^^^
+   |
+   = help: the field is the payload of that one case, stored flat; an enum variant carrying it leaves the other cases nothing to fill in or misread
+   = note: `#[warn(dependent_field)]` on by default
+
+warning: `reject` is only read where `request` has been tested (2 reads), and every `Verify` made with another `request` fills it with a placeholder (1 site)
+  --> $DIR/dependent_field.rs:57:5
+   |
+LL |     reject: bool,
+   |     ^^^^^^^^^^^^
+   |
+   = help: the field is the payload of that one case, stored flat; an enum variant carrying it leaves the other cases nothing to fill in or misread
+
+warning: 2 warnings emitted
+
