@@ -1,12 +1,15 @@
 use std::collections::{HashMap, HashSet};
 
 use clippy_utils::res::MaybeResPath;
-use clippy_utils::{SpanlessEq, get_parent_expr, hash_expr};
+use clippy_utils::{SpanlessEq, get_parent_expr, hash_expr, is_default_equivalent};
 use rustc_hir::def_id::{DefId, LocalDefId};
-use rustc_hir::{BorrowKind, Expr, ExprKind, HirId, Mutability, Node, UnOp};
+use rustc_hir::{
+    BindingMode, ByRef, Expr, ExprKind, HirId, Mutability, Node, Pat, PatKind, QPath, UnOp,
+};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty::{self, Ty};
-use rustc_span::{DesugaringKind, Ident, Symbol};
+use rustc_span::hygiene::{ExpnKind, MacroKind};
+use rustc_span::{DesugaringKind, Ident, Symbol, sym};
 
 use crate::adt_facts::field_ty;
 use crate::baseline::emit;
@@ -16,9 +19,10 @@ rustc_session::declare_lint! {
     /// Flags two or more growable-sequence fields of one struct (`Vec`,
     /// `VecDeque`, or any type with `push`/`append`, `len` and indexing)
     /// whose lengths the crate only ever changes side by side -- every
-    /// `push`, `pop`, `clear`, `truncate`, reassignment or `&mut` borrow of
-    /// one sits in the same block as one of the other, on the same value --
-    /// and that some function reads at one index (`s.a[i]` with `s.b[i]`,
+    /// method call that takes one as `&mut`, reassignment, `&mut` borrow or
+    /// `ref mut` destructuring of one sits in the same block as one of the
+    /// other, on the same value, and every struct literal starts both empty
+    /// -- and that some function reads at one index (`s.a[i]` with `s.b[i]`,
     /// `s.a.get(i)` with `s.b.get(i)`) or zips together. Element `i` of each
     /// is one record kept in several places by hand: the type admits
     /// sequences of different lengths, and only the discipline of every
@@ -26,47 +30,61 @@ rustc_session::declare_lint! {
     /// a struct with those fields holds the pairing in the type.
     ///
     /// Only fields nothing outside the crate can write are considered: the
-    /// struct is private to the crate, or the field is. One length change of
-    /// either field without the other beside it disproves the pairing and
-    /// the lint stays quiet; so does a pair grown together but never read in
-    /// step, and pushes to two different values of the type.
+    /// struct is private to the crate, or the field is. One mutable access
+    /// to either field without the other beside it disproves the pairing
+    /// and the lint stays quiet, whatever the method is called, short of a
+    /// few std methods that cannot change a length (`reserve`, `sort`,
+    /// `iter_mut`, ..); so does a field built from anything but an empty
+    /// constructor, a pair grown together but never read in step, and
+    /// pushes to two different values of the type.
     pub PARALLEL_VECS,
     Warn,
     "sequence fields only ever grown together and read at one index"
 }
 
-/// Methods that change a sequence's length.
-const LEN_OPS: &[&str] = &[
-    "push",
-    "push_back",
-    "push_front",
-    "append",
-    "insert",
-    "extend",
-    "extend_from_slice",
-    "extend_from_within",
-    "resize",
-    "resize_with",
-    "pop",
-    "pop_back",
-    "pop_front",
-    "clear",
-    "truncate",
-    "remove",
-    "swap_remove",
-    "swap_remove_back",
-    "swap_remove_front",
-    "drain",
-    "retain",
-    "retain_mut",
-    "dedup",
-    "dedup_by",
-    "dedup_by_key",
-    "split_off",
-    "set_len",
-    "splice",
-    "append_assume_capacity",
+/// Methods that take a sequence as `&mut` yet cannot change its length.
+/// Anything else handed the field mutably may.
+const KEEPS_LEN: &[&str] = &[
+    "as_mut",
+    "as_mut_ptr",
+    "as_mut_slice",
+    "as_mut_slices",
+    "back_mut",
+    "borrow_mut",
+    "deref_mut",
+    "fill",
+    "fill_with",
+    "first_mut",
+    "front_mut",
+    "get_mut",
+    "get_unchecked_mut",
+    "index_mut",
+    "iter_mut",
+    "last_mut",
+    "make_contiguous",
+    "range_mut",
+    "reserve",
+    "reserve_exact",
+    "reverse",
+    "rotate_left",
+    "rotate_right",
+    "shrink_to",
+    "shrink_to_fit",
+    "sort",
+    "sort_by",
+    "sort_by_key",
+    "sort_unstable",
+    "sort_unstable_by",
+    "sort_unstable_by_key",
+    "spare_capacity_mut",
+    "swap",
+    "try_reserve",
+    "try_reserve_exact",
 ];
+
+/// Constructors that yield an empty sequence whatever their arguments; a
+/// bare `new()` or `default()` only with none.
+const EMPTY_CTORS: &[&str] = &["new_in", "with_capacity", "with_capacity_in"];
 
 /// Positional reads with one index argument.
 const GET_OPS: &[&str] = &["get", "get_mut", "get_unchecked", "get_unchecked_mut"];
@@ -82,13 +100,16 @@ const ITER_ADAPTERS: &[&str] = &[
     "drain",
 ];
 
-/// The value a sequence field is read off, `s` or `self.tape`: by shape,
-/// and by identity too when it is a local binding or a projection of one,
-/// since every local hashes alike.
+/// The value a sequence field belongs to.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-struct Place {
-    local: Option<HirId>,
-    shape: u64,
+enum Place {
+    /// Read off an expression, `s` or `self.tape`: by shape, and by
+    /// identity too when it is a local binding or a projection of one,
+    /// since every local hashes alike.
+    Expr { local: Option<HirId>, shape: u64 },
+    /// Taken apart by this struct pattern, or one field's initialiser in a
+    /// struct literal, which sets that length alone.
+    Whole(HirId),
 }
 
 /// Where a length change happens: the body, the nearest block or match arm,
@@ -200,11 +221,27 @@ impl ParallelVecs {
         if !fields.contains(&field.name) {
             return None;
         }
-        let place = Place {
+        let place = Place::Expr {
             local: local_root(base),
             shape: hash_expr(cx, base),
         };
         Some((adt, field.name, place))
+    }
+
+    /// A length change of `field` at `at`, on `place`.
+    fn note_write(
+        &mut self,
+        cx: &LateContext<'_>,
+        adt: DefId,
+        field: Symbol,
+        at: HirId,
+        place: Place,
+    ) {
+        let body = cx.tcx.hir_enclosing_body_owner(at).to_def_id();
+        self.writes
+            .entry((adt, field))
+            .or_default()
+            .insert((body, step_scope(cx, at), place));
     }
 
     fn record_write<'tcx>(
@@ -214,15 +251,35 @@ impl ParallelVecs {
         base: &'tcx Expr<'tcx>,
         field: Ident,
     ) {
-        let Some((adt, field, place)) = self.sequence_field(cx, base, field) else {
+        if let Some((adt, field, place)) = self.sequence_field(cx, base, field) {
+            self.note_write(cx, adt, field, at.hir_id, place);
+        }
+    }
+
+    /// A struct literal sets each sequence field's length on its own: every
+    /// field not built empty is written there, alone.
+    fn record_literal<'tcx>(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
+        let ExprKind::Struct(_, inits, _) = expr.kind else {
             return;
         };
-        let body = cx.tcx.hir_enclosing_body_owner(at.hir_id).to_def_id();
-        self.writes.entry((adt, field)).or_default().insert((
-            body,
-            step_scope(cx, at.hir_id),
-            place,
-        ));
+        // A derived `Clone` copies both lengths off one value: it keeps
+        // whatever the other sites establish and proves nothing itself.
+        if let ExpnKind::Macro(MacroKind::Derive, name) = expr.span.ctxt().outer_expn_data().kind
+            && name == sym::Clone
+        {
+            return;
+        }
+        let Some((adt, fields)) = self.candidates(cx, cx.typeck_results().expr_ty(expr)) else {
+            return;
+        };
+        let written: Vec<(Symbol, HirId)> = inits
+            .iter()
+            .filter(|i| fields.contains(&i.ident.name) && !is_empty_ctor(cx, i.expr))
+            .map(|i| (i.ident.name, i.expr.hir_id))
+            .collect();
+        for (field, init) in written {
+            self.note_write(cx, adt, field, expr.hir_id, Place::Whole(init));
+        }
     }
 
     fn record_index<'tcx>(
@@ -342,6 +399,39 @@ fn is_for_loop_head(cx: &LateContext<'_>, e: &Expr<'_>) -> bool {
     })
 }
 
+/// The method call auto-borrows `recv` as `&mut` (or `*mut`) to its own
+/// type: the callee is handed the sequence itself mutably, not the slice
+/// it derefs to, and so may change its length.
+fn borrows_receiver_mut(cx: &LateContext<'_>, recv: &Expr<'_>) -> bool {
+    let typeck = cx.typeck_results();
+    let ty = typeck.expr_ty(recv);
+    match *typeck.expr_ty_adjusted(recv).kind() {
+        ty::Ref(_, inner, Mutability::Mut) | ty::RawPtr(inner, Mutability::Mut) => inner == ty,
+        _ => false,
+    }
+}
+
+/// An initialiser that yields an empty sequence: whatever `Default` gives,
+/// or a constructor call named for building one.
+fn is_empty_ctor(cx: &LateContext<'_>, e: &Expr<'_>) -> bool {
+    if is_default_equivalent(cx, e) {
+        return true;
+    }
+    let ExprKind::Call(callee, args) = e.kind else {
+        return false;
+    };
+    let name = match callee.kind {
+        ExprKind::Path(QPath::TypeRelative(_, seg)) => seg.ident.name,
+        ExprKind::Path(QPath::Resolved(_, path)) => match path.segments.last() {
+            Some(seg) => seg.ident.name,
+            None => return false,
+        },
+        _ => return false,
+    };
+    let name = name.as_str();
+    EMPTY_CTORS.contains(&name) || (args.is_empty() && matches!(name, "new" | "default"))
+}
+
 impl<'tcx> LateLintPass<'tcx> for ParallelVecs {
     fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         match expr.kind {
@@ -356,17 +446,17 @@ impl<'tcx> LateLintPass<'tcx> for ParallelVecs {
             {
                 self.record_zip(cx, l, r);
             }
-            ExprKind::MethodCall(..) => {
+            ExprKind::MethodCall(_, recv, ..) => {
                 let Some(call) = field_method_call(expr) else {
                     return;
                 };
                 let name = call.method.name.as_str();
-                if LEN_OPS.contains(&name) {
-                    self.record_write(cx, expr, call.base, call.field);
-                } else if GET_OPS.contains(&name)
+                if GET_OPS.contains(&name)
                     && let [index] = call.args
                 {
                     self.record_index(cx, expr, call.base, call.field, index);
+                } else if !KEEPS_LEN.contains(&name) && borrows_receiver_mut(cx, recv) {
+                    self.record_write(cx, expr, call.base, call.field);
                 }
             }
             ExprKind::Index(..) => {
@@ -379,14 +469,50 @@ impl<'tcx> LateLintPass<'tcx> for ParallelVecs {
                     self.record_write(cx, expr, base, field);
                 }
             }
-            ExprKind::AddrOf(BorrowKind::Ref, Mutability::Mut, inner) => {
+            ExprKind::AddrOf(_, Mutability::Mut, inner) => {
                 if let Some((base, field, _)) = assigned_field(inner)
                     && !is_for_loop_head(cx, expr)
                 {
                     self.record_write(cx, expr, base, field);
                 }
             }
+            ExprKind::Struct(..) => self.record_literal(cx, expr),
             _ => {}
+        }
+    }
+
+    // `let S { a, .. } = self` on `&mut self`, or `S { ref mut a, .. }`: the
+    // binding is a `&mut` to the field, through which its length changes.
+    fn check_pat(&mut self, cx: &LateContext<'tcx>, pat: &'tcx Pat<'tcx>) {
+        let PatKind::Struct(_, bindings, _) = pat.kind else {
+            return;
+        };
+        let Some(typeck) = cx.maybe_typeck_results() else {
+            return;
+        };
+        let Some((adt, fields)) = self.candidates(cx, typeck.pat_ty(pat)) else {
+            return;
+        };
+        let written: Vec<Symbol> = bindings
+            .iter()
+            .filter(|b| fields.contains(&b.ident.name))
+            .filter(|b| {
+                let mut by_mut_ref = false;
+                b.pat.walk(|p| {
+                    if let PatKind::Binding(..) = p.kind
+                        && let Some(BindingMode(ByRef::Yes(_, Mutability::Mut), _)) =
+                            typeck.pat_binding_modes().get(p.hir_id)
+                    {
+                        by_mut_ref = true;
+                    }
+                    !by_mut_ref
+                });
+                by_mut_ref
+            })
+            .map(|b| b.ident.name)
+            .collect();
+        for field in written {
+            self.note_write(cx, adt, field, pat.hir_id, Place::Whole(pat.hir_id));
         }
     }
 

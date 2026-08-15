@@ -11,6 +11,22 @@ struct People {
 }
 
 impl People {
+    // Both start empty, whatever the constructor is called.
+    fn new() -> Self {
+        Self {
+            names: Vec::new(),
+            ages: Vec::with_capacity(4),
+            seen: 0,
+        }
+    }
+
+    // `&mut` methods that cannot change a length are not writes.
+    fn tidy(&mut self) {
+        self.ages.reserve(8);
+        self.names.sort();
+        self.names.as_mut_slice().reverse();
+    }
+
     fn add(&mut self, name: String, age: u32) {
         self.names.push(name);
         self.ages.push(age);
@@ -185,6 +201,179 @@ pub fn open(o: &mut Open, i: usize) -> u8 {
     o.firsts.push(1);
     o.seconds.push(2);
     o.firsts[i] + o.seconds[i]
+}
+
+// Fine: `bytes` also grows alone through `io::Write`, a trait method the lint has no name for.
+struct Log {
+    bytes: Vec<u8>,
+    marks: Vec<u8>,
+}
+
+impl Log {
+    fn mark(&mut self, b: u8) {
+        self.bytes.push(b);
+        self.marks.push(b);
+    }
+
+    fn raw(&mut self, data: &[u8]) {
+        use std::io::Write;
+        self.bytes.write_all(data).unwrap();
+    }
+
+    fn at(&self, i: usize) -> u8 {
+        self.bytes[i] + self.marks[i]
+    }
+}
+
+// Fine: `text` is a `String` grown alone by `push_str`.
+struct Masked {
+    text: String,
+    mask: Vec<bool>,
+}
+
+impl Masked {
+    fn put(&mut self, c: char, m: bool) {
+        self.text.push(c);
+        self.mask.push(m);
+    }
+
+    fn word(&mut self, w: &str) {
+        self.text.push_str(w);
+    }
+
+    fn at(&self, i: usize) -> bool {
+        self.text.get(i..).is_some() && self.mask.get(i..).is_some()
+    }
+}
+
+// Fine: `xs` shrinks alone through `pop_if`.
+struct Popped {
+    xs: Vec<u8>,
+    ys: Vec<u8>,
+}
+
+impl Popped {
+    fn add(&mut self, x: u8) {
+        self.xs.push(x);
+        self.ys.push(x);
+    }
+
+    fn trim(&mut self) {
+        self.xs.pop_if(|x| *x == 0);
+    }
+
+    fn at(&self, i: usize) -> u8 {
+        self.xs[i] + self.ys[i]
+    }
+}
+
+// Fine: a custom sequence type grown alone through its own method.
+struct List<T>(Vec<T>);
+
+impl<T: Copy> List<T> {
+    fn push(&mut self, t: T) {
+        self.0.push(t);
+    }
+
+    fn append_slice(&mut self, s: &[T]) {
+        self.0.extend_from_slice(s);
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn get(&self, i: usize) -> Option<&T> {
+        self.0.get(i)
+    }
+}
+
+struct Lists {
+    a: List<u8>,
+    b: List<u8>,
+}
+
+impl Lists {
+    fn add(&mut self, x: u8) {
+        self.a.push(x);
+        self.b.push(x);
+    }
+
+    fn bulk(&mut self, s: &[u8]) {
+        self.a.append_slice(s);
+    }
+
+    fn at(&self, i: usize) -> u8 {
+        *self.a.get(i).unwrap() + *self.b.get(i).unwrap()
+    }
+}
+
+// Fine: `names` is cleared alone through a `&mut` binding split off `self`.
+struct Destr {
+    names: Vec<u8>,
+    ages: Vec<u8>,
+}
+
+impl Destr {
+    fn add(&mut self, x: u8) {
+        self.names.push(x);
+        self.ages.push(x);
+    }
+
+    fn only_names(&mut self) {
+        let Self { names, .. } = self;
+        names.clear();
+    }
+
+    fn at(&self, i: usize) -> u8 {
+        self.names[i] + self.ages[i]
+    }
+}
+
+// Fine: `xs` grows alone through a raw pointer to it.
+struct Raw {
+    xs: Vec<u8>,
+    ys: Vec<u8>,
+}
+
+impl Raw {
+    fn add(&mut self, x: u8) {
+        self.xs.push(x);
+        self.ys.push(x);
+    }
+
+    fn poke(&mut self) {
+        let p = &raw mut self.xs;
+        unsafe { (*p).push(0) };
+    }
+
+    fn at(&self, i: usize) -> u8 {
+        self.xs[i] + self.ys[i]
+    }
+}
+
+// Fine: born with `a` already longer than `b`.
+struct Birth {
+    a: Vec<u8>,
+    b: Vec<u8>,
+}
+
+impl Birth {
+    fn new(seed: Vec<u8>) -> Self {
+        Birth {
+            a: seed,
+            b: Vec::new(),
+        }
+    }
+
+    fn add(&mut self, x: u8) {
+        self.a.push(x);
+        self.b.push(x);
+    }
+
+    fn at(&self, i: usize) -> u8 {
+        self.a[i] + self.b[i]
+    }
 }
 
 fn main() {}
