@@ -51,6 +51,7 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 | `crossed_index`        | `parts[source_index]` in a function that indexes `parts` by `part_index` and `sources` by `source_index`: two index kinds cross, and both are plain integers              |
 | `parallel_vecs`        | sequence fields of one struct that only change length side by side and are read at one index: element `i` of each is one record, so the type lets the lengths differ      |
 | `bool_beside_option`   | a bool field written only beside an `Option` field, `true` with `Some(..)` and `false` with `None`: it is that field's `is_some()` stored twice, kept equal only by habit |
+| `sentinel_int`         | an integer field one function tests against `MAX`, `-1` or an `INVALID` constant and another indexes with or offsets a pointer by untested: `Option` spelled as an int    |
 
 Each diagnostic states what the lint found, why the type is wrong, and the type that replaces it.
 
