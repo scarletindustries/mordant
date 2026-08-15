@@ -6,16 +6,16 @@ use rustc_hir::def::Res;
 use rustc_hir::def_id::DefId;
 use rustc_hir::{
     Arm, BinOpKind, BindingMode, BorrowKind, ByRef, Expr, ExprKind, HirId, LetStmt, MatchSource,
-    Mutability, Pat, PatExpr, PatExprKind, PatKind, QPath, StructTailExpr,
+    Mutability, Node, Pat, PatExpr, PatExprKind, PatKind, QPath, StructTailExpr, UnOp,
 };
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty::adjustment::{Adjust, AutoBorrow, AutoBorrowMutability};
-use rustc_middle::ty::{self, Ty};
+use rustc_middle::ty::{self, Ty, TypeckResults};
 use rustc_span::{Span, Symbol, sym};
 
 use crate::adt_facts::{field_ty, has_fixed_repr, has_positional_fields, struct_field};
 use crate::baseline::emit;
-use crate::hir_shapes::{Callee, assigned_field, callee_of, peel_blocks_unsafe};
+use crate::hir_shapes::{Callee, callee_of, peel_blocks_unsafe};
 
 rustc_session::declare_lint! {
     /// Flags a string or byte-string field or local whose every value the
@@ -28,10 +28,11 @@ rustc_session::declare_lint! {
     /// Only fires where every store is visible: a local, or a field no other
     /// crate can name (the struct or the field is private to this one). Every
     /// store must write a literal (or an `if`/`match` choosing between
-    /// literals), and at least two distinct literals must occur. A single
-    /// non-literal store, a `..base` construction, a `&mut` borrow, an
-    /// explicit `repr`, or a value that is only ever formatted or written out
-    /// and never compared keeps it silent.
+    /// literals) or copy the same place from another value, and at least two
+    /// distinct literals must occur. A single non-literal store, a `..base`
+    /// construction, a `&mut` borrow or `ref mut` binding, a write into part
+    /// of the value (`x.f[i] = b`), an explicit `repr`, or a value that is
+    /// only ever formatted or written out and never compared keeps it silent.
     pub STRINGLY_STATE,
     Warn,
     "a string only ever holding one of a closed set of literals, then compared against them"
@@ -211,7 +212,7 @@ fn read_slot<'tcx>(cx: &LateContext<'tcx>, e: &'tcx Expr<'tcx>) -> Option<Slot> 
         }
         ExprKind::Path(_) => local_of(cx, e).map(Slot::Local),
         ExprKind::AddrOf(BorrowKind::Ref, Mutability::Not, inner)
-        | ExprKind::Unary(rustc_hir::UnOp::Deref, inner)
+        | ExprKind::Unary(UnOp::Deref, inner)
         | ExprKind::DropTemps(inner) => read_slot(cx, inner),
         ExprKind::Index(inner, idx, _)
             if matches!(
@@ -233,14 +234,84 @@ fn read_slot<'tcx>(cx: &LateContext<'tcx>, e: &'tcx Expr<'tcx>) -> Option<Slot> 
     }
 }
 
-/// The place an assignment target or a `&mut` operand names directly.
-fn written_slot<'tcx>(cx: &LateContext<'tcx>, place: &'tcx Expr<'tcx>) -> Option<Slot> {
-    if let Some((base, ident, _)) = assigned_field(place) {
+/// The tracked place a stored value copies its text from unchanged: `x.f`,
+/// `x.f.clone()`, `Clone::clone(&x.f)` (what a derived `Clone` writes),
+/// `s.to_owned()`.
+fn copied_slot<'tcx>(cx: &LateContext<'tcx>, e: &'tcx Expr<'tcx>) -> Option<Slot> {
+    let e = peel_blocks_unsafe(e);
+    match e.kind {
+        ExprKind::MethodCall(seg, recv, [], _)
+            if matches!(
+                seg.ident.name.as_str(),
+                "clone" | "to_owned" | "to_string" | "to_vec" | "into"
+            ) =>
+        {
+            read_slot(cx, recv)
+        }
+        ExprKind::Call(callee, [arg])
+            if matches!(callee.kind, ExprKind::Path(ref qp)
+                if last_path_segment(qp).ident.name == sym::clone) =>
+        {
+            read_slot(cx, arg)
+        }
+        _ => read_slot(cx, e),
+    }
+}
+
+/// The place an assignment target or a `&mut` operand names.
+struct Written {
+    slot: Slot,
+    /// It names the place itself, not an element or range of it (`x.f[i]`):
+    /// only then does an assignment replace the whole value.
+    whole: bool,
+}
+
+fn written_slot<'tcx>(cx: &LateContext<'tcx>, place: &'tcx Expr<'tcx>) -> Option<Written> {
+    let mut place = peel_blocks_unsafe(place);
+    let mut whole = true;
+    while let ExprKind::Index(inner, ..)
+    | ExprKind::Unary(UnOp::Deref, inner)
+    | ExprKind::DropTemps(inner) = place.kind
+    {
+        whole &= !matches!(place.kind, ExprKind::Index(..));
+        place = inner;
+    }
+    let slot = match place.kind {
         // The adjusted type, so a write through a `Box`, a guard or any
         // other `Deref` container reaches the struct behind it.
-        return tracked_field(cx, cx.typeck_results().expr_ty_adjusted(base), ident.name);
+        ExprKind::Field(base, ident) => {
+            tracked_field(cx, cx.typeck_results().expr_ty_adjusted(base), ident.name)
+        }
+        _ => local_of(cx, place).map(Slot::Local),
+    }?;
+    Some(Written { slot, whole })
+}
+
+fn binds_ref_mut(typeck: &TypeckResults<'_>, id: HirId) -> bool {
+    typeck
+        .pat_binding_modes()
+        .get(id)
+        .is_some_and(|m| matches!(m.0, ByRef::Yes(_, Mutability::Mut)))
+}
+
+/// The value a top-level binding pattern is matched against: the `let`
+/// initializer, the `if let` operand or the `match` scrutinee.
+fn bound_value<'tcx>(cx: &LateContext<'tcx>, pat: &Pat<'tcx>) -> Option<&'tcx Expr<'tcx>> {
+    match cx.tcx.parent_hir_node(pat.hir_id) {
+        Node::LetStmt(l) => l.init,
+        Node::Expr(e) => match e.kind {
+            ExprKind::Let(l) => Some(l.init),
+            _ => None,
+        },
+        Node::Arm(arm) => match cx.tcx.parent_hir_node(arm.hir_id) {
+            Node::Expr(&Expr {
+                kind: ExprKind::Match(scrut, ..),
+                ..
+            }) => Some(scrut),
+            _ => None,
+        },
+        _ => None,
     }
-    local_of(cx, peel_blocks_unsafe(place)).map(Slot::Local)
 }
 
 impl StringlyState {
@@ -248,7 +319,11 @@ impl StringlyState {
         self.slots.entry(slot).or_default()
     }
 
-    fn store(&mut self, slot: Slot, value: &Expr<'_>) {
+    fn store<'tcx>(&mut self, cx: &LateContext<'tcx>, slot: Slot, value: &'tcx Expr<'tcx>) {
+        // Copying the same place from another value adds nothing to the set.
+        if copied_slot(cx, value) == Some(slot) {
+            return;
+        }
         let facts = self.facts(slot);
         if stored_literals(value, &mut facts.values) {
             facts.stores += 1;
@@ -369,7 +444,36 @@ impl<'tcx> LateLintPass<'tcx> for StringlyState {
         }
         self.locals.insert(id, (l.pat.span, ident.name));
         if let Some(init) = l.init {
-            self.store(Slot::Local(id), init);
+            self.store(cx, Slot::Local(id), init);
+        }
+    }
+
+    /// A `ref mut` binding, spelt out or implied by matching through a
+    /// `&mut`, is a write this lint cannot read.
+    fn check_pat(&mut self, cx: &LateContext<'tcx>, pat: &'tcx Pat<'tcx>) {
+        let Some(typeck) = cx.maybe_typeck_results() else {
+            return;
+        };
+        match pat.kind {
+            PatKind::Struct(_, fields, _) => {
+                let ty = typeck.pat_ty(pat);
+                for f in fields {
+                    let mut by_ref_mut = false;
+                    f.pat
+                        .each_binding(|_, id, _, _| by_ref_mut |= binds_ref_mut(typeck, id));
+                    if by_ref_mut && let Some(slot) = tracked_field(cx, ty, f.ident.name) {
+                        self.facts(slot).open = true;
+                    }
+                }
+            }
+            PatKind::Binding(..) if binds_ref_mut(typeck, pat.hir_id) => {
+                if let Some(value) = bound_value(cx, pat)
+                    && let Some(slot) = read_slot(cx, value)
+                {
+                    self.facts(slot).open = true;
+                }
+            }
+            _ => {}
         }
     }
 
@@ -382,7 +486,7 @@ impl<'tcx> LateLintPass<'tcx> for StringlyState {
                 };
                 for f in fields {
                     if let Some(slot) = tracked_field(cx, ty, f.ident.name) {
-                        self.store(slot, f.expr);
+                        self.store(cx, slot, f.expr);
                     }
                 }
                 if matches!(tail, StructTailExpr::None) {
@@ -398,20 +502,20 @@ impl<'tcx> LateLintPass<'tcx> for StringlyState {
                     }
                 }
             }
-            ExprKind::Assign(place, value, _) => {
-                if let Some(slot) = written_slot(cx, place) {
-                    self.store(slot, value);
-                }
-            }
+            ExprKind::Assign(place, value, _) => match written_slot(cx, place) {
+                Some(Written { slot, whole: true }) => self.store(cx, slot, value),
+                Some(Written { slot, whole: false }) => self.facts(slot).open = true,
+                None => {}
+            },
             ExprKind::AssignOp(_, place, _)
             | ExprKind::AddrOf(BorrowKind::Ref | BorrowKind::Raw, Mutability::Mut, place) => {
-                if let Some(slot) = written_slot(cx, place) {
-                    self.facts(slot).open = true;
+                if let Some(w) = written_slot(cx, place) {
+                    self.facts(w.slot).open = true;
                 }
             }
             // The auto-`&mut` a mutating method call takes: the place is
             // written through something this lint does not read.
-            ExprKind::Field(..) | ExprKind::Path(..) => {
+            ExprKind::Field(..) | ExprKind::Path(..) | ExprKind::Index(..) => {
                 let mutably_borrowed = cx.typeck_results().expr_adjustments(expr).iter().any(|a| {
                     matches!(
                         a.kind,
@@ -419,8 +523,8 @@ impl<'tcx> LateLintPass<'tcx> for StringlyState {
                             | Adjust::Borrow(AutoBorrow::RawPtr(Mutability::Mut))
                     )
                 });
-                if mutably_borrowed && let Some(slot) = written_slot(cx, expr) {
-                    self.facts(slot).open = true;
+                if mutably_borrowed && let Some(w) = written_slot(cx, expr) {
+                    self.facts(w.slot).open = true;
                 }
             }
             ExprKind::Binary(op, l, r) if matches!(op.node, BinOpKind::Eq | BinOpKind::Ne) => {

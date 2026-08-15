@@ -111,6 +111,21 @@ fn tier(n: u32) -> bool {
     matches!(level, "hi")
 }
 
+// Flagged: a derived `Clone` copies the field, which adds no new value.
+#[derive(Clone)]
+struct Stage {
+    step: &'static str,
+}
+
+fn stages() -> [Stage; 3] {
+    let first = Stage { step: "parse" };
+    [first.clone(), Stage { step: "emit" }, first]
+}
+
+fn is_parse(s: &Stage) -> bool {
+    s.step == "parse"
+}
+
 // Fine: the local is only formatted.
 fn banner(wide: bool) -> String {
     let rule = if wide { "====" } else { "--" };
@@ -124,6 +139,19 @@ fn from_env(f: fn() -> &'static str) -> bool {
         mode = f();
     }
     mode == "auto"
+}
+
+// Fine: a `ref mut` binding of the local is a write the lint cannot read.
+fn rebound(flip: bool, f: fn() -> &'static str) -> bool {
+    let mut mode = "x";
+    if flip {
+        mode = "y";
+    }
+    {
+        let ref mut r = mode;
+        *r = f();
+    }
+    mode == "x"
 }
 
 // Fine: mutated in place through a method taking `&mut self`.
@@ -194,8 +222,77 @@ fn grow(b: &mut Buf) -> bool {
     b.text == "a!"
 }
 
+// Fine: part of the value is overwritten in place through an index.
+struct Bytes {
+    buf: Box<[u8]>,
+}
+
+fn bytes() -> [Bytes; 2] {
+    [
+        Bytes {
+            buf: b"ab".to_vec().into_boxed_slice(),
+        },
+        Bytes {
+            buf: b"cd".to_vec().into_boxed_slice(),
+        },
+    ]
+}
+
+fn poke(b: &mut Bytes) -> bool {
+    b.buf[0] = b'z';
+    &b.buf[..] == b"zb"
+}
+
+// Fine: destructured through `&mut`, so the binding is a `&mut` to the field.
+struct Job {
+    state: String,
+    tries: u32,
+}
+
+fn jobs() -> [Job; 2] {
+    [
+        Job {
+            state: "queued".into(),
+            tries: 0,
+        },
+        Job {
+            state: "done".into(),
+            tries: 0,
+        },
+    ]
+}
+
+fn advance(js: &mut [Job], next: &str) -> bool {
+    for Job { state, tries } in js.iter_mut() {
+        *tries += 1;
+        state.clear();
+        state.push_str(next);
+    }
+    js[0].state == "done"
+}
+
+// Fine: an explicit `ref mut` in a match arm writes the field.
+struct Step {
+    kind: &'static str,
+}
+
+impl Step {
+    fn set(&mut self, s: &'static str) {
+        match *self {
+            Step { ref mut kind } => *kind = s,
+        }
+    }
+}
+
+fn steps() -> [Step; 2] {
+    [Step { kind: "download" }, Step { kind: "extract" }]
+}
+
+fn is_download(s: &Step) -> bool {
+    s.kind == "download"
+}
+
 // Fine: `..base` fills the field from somewhere this site does not spell.
-#[derive(Clone)]
 struct Opts {
     level: &'static str,
     n: u32,
@@ -205,15 +302,12 @@ fn opts(base: &Opts) -> [Opts; 3] {
     [
         Opts { level: "hi", n: 0 },
         Opts { level: "lo", n: 1 },
-        Opts {
-            n: 2,
-            ..base.clone()
-        },
+        Opts { n: 2, ..*base },
     ]
 }
 
 fn is_hi(o: &Opts) -> bool {
-    o.level == "hi"
+    o.level == "hi" && o.n < 5
 }
 
 // Fine: exported, so other crates may store anything.
@@ -248,12 +342,18 @@ fn main() {
     let _ = phases().iter().any(is_link);
     let _ = is_fast(&modes(true));
     let _ = severity(true, false) + tier(3) as u8;
+    let _ = stages().iter().any(is_parse);
     let _ = banner(true);
-    let _ = from_env(|| "x") || grown();
+    let _ = from_env(|| "x") || rebound(true, || "z") || grown();
     let _ = named("c").iter().any(is_a);
     let _ = labels().iter().map(show).count();
     let _ = fixed().iter().any(is_x);
     let _ = bufs().iter_mut().any(grow);
+    let _ = bytes().iter_mut().any(poke);
+    let _ = advance(&mut jobs(), "next");
+    let mut all = steps();
+    all[0].set("verify");
+    let _ = all.iter().any(is_download);
     let base = Opts { level: "mid", n: 9 };
     let _ = opts(&base).iter().any(is_hi);
     let _ = publics().iter().any(is_on);

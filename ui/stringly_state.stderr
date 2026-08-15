@@ -47,6 +47,14 @@ LL |     let level = if n > 9 { "hi" } else { "lo" };
    |
    = help: these strings are the variants of an enum; store the enum and keep the text in an `as_str` method, so a misspelt state is a compile error
 
+warning: every value stored in `step` is one of `"emit"`, `"parse"` (2 stores across the crate), and it is read by comparing against literals
+  --> $DIR/stringly_state.rs:117:5
+   |
+LL |     step: &'static str,
+   |     ^^^^^^^^^^^^^^^^^^
+   |
+   = help: these strings are the variants of an enum; store the enum and keep the text in an `as_str` method, so a misspelt state is a compile error
+
 warning: `severity` takes `bool` parameters `major` and `minor`, and 1 of its 1 call sites passes bare `true`/`false` for both: nothing at `severity(true, false)` says which flag each one sets
   --> $DIR/stringly_state.rs:92:4
    |
@@ -54,12 +62,12 @@ LL | fn severity(major: bool, minor: bool) -> u8 {
    |    ^^^^^^^^
    |
 note: one such call
-  --> $DIR/stringly_state.rs:250:13
+  --> $DIR/stringly_state.rs:344:13
    |
 LL |     let _ = severity(true, false) + tier(3) as u8;
    |             ^^^^^^^^^^^^^^^^^^^^^
    = help: a two-variant enum per flag, or one options struct, names every argument at the call site and turns a swapped pair into a type error
    = note: `#[warn(bool_params)]` on by default
 
-warning: 7 warnings emitted
+warning: 8 warnings emitted
 
