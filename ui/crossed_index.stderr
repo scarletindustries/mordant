@@ -38,5 +38,44 @@ LL |         let _ = self.files[source_index as usize];
    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    = help: an index newtype per table, with `Index` implemented only for its own, turns the crossing into a type error
 
-warning: 3 warnings emitted
+warning: `states` is indexed by `dep_idx` here but by `root_id` elsewhere in this function (1 site), while `dep_id` (the same kind as `dep_idx`) is what indexes `dependencies`: the names claim different index kinds and both are plain integers, so the crossing compiles
+  --> $DIR/crossed_index.rs:78:24
+   |
+LL |     unvisited + name + states[dep_idx]
+   |                        ^^^^^^^^^^^^^^^
+   |
+note: indexed by the other kind here
+  --> $DIR/crossed_index.rs:75:21
+   |
+LL |     let unvisited = states[root_id];
+   |                     ^^^^^^^^^^^^^^^
+   = help: an index newtype per table, with `Index` implemented only for its own, turns the crossing into a type error
+
+warning: `parts` is indexed by `source_index` here but by `part_index` elsewhere in this function (1 site), while `source_index` is what indexes `sources`: the names claim different index kinds and both are plain integers, so the crossing compiles
+  --> $DIR/crossed_index.rs:88:19
+   |
+LL |     let crossed = parts[source_index];
+   |                   ^^^^^^^^^^^^^^^^^^^
+   |
+note: indexed by the other kind here
+  --> $DIR/crossed_index.rs:89:15
+   |
+LL |     crossed + parts[part_index] + sources[source_index]
+   |               ^^^^^^^^^^^^^^^^^
+   = help: an index newtype per table, with `Index` implemented only for its own, turns the crossing into a type error
+
+warning: `table` is indexed by `dep_id` here but by `pkg_id` elsewhere in this function (3 sites), while `dep_id` is what indexes `deps`: the names claim different index kinds and both are plain integers, so the crossing compiles
+  --> $DIR/crossed_index.rs:103:11
+   |
+LL |         + table[dep_id]
+   |           ^^^^^^^^^^^^^
+   |
+note: indexed by the other kind here
+  --> $DIR/crossed_index.rs:101:5
+   |
+LL |     table[pkg_id]
+   |     ^^^^^^^^^^^^^
+   = help: an index newtype per table, with `Index` implemented only for its own, turns the crossing into a type error
+
+warning: 6 warnings emitted
 

@@ -18,12 +18,18 @@ rustc_session::declare_lint! {
     /// named after it: `sources[source_index]`, `parts[part_index]` twice,
     /// then `parts[source_index]`. Both indices are plain integers, so
     /// `parts` accepts a source index and returns whichever element sits at
-    /// that offset. `[]`, `.get`, `.get_mut` and `get_unchecked*` all count
-    /// as indexing; a place is the binding or item at the root plus the
+    /// that offset. `[]`, `.get`, `.get_mut` and `get_unchecked*` with an
+    /// integer operand all count as indexing (a newtyped index is already
+    /// told apart by the compiler); a place is the binding or item at the
+    /// root plus the
     /// fields, zero-argument accessors and earlier indices on the way
     /// (`self.graph.parts`, `lockfile.packages.names()`, `parts[..]`), so a
     /// two-level table is a different place at each level and two locals
-    /// both called `resolutions` are two places.
+    /// both called `resolutions` are two places. The place's own kind is the
+    /// one it is named after, else the one indexing it more often, else the
+    /// one with no table of its own in the function; when nothing tells them
+    /// apart the crossing is still there and is reported at the kind used
+    /// second.
     ///
     /// The claim is read off names only, never types: silent when either
     /// name carries no kind suffix (`i`, `n`, `at`), when the two prefixes
@@ -86,11 +92,10 @@ fn singular(word: &str) -> &str {
 /// abbreviates, a word of the other, plurals aside: `unresolved_dep` and
 /// `dependencies`, `other_chunk` and `chunk`, `pkg` and `package_names`.
 fn same_kind(a: &str, b: &str) -> bool {
-    a.split('_').map(singular).any(|x| {
-        b.split('_')
-            .map(singular)
-            .any(|y| abbreviates(x, y) || abbreviates(y, x))
-    })
+    fn words(s: &str) -> impl Iterator<Item = &str> {
+        s.split('_').filter(|w| !w.is_empty()).map(singular)
+    }
+    words(a).any(|x| words(b).any(|y| abbreviates(x, y) || abbreviates(y, x)))
 }
 
 /// Zero-argument methods that expose the receiver's own elements rather
@@ -205,6 +210,27 @@ struct Site {
     span: Span,
 }
 
+/// One index kind's sites on one place, names that share or abbreviate a
+/// word counted as one kind (`pkg_id` with `package_id`).
+struct KindHere<'a> {
+    kinds: Vec<Symbol>,
+    first: &'a Site,
+    sites: Vec<&'a Site>,
+}
+
+impl KindHere<'_> {
+    fn has(&self, kind: Symbol) -> bool {
+        self.kinds
+            .iter()
+            .any(|k| same_kind(k.as_str(), kind.as_str()))
+    }
+
+    /// Some name of this kind indexes `place` somewhere in the body.
+    fn reaches(&self, reach: &HashMap<Symbol, HashSet<usize>>, place: usize) -> bool {
+        self.kinds.iter().any(|k| reach[k].contains(&place))
+    }
+}
+
 /// One body's index sites and the places they land on.
 struct Sites {
     places: Vec<Place>,
@@ -219,6 +245,7 @@ impl Sites {
         for_each_expr_without_closures(body.value, |e: &'tcx Expr<'tcx>| {
             if !e.span.from_expansion()
                 && let Some((base, idx)) = index_parts(e)
+                && cx.typeck_results().expr_ty(idx).peel_refs().is_integral()
                 && let Some(name) = value_name(idx)
                 && let Some(kind) = claimed_kind(name.name.as_str())
                 && let Some(place) = place_of(cx, base)
@@ -240,51 +267,80 @@ impl Sites {
         Self { places, sites }
     }
 
-    /// For each place indexed by two kinds: every site of the less-used kind
-    /// (ties: the later-introduced one) that is not at home on the place and
-    /// does have a home table in this body the other kind never touches,
-    /// with the other kind's first site, its count, and that home table.
-    fn crossings(&self) -> Vec<(&Site, &Site, usize, usize)> {
+    /// For each place indexed by two kinds, every site of the visiting kind,
+    /// with the place's own kind's first site and count and the visiting
+    /// kind's first site on a table of its own. A kind is visiting when the
+    /// place is not named after it, the body indexes a table named after it
+    /// that the other kind never touches, and the other kind is not the
+    /// lesser claim: named on the place, else used there more often, else
+    /// (one use each) without such a table of its own, else merely used
+    /// first, which decides only where the one report of a symmetric
+    /// crossing goes, not whether there is one.
+    fn crossings(&self) -> Vec<(&Site, &Site, usize, &Site)> {
         let mut reach: HashMap<Symbol, HashSet<usize>> = HashMap::new();
-        let mut by_place: HashMap<usize, Vec<&Site>> = HashMap::new();
+        let mut by_place: HashMap<usize, Vec<KindHere<'_>>> = HashMap::new();
         for site in &self.sites {
             reach.entry(site.kind).or_default().insert(site.place);
-            by_place.entry(site.place).or_default().push(site);
-        }
-        let mut out = Vec::new();
-        for (&place, place_sites) in &by_place {
-            let mut kinds: Vec<(Symbol, usize, &Site)> = Vec::new();
-            for &site in place_sites {
-                match kinds.iter_mut().find(|(k, ..)| *k == site.kind) {
-                    Some(entry) => entry.1 += 1,
-                    None => kinds.push((site.kind, 1, site)),
-                }
-            }
-            kinds.sort_by_key(|&(_, n, first)| (std::cmp::Reverse(n), first.span.lo()));
-            for (i, &(kind, ..)) in kinds.iter().enumerate() {
-                if self.places[place].named_after(kind.as_str()) {
-                    continue;
-                }
-                let home_of_kind_outside = |major: Symbol| {
-                    reach[&kind]
-                        .iter()
-                        .copied()
-                        .filter(|p| {
-                            !reach[&major].contains(p) && self.places[*p].named_after(kind.as_str())
-                        })
-                        .min()
-                };
-                let Some((&(_, major_n, major_first), home)) = kinds[..i]
-                    .iter()
-                    .filter(|(major, ..)| !same_kind(major.as_str(), kind.as_str()))
-                    .find_map(|m| Some((m, home_of_kind_outside(m.0)?)))
-                else {
-                    continue;
-                };
-                for &site in place_sites {
-                    if site.kind == kind {
-                        out.push((site, major_first, major_n, home));
+            let kinds = by_place.entry(site.place).or_default();
+            match kinds.iter_mut().find(|k| k.has(site.kind)) {
+                Some(k) => {
+                    if !k.kinds.contains(&site.kind) {
+                        k.kinds.push(site.kind);
                     }
+                    if site.span.lo() < k.first.span.lo() {
+                        k.first = site;
+                    }
+                    k.sites.push(site);
+                }
+                None => kinds.push(KindHere {
+                    kinds: vec![site.kind],
+                    first: site,
+                    sites: vec![site],
+                }),
+            }
+        }
+        // `k`'s first site on a table named after it that `other` never
+        // indexes.
+        let home_of = |k: &KindHere<'_>, other: &KindHere<'_>| {
+            self.sites
+                .iter()
+                .filter(|s| {
+                    k.kinds.contains(&s.kind)
+                        && !other.reaches(&reach, s.place)
+                        && self.places[s.place].named_after(s.kind.as_str())
+                })
+                .min_by_key(|s| (s.place, s.span.lo()))
+        };
+        let mut out = Vec::new();
+        for (&place, kinds) in &by_place {
+            let named = |k: &KindHere<'_>| {
+                k.kinds
+                    .iter()
+                    .any(|s| self.places[place].named_after(s.as_str()))
+            };
+            let rank = |k: &KindHere<'_>| (named(k), k.sites.len());
+            for (i, k) in kinds.iter().enumerate() {
+                if named(k) {
+                    continue;
+                }
+                let mut majors: Vec<&KindHere<'_>> = kinds
+                    .iter()
+                    .enumerate()
+                    .filter(|&(j, m)| j != i && rank(m) >= rank(k))
+                    .map(|(_, m)| m)
+                    .collect();
+                majors.sort_by_key(|m| (std::cmp::Reverse(rank(m)), m.first.span.lo()));
+                let Some((major, home)) = majors.into_iter().find_map(|m| {
+                    let h = home_of(k, m)?;
+                    (rank(m) > rank(k)
+                        || home_of(m, k).is_none()
+                        || m.first.span.lo() < k.first.span.lo())
+                    .then_some((m, h))
+                }) else {
+                    continue;
+                };
+                for &site in &k.sites {
+                    out.push((site, major.first, major.sites.len(), home));
                 }
             }
         }
@@ -297,20 +353,27 @@ impl<'tcx> LateLintPass<'tcx> for CrossedIndex {
     fn check_body(&mut self, cx: &LateContext<'tcx>, body: &Body<'tcx>) {
         let sites = Sites::collect(cx, body);
         for (site, major_first, major_n, home) in sites.crossings() {
+            // The table of the visiting kind may be indexed under another
+            // name of that kind (`dep_id` there, `dep_idx` here).
+            let by = if home.name == site.name {
+                format!("`{}`", site.name)
+            } else {
+                format!("`{}` (the same kind as `{}`)", home.name, site.name)
+            };
             emit_with_note(
                 cx,
                 CROSSED_INDEX,
                 site.span,
                 format!(
                     "`{place}` is indexed by `{name}` here but by `{major}` elsewhere in this \
-                     function ({major_n} site{s}), while `{name}` is what indexes `{home}`: \
+                     function ({major_n} site{s}), while {by} is what indexes `{home}`: \
                      the names claim different index kinds and both are plain integers, so \
                      the crossing compiles",
                     place = sites.places[site.place].shown,
                     name = site.name,
                     major = major_first.name,
                     s = if major_n == 1 { "" } else { "s" },
-                    home = sites.places[home].shown,
+                    home = sites.places[home.place].shown,
                 ),
                 major_first.span,
                 "indexed by the other kind here",
