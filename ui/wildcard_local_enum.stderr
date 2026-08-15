@@ -69,5 +69,28 @@ help: list the remaining variants; the compiler then flags every new one added
 LL |         other @ (Op::Sub | Op::Mul) => {
    |               +++++++++++++++++++++
 
-warning: 6 warnings emitted
+warning: this `match` on `Op` is written out arm for arm a second time
+  --> $DIR/wildcard_local_enum.rs:219:13
+   |
+LL | /             match other {
+LL | |                 Op::Add => 0,
+LL | |                 Op::Sub => 2,
+LL | |                 Op::Mul => 3,
+LL | |             }
+   | |_____________^
+   |
+note: the same match is here
+  --> $DIR/wildcard_local_enum.rs:177:18
+   |
+LL |           other => match other {
+   |  __________________^
+LL | |             Op::Add => 0,
+LL | |             Op::Sub => 2,
+LL | |             Op::Mul => 3,
+LL | |         },
+   | |_________^
+   = help: the mapping lives in two places kept in step by hand; a method on the enum states it once
+   = note: `#[warn(same_match_twice)]` on by default
+
+warning: 7 warnings emitted
 

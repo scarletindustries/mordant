@@ -21,32 +21,49 @@ use rustc_data_structures::sync;
 mod adt_facts;
 mod asymmetric_guard;
 mod baseline;
+mod bool_beside_option;
+mod bool_params;
+mod bypassed_conversion;
 mod bypassed_validator;
 mod claims;
+mod collapsed_error;
+mod crossed_alias;
+mod crossed_index;
 mod ctor_flow;
 mod defaulted_failure;
+mod dependent_field;
 mod discarded_error;
 mod enum_facts;
 mod exclusive_options;
 mod flag_cluster;
 mod forbidden_reach;
 mod guard_flag;
+mod hir_clone;
 mod hir_shapes;
 mod insert_then_unwrap;
 mod lock_order;
 mod mir_flow;
+mod misbound_arg;
 mod narrowed_return;
 mod nonidentity_key;
 mod overwide_parameter;
 mod parallel_bools;
+mod parallel_params;
+mod parallel_vecs;
+mod reimplemented_helper;
+mod same_match_twice;
+mod sentinel_int;
 mod stale_across_reentry;
 mod stale_panic_message;
 mod stale_safety_comment;
 mod stored_projection;
 mod stringified_error;
 mod stringly_error;
+mod stringly_state;
 mod unchecked_input_len;
+mod uneven_narrowing;
 mod unit_mismatch;
+mod unnamed_tuple;
 mod unread_error_variant;
 mod unread_none;
 mod variant_flow;
@@ -102,6 +119,9 @@ pub struct MordantConfig {
     /// Construction sites at which `stored_projection` will read a
     /// correspondence between two fields.
     pub stored_projection_min_sites: usize = 2,
+    /// Expression nodes below which `reimplemented_helper` does not compare
+    /// a body, so one-line accessors and constructors never pair up.
+    pub reimplemented_helper_min_nodes: usize = 12,
     /// Ratchet file name, resolved upward from each crate's manifest dir. Runs
     /// suppress up to the recorded count per (lint, file) and surface only new
     /// findings. Regenerate with `MORDANT_BASELINE_WRITE=1`.
@@ -143,25 +163,38 @@ pub struct MordantConfig {
     /// which nothing inside the function tells from a missed check; run it
     /// once over parsing code and read the list.
     pub unchecked_input_len_enabled: bool,
+    /// Opt-in: run `parallel_params`. Off by default because a buffer and a
+    /// cursor into it, or a precedence level and the flags in force at it,
+    /// pass between functions together by design, and nothing in the
+    /// signatures tells those from a value nobody declared; run it once and
+    /// read the list.
+    pub parallel_params_enabled: bool,
+    /// Functions a parameter group must pass between, unchanged, before
+    /// `parallel_params` names it.
+    pub parallel_params_min_fns: usize = 3,
 }
 
 #[expect(clippy::no_mangle_with_rust_abi)]
 #[unsafe(no_mangle)]
 pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintStore) {
     use {
-        asymmetric_guard::AsymmetricGuard, baseline::BaselineWriter,
-        bypassed_validator::BypassedValidator, defaulted_failure::DefaultedFailure,
+        asymmetric_guard::AsymmetricGuard, baseline::BaselineWriter, bool_params::BoolParams,
+        bypassed_conversion::BypassedConversion, bypassed_validator::BypassedValidator,
+        collapsed_error::CollapsedError, crossed_alias::CrossedAlias, crossed_index::CrossedIndex,
+        defaulted_failure::DefaultedFailure, dependent_field::DependentField,
         discarded_error::DiscardedError, exclusive_options::ExclusiveOptions,
         flag_cluster::FlagCluster, forbidden_reach::ForbiddenReach, guard_flag::GuardFlag,
-        insert_then_unwrap::InsertThenUnwrap, lock_order::LockOrder,
+        insert_then_unwrap::InsertThenUnwrap, lock_order::LockOrder, misbound_arg::MisboundArg,
         narrowed_return::NarrowedReturn, nonidentity_key::NonidentityKey,
         overwide_parameter::OverwideParameter, parallel_bools::ParallelBools,
+        parallel_params::ParallelParams, parallel_vecs::ParallelVecs, sentinel_int::SentinelInt,
         stale_across_reentry::StaleAcrossReentry, stale_panic_message::StalePanicMessage,
         stale_safety_comment::StaleSafetyComment, stored_projection::StoredProjection,
         stringified_error::StringifiedError, stringly_error::StringlyError,
-        unchecked_input_len::UncheckedInputLen, unit_mismatch::UnitMismatch,
-        unread_error_variant::UnreadErrorVariant, unread_none::UnreadNone,
-        wildcard_local_enum::WildcardLocalEnum,
+        stringly_state::StringlyState, unchecked_input_len::UncheckedInputLen,
+        uneven_narrowing::UnevenNarrowing, unit_mismatch::UnitMismatch,
+        unnamed_tuple::UnnamedTuple, unread_error_variant::UnreadErrorVariant,
+        unread_none::UnreadNone, wildcard_local_enum::WildcardLocalEnum,
     };
     dylint_linting::init_config(sess);
     let config: MordantConfig = dylint_linting::config_or_default(env!("CARGO_PKG_NAME"));
@@ -198,6 +231,26 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
     add(s, true, move || StaleAcrossReentry { config });
     add(s, true, move || DefaultedFailure::new(config));
     add(s, config.unchecked_input_len_enabled, || UncheckedInputLen);
+    add(s, true, || MisboundArg);
+    add(s, true, move || BypassedConversion::new(config));
+    add(s, true, same_match_twice::SameMatchTwice::default);
+    add(s, true, move || {
+        reimplemented_helper::ReimplementedHelper::new(config)
+    });
+    add(s, true, DependentField::default);
+    add(s, true, CollapsedError::default);
+    add(s, true, UnevenNarrowing::default);
+    add(s, true, || CrossedIndex);
+    add(s, true, ParallelVecs::default);
+    add(s, true, bool_beside_option::BoolBesideOption::default);
+    add(s, true, SentinelInt::default);
+    add(s, true, StringlyState::default);
+    add(s, config.parallel_params_enabled, move || {
+        ParallelParams::new(config)
+    });
+    add(s, true, BoolParams::default);
+    add(s, true, UnnamedTuple::default);
+    add(s, true, || CrossedAlias);
     // Last, so its check_crate_post flushes after every lint has recorded.
     add(s, true, || BaselineWriter);
 }
@@ -232,6 +285,7 @@ fn ui() {
             flag-cluster-enabled = true
             stale-safety-comment-enabled = true
             unchecked-input-len-enabled = true
+            parallel-params-enabled = true
 
             [[mordant.forbidden-reach]]
             from = "hot_path"
@@ -269,9 +323,12 @@ fn config_default_thresholds_match_docs() {
     assert_eq!(c.wildcard_local_enum_max_variants, 12);
     assert_eq!(c.flag_cluster_min_bools, 3);
     assert_eq!(c.stored_projection_min_sites, 2);
+    assert_eq!(c.reimplemented_helper_min_nodes, 12);
     assert!(!c.flag_cluster_enabled);
     assert!(!c.stale_safety_comment_enabled);
     assert!(!c.unchecked_input_len_enabled);
+    assert!(!c.parallel_params_enabled);
+    assert_eq!(c.parallel_params_min_fns, 3);
 }
 
 /// An empty table (file present, keys omitted) must not drift from

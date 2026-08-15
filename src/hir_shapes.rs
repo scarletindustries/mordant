@@ -4,8 +4,11 @@
 //! lint applies its own filters on top; what lives here is only the part they
 //! spelled identically.
 
+use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::DefId;
-use rustc_hir::{Block, Expr, ExprKind, QPath, Stmt, StmtKind, UnOp};
+use rustc_hir::{
+    Block, Expr, ExprKind, FnRetTy, HirId, Node, QPath, Stmt, StmtKind, Ty as HirTy, TyKind, UnOp,
+};
 use rustc_lint::LateContext;
 use rustc_middle::ty::AdtDef;
 use rustc_span::symbol::kw;
@@ -17,10 +20,15 @@ pub(crate) fn is_self_path(e: &Expr<'_>) -> bool {
         if p.segments.len() == 1 && p.segments[0].ident.name == kw::SelfLower)
 }
 
-/// `self.field`, as the `self` expression it is read off and the field name.
-pub(crate) fn self_field<'h>(e: &Expr<'h>) -> Option<(&'h Expr<'h>, Ident)> {
+/// `self.field`: the `self` expression it is read off and the field name.
+pub(crate) struct SelfField<'h> {
+    pub base: &'h Expr<'h>,
+    pub ident: Ident,
+}
+
+pub(crate) fn self_field<'h>(e: &Expr<'h>) -> Option<SelfField<'h>> {
     match e.kind {
-        ExprKind::Field(base, ident) if is_self_path(base) => Some((base, ident)),
+        ExprKind::Field(base, ident) if is_self_path(base) => Some(SelfField { base, ident }),
         _ => None,
     }
 }
@@ -42,7 +50,12 @@ pub(crate) fn assigned_field<'h>(
 
 /// `root.a.b` as `root` and `[a, b]`, read through `&`, `*` and HIR
 /// temporaries at any level, which all name the same place.
-pub(crate) fn field_chain<'h>(mut e: &'h Expr<'h>) -> (&'h Expr<'h>, Vec<Symbol>) {
+pub(crate) struct FieldChain<'h> {
+    pub root: &'h Expr<'h>,
+    pub fields: Vec<Symbol>,
+}
+
+pub(crate) fn field_chain<'h>(mut e: &'h Expr<'h>) -> FieldChain<'h> {
     let mut fields = Vec::new();
     loop {
         match e.kind {
@@ -55,7 +68,7 @@ pub(crate) fn field_chain<'h>(mut e: &'h Expr<'h>) -> (&'h Expr<'h>, Vec<Symbol>
             | ExprKind::DropTemps(inner) => e = inner,
             _ => {
                 fields.reverse();
-                return (e, fields);
+                return FieldChain { root: e, fields };
             }
         }
     }
@@ -122,6 +135,25 @@ pub(crate) fn peel_blocks_unsafe<'h>(mut e: &'h Expr<'h>) -> &'h Expr<'h> {
         e = inner;
     }
     e
+}
+
+/// The block's only expression: `{ e }` with no statements, or `{ e; }` /
+/// `{ e }` as a single expression statement with no tail. Anything else is
+/// None.
+pub(crate) fn sole_expr<'h>(b: &'h Block<'h>) -> Option<&'h Expr<'h>> {
+    match (b.stmts, b.expr) {
+        ([], Some(e)) => Some(e),
+        (
+            [
+                Stmt {
+                    kind: StmtKind::Semi(e) | StmtKind::Expr(e),
+                    ..
+                },
+            ],
+            None,
+        ) => Some(e),
+        _ => None,
+    }
 }
 
 /// The statement's expression, for `let` its initializer.
@@ -220,4 +252,204 @@ pub(crate) fn strip_generic_segments(path: &str) -> String {
         }
     }
     out
+}
+
+/// The identifier an expression is called by: the last segment of a path,
+/// the field of a field access, the method of a method call, the callee's
+/// last segment of a call. Casts, `&`, unary operators and HIR temporaries
+/// are transparent: they change representation, not what the name asserts.
+pub(crate) fn value_name(mut e: &Expr<'_>) -> Option<Ident> {
+    loop {
+        match &e.kind {
+            ExprKind::Cast(inner, _)
+            | ExprKind::AddrOf(_, _, inner)
+            | ExprKind::Unary(_, inner)
+            | ExprKind::DropTemps(inner) => e = inner,
+            ExprKind::Field(_, ident) => return Some(*ident),
+            ExprKind::Path(QPath::Resolved(_, path)) => return Some(path.segments.last()?.ident),
+            ExprKind::MethodCall(seg, ..) => return Some(seg.ident),
+            ExprKind::Call(callee, _) => {
+                let ExprKind::Path(QPath::Resolved(_, path)) = &callee.kind else {
+                    return None;
+                };
+                return Some(path.segments.last()?.ident);
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// `base.field.method(args)`: a method call whose receiver is a field, split
+/// at that field; `field_chain(base)` names the rest of the place.
+pub(crate) struct FieldMethodCall<'h> {
+    pub base: &'h Expr<'h>,
+    pub field: Ident,
+    pub method: Ident,
+    /// Receiver excluded.
+    pub args: &'h [Expr<'h>],
+}
+
+/// A method call on a field (`self.items.push(x)`, `(*this).a.b.len()`),
+/// through explicit derefs of the receiver; None when the receiver is not a
+/// field.
+pub(crate) fn field_method_call<'h>(e: &'h Expr<'h>) -> Option<FieldMethodCall<'h>> {
+    let ExprKind::MethodCall(seg, recv, args, _) = e.kind else {
+        return None;
+    };
+    let (base, field, _) = assigned_field(recv)?;
+    Some(FieldMethodCall {
+        base,
+        field,
+        method: seg.ident,
+        args,
+    })
+}
+
+/// `base.field[index]`: an index expression whose base is a field.
+pub(crate) struct IndexedField<'h> {
+    pub base: &'h Expr<'h>,
+    pub field: Ident,
+    pub index: &'h Expr<'h>,
+}
+
+/// An index expression on a field, through explicit derefs of the indexed
+/// place; None when what is indexed is not a field.
+pub(crate) fn indexed_field<'h>(e: &'h Expr<'h>) -> Option<IndexedField<'h>> {
+    let ExprKind::Index(place, index, _) = e.kind else {
+        return None;
+    };
+    let (base, field, _) = assigned_field(place)?;
+    Some(IndexedField { base, field, index })
+}
+
+/// The expression whose value `e` carries, through `&`, `*`, HIR
+/// temporaries and unlabeled blocks down to their tail (whatever statements
+/// precede it): the layers that move or borrow a value without computing a
+/// new one.
+pub(crate) fn value_expr<'h>(mut e: &'h Expr<'h>) -> &'h Expr<'h> {
+    while let ExprKind::AddrOf(_, _, inner)
+    | ExprKind::Unary(UnOp::Deref, inner)
+    | ExprKind::DropTemps(inner)
+    | ExprKind::Block(
+        &Block {
+            expr: Some(inner), ..
+        },
+        None,
+    ) = e.kind
+    {
+        e = inner;
+    }
+    e
+}
+
+/// The type alias a written type names, through `&`/`&mut`: `A` and `&A`
+/// for `type A = ..`. None for anything that is not a plain path to an alias.
+pub(crate) fn written_alias(mut ty: &HirTy<'_>) -> Option<DefId> {
+    while let TyKind::Ref(_, inner) = ty.kind {
+        ty = inner.ty;
+    }
+    match ty.kind {
+        TyKind::Path(QPath::Resolved(None, path)) => match path.res {
+            Res::Def(DefKind::TyAlias, did) => Some(did),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The type as written on a struct, union or variant field's declaration;
+/// None for fields declared in another crate.
+pub(crate) fn field_decl_ty<'tcx>(
+    cx: &LateContext<'tcx>,
+    field: DefId,
+) -> Option<&'tcx HirTy<'tcx>> {
+    match cx.tcx.hir_node_by_def_id(field.as_local()?) {
+        Node::Field(f) => Some(f.ty),
+        _ => None,
+    }
+}
+
+/// The type as written on parameter `idx` of a fn, method or closure (for a
+/// method, 0 is the receiver); None for definitions in another crate.
+pub(crate) fn param_decl_ty<'tcx>(
+    cx: &LateContext<'tcx>,
+    def: DefId,
+    idx: usize,
+) -> Option<&'tcx HirTy<'tcx>> {
+    cx.tcx
+        .hir_node_by_def_id(def.as_local()?)
+        .fn_decl()?
+        .inputs
+        .get(idx)
+}
+
+/// The return type as written on a fn, method or closure; None when it is
+/// left off or the definition is in another crate.
+pub(crate) fn return_decl_ty<'tcx>(
+    cx: &LateContext<'tcx>,
+    def: DefId,
+) -> Option<&'tcx HirTy<'tcx>> {
+    match cx.tcx.hir_node_by_def_id(def.as_local()?).fn_decl()?.output {
+        FnRetTy::Return(ty) => Some(ty),
+        FnRetTy::DefaultReturn(_) => None,
+    }
+}
+
+/// The type as written where a local binding is introduced: its `let`
+/// annotation or its parameter's type. None when the binding sits inside a
+/// larger pattern, whose written type (if any) is the whole pattern's.
+pub(crate) fn local_decl_ty<'tcx>(
+    cx: &LateContext<'tcx>,
+    binding: HirId,
+) -> Option<&'tcx HirTy<'tcx>> {
+    match cx.tcx.parent_hir_node(binding) {
+        Node::LetStmt(l) => l.ty,
+        Node::Param(p) => {
+            let owner = cx.tcx.hir_enclosing_body_owner(p.hir_id);
+            let idx = cx
+                .tcx
+                .hir_maybe_body_owned_by(owner)?
+                .params
+                .iter()
+                .position(|q| q.hir_id == p.hir_id)?;
+            param_decl_ty(cx, owner.to_def_id(), idx)
+        }
+        _ => None,
+    }
+}
+
+/// The type as written at the declaration of the place or value `e` names:
+/// a local's annotation or parameter type, a field's declared type, a const
+/// or static's item type, a call's declared return type. None for anything
+/// computed, inferred, or declared in another crate.
+pub(crate) fn declared_ty<'tcx>(
+    cx: &LateContext<'tcx>,
+    e: &Expr<'tcx>,
+) -> Option<&'tcx HirTy<'tcx>> {
+    match e.kind {
+        ExprKind::Path(ref qpath) => match cx.qpath_res(qpath, e.hir_id) {
+            Res::Local(binding) => local_decl_ty(cx, binding),
+            Res::Def(
+                DefKind::Const { .. } | DefKind::Static { .. } | DefKind::AssocConst { .. },
+                did,
+            ) => cx.tcx.hir_node_by_def_id(did.as_local()?).ty(),
+            _ => None,
+        },
+        ExprKind::Field(base, _) => {
+            let adt = cx
+                .typeck_results()
+                .expr_ty_adjusted(base)
+                .peel_refs()
+                .ty_adt_def()?;
+            if adt.is_enum() {
+                return None;
+            }
+            let idx = cx.typeck_results().opt_field_index(e.hir_id)?;
+            field_decl_ty(cx, adt.non_enum_variant().fields[idx].did)
+        }
+        ExprKind::Call(..) | ExprKind::MethodCall(..) => {
+            return_decl_ty(cx, callee_of(cx, e)?.def())
+        }
+        _ => None,
+    }
 }

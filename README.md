@@ -41,6 +41,22 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 | `stale_across_reentry` | a length, flag, or pointer read off a field of `self`, then a call that can re-enter (closure, fn pointer, `dyn`, `.await`, configured), then the field used through it   |
 | `defaulted_failure`    | `f(x).unwrap_or(0)` or `let Ok(v) = f(x) else { return Ok(()) }` where `f`'s own body rejects some of `x`: the rejection becomes a value and processing carries on        |
 | `unchecked_input_len`  | opt-in via `unchecked-input-len-enabled`: a received integer bounded on one path and turned into memory (`split_at`, `set_len`, `ptr.add`) on a path no check dominates   |
+| `misbound_arg`         | `resize(height, width)` against `fn resize(width: u32, height: u32)`: an argument named as another parameter of the same type, so only its position says which it is      |
+| `bypassed_conversion`  | `mem::transmute` or a pointer cast into a type outside its own module and impls, when a `From`/`TryFrom` impl or constructor already converts that same source into it    |
+| `same_match_twice`     | the same `match` over one enum written out arm for arm in two places: a mapping the enum should state once as a method, kept in step by hand instead                      |
+| `reimplemented_helper` | a function whose signature and body repeat another function in the crate under a different name: one helper written twice, so a fix to one copy misses the other          |
+| `dependent_field`      | a field every reader tests a sibling for one value before touching, and every other construction fills with a placeholder: an enum payload stored flat beside its tag     |
+| `collapsed_error`      | `f(x);` or `let _ = f(x)` on a crate fn whose `false`/`None` is the bare `Err` arm of a `Result` it held: the typed error became one bit, and this call drops the bit     |
+| `uneven_narrowing`     | an integer field or local converted with `try_from` at one site and a bare `as` at another: the check says the value may not fit, and `as` wraps silently when it doesn't |
+| `crossed_index`        | `parts[source_index]` in a function that indexes `parts` by `part_index` and `sources` by `source_index`: two index kinds cross, and both are plain integers              |
+| `parallel_vecs`        | sequence fields of one struct that only change length side by side and are read at one index: element `i` of each is one record, so the type lets the lengths differ      |
+| `bool_beside_option`   | a bool field written only beside an `Option` field, `true` with `Some(..)` and `false` with `None`: it is that field's `is_some()` stored twice, kept equal only by habit |
+| `sentinel_int`         | an integer field one function tests against `MAX`, `-1` or an `INVALID` constant and another indexes with or offsets a pointer by untested: `Option` spelled as an int    |
+| `stringly_state`       | a string field or local only ever storing one of a closed set of literals and then compared against them: an undeclared enum, so a misspelt state still compiles          |
+| `parallel_params`      | opt-in via `parallel-params-enabled`: parameters several functions declare alike and hand each other unchanged in one call: one value with no type, passable by halves    |
+| `bool_params`          | a crate-private fn with two or more `bool` parameters that a call fills with bare `true`/`false`: `f(x, true, false)` names neither flag, and the swapped call compiles   |
+| `unnamed_tuple`        | a private fn's tuple return with two members of one type that every caller destructures under the same names: only the type lacks them, and it accepts them transposed    |
+| `crossed_alias`        | a `DependencyId` value passed, stored, bound, returned or compared where a `PackageId` is declared, both aliasing one integer: two id kinds only the aliases tell apart   |
 
 Each diagnostic states what the lint found, why the type is wrong, and the type that replaces it.
 
@@ -82,18 +98,22 @@ wildcard-local-enum-max-variants = 12
 exclusive-options-min-fields = 2
 flag-cluster-min-bools = 3
 stored-projection-min-sites = 2
+reimplemented-helper-min-nodes = 12
+parallel-params-min-fns = 3
 
 # Opt-in: also count `Box<dyn Error>` as a stringly error type.
 stringly-error-include-box-dyn = true
 
-# Opt-in: `flag_cluster`, `stale_safety_comment` and `unchecked_input_len` are
-# surveys to run once over a codebase (most of what they name is legitimate
-# once the real cases are fixed; for the last, a length the caller vouches for
-# that the function also uses as some other value's limit), so they are off
-# until turned on here.
+# Opt-in: `flag_cluster`, `stale_safety_comment`, `unchecked_input_len` and
+# `parallel_params` are surveys to run once over a codebase (most of what they
+# name is legitimate once the real cases are fixed; for the third, a length the
+# caller vouches for that the function also uses as some other value's limit;
+# for the last, a buffer and a cursor into it, passed along together by
+# design), so they are off until turned on here.
 flag-cluster-enabled = true
 stale-safety-comment-enabled = true
 unchecked-input-len-enabled = true
+parallel-params-enabled = true
 
 # Opt-in: flag composite keys (tuples, structs one level deep) that carry a
 # denied type unless one of the fixing types sits beside it. With these two

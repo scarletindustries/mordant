@@ -1,0 +1,59 @@
+warning: arguments `height` and `width` are bound to `resize`'s parameters `width` and `height`; all are `u32`, so the transposition type-checks
+  --> $DIR/misbound_arg.rs:71:5
+   |
+LL |     resize(height, width)
+   |     ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: give the two parameters distinct types (a newtype per quantity, an enum per flag) so a swap is a type error
+   = note: `#[warn(misbound_arg)]` on by default
+
+warning: arguments `inherit_stderr` and `inherit_stdout` are bound to `spawn`'s parameters `inherit_stdout` and `inherit_stderr`; all are `bool`, so the transposition type-checks
+  --> $DIR/misbound_arg.rs:76:5
+   |
+LL |     spawn(opts.inherit_stderr, opts.inherit_stdout)
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: give the two parameters distinct types (a newtype per quantity, an enum per flag) so a swap is a type error
+
+warning: argument `column` is bound to `place`'s parameter `line`, but `place` also takes a parameter `column` of the same type `u32`
+  --> $DIR/misbound_arg.rs:81:11
+   |
+LL |     place(column, extra, 0)
+   |           ^^^^^^
+   |
+   = help: give the two parameters distinct types (a newtype per quantity, an enum per flag) so a swap is a type error
+
+warning: arguments `dst` and `src` are bound to `blit`'s parameters `src` and `dst`; all are `usize`, so the transposition type-checks
+  --> $DIR/misbound_arg.rs:86:5
+   |
+LL |     c.blit(dst, src)
+   |     ^^^^^^^^^^^^^^^^
+   |
+   = help: give the two parameters distinct types (a newtype per quantity, an enum per flag) so a swap is a type error
+
+warning: arguments `registry` and `url` are bound to `under`'s parameters `url` and `registry`; all are `&str`, so the transposition type-checks
+  --> $DIR/misbound_arg.rs:91:5
+   |
+LL |     under(registry, url)
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: give the two parameters distinct types (a newtype per quantity, an enum per flag) so a swap is a type error
+
+warning: argument `inherit_stdout` is bound to `spawn`'s parameter `inherit_stderr`, but `spawn` also takes a parameter `inherit_stdout` of the same type `bool`
+  --> $DIR/misbound_arg.rs:97:25
+   |
+LL |     let _ = spawn(true, opts.inherit_stdout);
+   |                         ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: give the two parameters distinct types (a newtype per quantity, an enum per flag) so a swap is a type error
+
+warning: argument `height` is bound to `resize`'s parameter `width`, but `resize` also takes a parameter `height` of the same type `u32`
+  --> $DIR/misbound_arg.rs:98:12
+   |
+LL |     resize(height, 0)
+   |            ^^^^^^
+   |
+   = help: give the two parameters distinct types (a newtype per quantity, an enum per flag) so a swap is a type error
+
+warning: 7 warnings emitted
+

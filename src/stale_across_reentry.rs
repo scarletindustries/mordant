@@ -15,7 +15,8 @@ use crate::MordantConfig;
 use crate::adt_facts::impl_self_adt;
 use crate::baseline::emit_with_note;
 use crate::hir_shapes::{
-    def_path_names, dotted, field_chain, is_self_path, stmt_expr, strip_generic_segments,
+    FieldChain, def_path_names, dotted, field_chain, is_self_path, stmt_expr,
+    strip_generic_segments,
 };
 
 rustc_session::declare_lint! {
@@ -242,7 +243,7 @@ const ADAPTERS: &[&str] = &[
 /// `self.a.b` as `[a, b]`; anything not rooted at `self` through fields
 /// alone has no identity a re-entrant callee shares with this function.
 fn self_place(e: &Expr<'_>) -> Option<Vec<Symbol>> {
-    let (root, fields) = field_chain(e);
+    let FieldChain { root, fields } = field_chain(e);
     (is_self_path(root) && !fields.is_empty()).then_some(fields)
 }
 

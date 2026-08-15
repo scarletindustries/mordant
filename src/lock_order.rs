@@ -8,7 +8,7 @@ use rustc_middle::ty;
 use rustc_span::Span;
 
 use crate::baseline::emit;
-use crate::hir_shapes::{dotted, field_chain, is_self_path, stmt_expr};
+use crate::hir_shapes::{FieldChain, dotted, field_chain, is_self_path, stmt_expr};
 
 rustc_session::declare_lint! {
     /// Flags two lock acquisitions the crate performs in both orders: one
@@ -79,7 +79,7 @@ fn lock_acquisition(cx: &LateContext<'_>, e: &Expr<'_>) -> Option<Lock> {
 /// anything that is not a plain field chain off `self`, since only those
 /// have a stable identity.
 fn field_path<'h>(e: &'h Expr<'h>) -> Option<(&'h Expr<'h>, String)> {
-    let (root, fields) = field_chain(e);
+    let FieldChain { root, fields } = field_chain(e);
     is_self_path(root).then(|| (root, dotted(String::new(), &fields)))
 }
 

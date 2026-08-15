@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::adt_facts::{field_ty, struct_field};
 use crate::baseline::emit;
-use crate::hir_shapes::{assigned_adt_field, ends_in_return, peel_not, self_field};
+use crate::hir_shapes::{SelfField, assigned_adt_field, ends_in_return, peel_not, self_field};
 use rustc_hir::def_id::DefId;
 use rustc_hir::intravisit::FnKind;
 use rustc_hir::{Body, Expr, ExprKind, FnDecl, Mutability, Stmt, StmtKind};
@@ -42,7 +42,7 @@ fn self_bool_field<'tcx>(
     cx: &LateContext<'tcx>,
     e: &'tcx Expr<'tcx>,
 ) -> Option<(ty::AdtDef<'tcx>, Symbol)> {
-    let (base, ident) = self_field(e)?;
+    let SelfField { base, ident } = self_field(e)?;
     let ty::Adt(adt, _) = cx.typeck_results().expr_ty(base).peel_refs().kind() else {
         return None;
     };

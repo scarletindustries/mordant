@@ -1,0 +1,120 @@
+warning: `write_pidfile` reports `SysError` only as `false`, and this call drops the `false`: the failure can no longer be observed anywhere
+  --> $DIR/collapsed_error.rs:23:5
+   |
+LL |     write_pidfile(buf);
+   |     ^^^^^^^^^^^^^^^^^^
+   |
+note: the error becomes `false` here, and nothing else is done with it
+  --> $DIR/collapsed_error.rs:17:9
+   |
+LL |         Err(_) => false,
+   |         ^^^^^^^^^^^^^^^
+   = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
+   = note: `#[warn(collapsed_error)]` on by default
+
+warning: `write_pidfile` reports `SysError` only as `false`, and this call drops the `false`: the failure can no longer be observed anywhere
+  --> $DIR/collapsed_error.rs:28:13
+   |
+LL |     let _ = write_pidfile(buf);
+   |             ^^^^^^^^^^^^^^^^^^
+   |
+note: the error becomes `false` here, and nothing else is done with it
+  --> $DIR/collapsed_error.rs:17:9
+   |
+LL |         Err(_) => false,
+   |         ^^^^^^^^^^^^^^^
+   = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
+
+warning: `set_mode` reports `SysError` only as `false`, and this call drops the `false`: the failure can no longer be observed anywhere
+  --> $DIR/collapsed_error.rs:43:13
+   |
+LL |     let _ = set_mode(buf);
+   |             ^^^^^^^^^^^^^
+   |
+note: the error becomes `false` here, and nothing else is done with it
+  --> $DIR/collapsed_error.rs:38:5
+   |
+LL |     sys_write(buf, b"m").is_ok()
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
+
+warning: `sync_dir` reports `SysError` only as `false`, and this call drops the `false`: the failure can no longer be observed anywhere
+  --> $DIR/collapsed_error.rs:58:5
+   |
+LL |     sync_dir(buf);
+   |     ^^^^^^^^^^^^^
+   |
+note: the error becomes `false` here, and nothing else is done with it
+  --> $DIR/collapsed_error.rs:50:9
+   |
+LL |         return false;
+   |         ^^^^^^^^^^^^
+   = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
+
+warning: `reserve` reports `SysError` only as `false`, and this call drops the `false`: the failure can no longer be observed anywhere
+  --> $DIR/collapsed_error.rs:71:13
+   |
+LL |     let _ = reserve(buf);
+   |             ^^^^^^^^^^^^
+   |
+note: the error becomes `false` here, and nothing else is done with it
+  --> $DIR/collapsed_error.rs:64:9
+   |
+LL |         return false;
+   |         ^^^^^^^^^^^^
+   = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
+
+warning: `open_slot` reports `SysError` only as `None`, and this call drops the `None`: the failure can no longer be observed anywhere
+  --> $DIR/collapsed_error.rs:82:5
+   |
+LL |     open_slot(buf);
+   |     ^^^^^^^^^^^^^^
+   |
+note: the error becomes `None` here, and nothing else is done with it
+  --> $DIR/collapsed_error.rs:76:13
+   |
+LL |     let n = sys_write(buf, b"o").ok()?;
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
+
+warning: `probe_slot` reports `SysError` only as `None`, and this call drops the `None`: the failure can no longer be observed anywhere
+  --> $DIR/collapsed_error.rs:112:5
+   |
+LL |     probe_slot(buf);
+   |     ^^^^^^^^^^^^^^^
+   |
+note: the error becomes `None` here, and nothing else is done with it
+  --> $DIR/collapsed_error.rs:106:9
+   |
+LL |         None
+   |         ^^^^
+   = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
+
+warning: `fill` reports `SysError` only as `false`, and this call drops the `false`: the failure can no longer be observed anywhere
+  --> $DIR/collapsed_error.rs:179:5
+   |
+LL |     fill(buf);
+   |     ^^^^^^^^^
+   |
+note: the error becomes `false` here, and nothing else is done with it
+  --> $DIR/collapsed_error.rs:168:13
+   |
+LL |             return false;
+   |             ^^^^^^^^^^^^
+   = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
+
+warning: `is_digit` reports `&str` only as `false`, and this call drops the `false`: the failure can no longer be observed anywhere
+  --> $DIR/collapsed_error.rs:197:13
+   |
+LL |     let _ = is_digit("x");
+   |             ^^^^^^^^^^^^^
+   |
+note: the error becomes `false` here, and nothing else is done with it
+  --> $DIR/collapsed_error.rs:192:5
+   |
+LL |     parse_digit(s).is_ok()
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+   = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
+
+warning: 9 warnings emitted
+

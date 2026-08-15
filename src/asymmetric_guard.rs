@@ -12,7 +12,7 @@ use rustc_span::{Span, Symbol};
 use crate::adt_facts::impl_self_adt;
 use crate::baseline::emit;
 use crate::hir_shapes::{
-    Callee, callee_of, ends_in_return, is_self_path, peel_not, self_field, stmt_expr,
+    Callee, SelfField, callee_of, ends_in_return, is_self_path, peel_not, self_field, stmt_expr,
 };
 
 rustc_session::declare_lint! {
@@ -205,7 +205,7 @@ impl<'tcx> LateLintPass<'tcx> for AsymmetricGuard {
         // other `self` reaching the walk is one that got away.
         let mut followed: HashSet<HirId> = HashSet::new();
         for_each_expr(cx, body.value, |e: &Expr<'_>| {
-            if let Some((base, ident)) = self_field(e) {
+            if let Some(SelfField { base, ident }) = self_field(e) {
                 facts.touched.insert(ident.name);
                 followed.insert(base.hir_id);
             } else if let Some((m, _)) = self_method_call(cx, e)
