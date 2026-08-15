@@ -93,7 +93,8 @@ mod wildcard_over_own_enum;
 #[cfg_attr(dylint_lib = "mordant", allow(bool_cluster))]
 pub struct MordantConfig {
     /// Lints, by name, that stay registered (so an `allow` of one still
-    /// resolves) but never run. Old names of renamed lints are accepted.
+    /// resolves) but never run. A lint's old name stands for it, and
+    /// `group:<name>` for every lint in that family (`names::GROUPS`).
     pub disabled: Vec<String>,
     /// Fully qualified paths of types that are never a valid map key in this
     /// project (e.g. a span type with no file identity). Empty means silent.
@@ -297,6 +298,7 @@ fn register(config: &'static MordantConfig, s: &mut rustc_lint::LintStore) -> Ve
     // Last, so its check_crate_post flushes after every lint has recorded.
     r.add(true, || BaselineWriter);
     r.renamed(names::RENAMED);
+    r.groups(names::GROUPS);
     unknown_names(&disabled, &r.known)
 }
 
@@ -335,16 +337,37 @@ impl Registrar<'_> {
             self.store.register_renamed(old, new);
         }
     }
+
+    /// After every `add`: each family becomes a lint group, so one `-A` /
+    /// `#![allow(..)]` of `names::group_id` covers its members.
+    fn groups(&mut self, table: &[(&str, &[&str])]) {
+        for (group, members) in table {
+            let ids = members
+                .iter()
+                .flat_map(|m| match self.store.find_lints(m) {
+                    Some(ids) => ids.to_vec(),
+                    None => panic!("mordant: group {group} lists {m}, which is not a lint"),
+                })
+                .collect();
+            let id: &'static str = Box::leak(names::group_id(group).into_boxed_str());
+            self.store.register_group(true, id, None, ids);
+        }
+    }
 }
 
 /// `disabled` as written in `dylint.toml`, in current lint names: an old
-/// name stands for the lint it was renamed to. An entry that names nothing
-/// is kept as written for `unknown_names` to report.
+/// name stands for the lint it was renamed to, and `group:<name>` for every
+/// lint in that family. An entry that names nothing is kept as written for
+/// `unknown_names` to report.
 fn resolve_disabled(written: &[String]) -> Vec<String> {
-    written
-        .iter()
-        .map(|d| names::current(d).to_string())
-        .collect()
+    let mut disabled = Vec::new();
+    for entry in written {
+        match names::group_members(entry) {
+            Some(members) => disabled.extend(members.iter().map(|m| m.to_string())),
+            None => disabled.push(names::current(entry).to_string()),
+        }
+    }
+    disabled
 }
 
 /// A pass is skipped when every lint it declares is disabled. A pass with
@@ -549,4 +572,39 @@ fn every_renamed_lint_is_registered_and_its_old_name_finds_it() {
         );
         assert_eq!(store.find_lints(old), store.find_lints(new), "{old}");
     }
+}
+
+#[test]
+fn every_lint_is_in_exactly_one_group_and_the_group_resolves_to_it() {
+    let (store, _) = registered_store(MordantConfig::default());
+    for lint in store.get_lints() {
+        let name = lint.name_lower();
+        let homes: Vec<&str> = names::GROUPS
+            .iter()
+            .filter(|(_, members)| members.contains(&name.as_str()))
+            .map(|(g, _)| *g)
+            .collect();
+        assert_eq!(homes.len(), 1, "{name} is in {homes:?}");
+        let group = store
+            .find_lints(&names::group_id(homes[0]))
+            .expect("group is registered");
+        assert!(group.contains(&rustc_lint::LintId::of(lint)), "{name}");
+    }
+    let grouped: usize = names::GROUPS.iter().map(|(_, m)| m.len()).sum();
+    assert_eq!(grouped, store.get_lints().len());
+}
+
+#[test]
+fn disabled_expands_a_group_to_its_members() {
+    let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let disabled = resolve_disabled(&names(&["group:duplication", "group:nope"]));
+    assert_eq!(
+        disabled,
+        ["same_match_twice", "reimplemented_helper", "group:nope"]
+    );
+    let (_, unknown) = registered_store(MordantConfig {
+        disabled: names(&["group:duplication", "group:nope"]),
+        ..MordantConfig::default()
+    });
+    assert_eq!(unknown, ["group:nope"]);
 }
