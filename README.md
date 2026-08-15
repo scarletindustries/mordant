@@ -42,6 +42,7 @@ Mordant will not find every defect, but what it reports is real: a lint that can
 | `defaulted_failure`    | `f(x).unwrap_or(0)` or `let Ok(v) = f(x) else { return Ok(()) }` where `f`'s own body rejects some of `x`: the rejection becomes a value and processing carries on        |
 | `unchecked_input_len`  | opt-in via `unchecked-input-len-enabled`: a received integer bounded on one path and turned into memory (`split_at`, `set_len`, `ptr.add`) on a path no check dominates   |
 | `misbound_arg`         | `resize(height, width)` against `fn resize(width: u32, height: u32)`: an argument named as another parameter of the same type, so only its position says which it is      |
+| `bypassed_conversion`  | `mem::transmute` or a pointer cast into a type outside its own module and impls, when a `From`/`TryFrom` impl or constructor already converts that same source into it    |
 
 Each diagnostic states what the lint found, why the type is wrong, and the type that replaces it.
 

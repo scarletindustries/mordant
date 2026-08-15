@@ -1,0 +1,94 @@
+warning: `u8` is reinterpreted as `level::Level` by `mem::transmute` here, but `Level::try_from` converts `u8` to `level::Level` and can refuse a value; this site accepts any bit pattern
+  --> $DIR/bypassed_conversion.rs:120:14
+   |
+LL |     unsafe { core::mem::transmute::<u8, Level>(n) }
+   |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the conversion this site skips
+  --> $DIR/bypassed_conversion.rs:16:9
+   |
+LL |         fn try_from(n: u8) -> Result<Self, u8> {
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: convert through that function, or put an unchecked constructor beside it so both sit with the layout they depend on
+   = note: `#[warn(bypassed_conversion)]` on by default
+
+warning: `u16` is reinterpreted as `code::Code` by `mem::transmute` here, but `Code::from_raw` converts `u32` to `code::Code` and can refuse a value; this site accepts any bit pattern
+  --> $DIR/bypassed_conversion.rs:125:14
+   |
+LL |     unsafe { core::mem::transmute::<u16, Code>(n as u16) }
+   |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the conversion this site skips
+  --> $DIR/bypassed_conversion.rs:41:9
+   |
+LL |         pub fn from_raw(n: u32) -> Option<Code> {
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: convert through that function, or put an unchecked constructor beside it so both sit with the layout they depend on
+
+warning: `u16` is reinterpreted as `code::Code` by `mem::transmute_copy` here, but `Code::from_raw` converts `u32` to `code::Code` and can refuse a value; this site accepts any bit pattern
+  --> $DIR/bypassed_conversion.rs:130:14
+   |
+LL |     unsafe { core::mem::transmute_copy::<u16, Code>(n) }
+   |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the conversion this site skips
+  --> $DIR/bypassed_conversion.rs:41:9
+   |
+LL |         pub fn from_raw(n: u32) -> Option<Code> {
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: convert through that function, or put an unchecked constructor beside it so both sit with the layout they depend on
+
+warning: `i32` is reinterpreted as `fd::Fd` by `mem::transmute` here, but `Fd::new` is how `i32` becomes `fd::Fd`; this site goes around it
+  --> $DIR/bypassed_conversion.rs:135:14
+   |
+LL |     unsafe { core::mem::transmute::<i32, Fd>(raw) }
+   |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the conversion this site skips
+  --> $DIR/bypassed_conversion.rs:57:9
+   |
+LL |         pub fn new(raw: i32) -> Fd {
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: convert through that function, or put an unchecked constructor beside it so both sit with the layout they depend on
+
+warning: `u32` is reinterpreted as `meters::Meters` by a pointer cast here, but `Meters::from` is how `u32` becomes `meters::Meters`; this site goes around it
+  --> $DIR/bypassed_conversion.rs:140:15
+   |
+LL |     unsafe { *(n as *const u32 as *const Meters) }
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the conversion this site skips
+  --> $DIR/bypassed_conversion.rs:74:9
+   |
+LL |         fn from(n: u32) -> Meters {
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: convert through that function, or put an unchecked constructor beside it so both sit with the layout they depend on
+
+warning: `u32` is reinterpreted as `meters::Meters` by a pointer cast here, but `Meters::from` is how `u32` becomes `meters::Meters`; this site goes around it
+  --> $DIR/bypassed_conversion.rs:145:14
+   |
+LL |     unsafe { p.cast::<Meters>().read() }
+   |              ^^^^^^^^^^^^^^^^^^
+   |
+note: the conversion this site skips
+  --> $DIR/bypassed_conversion.rs:74:9
+   |
+LL |         fn from(n: u32) -> Meters {
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: convert through that function, or put an unchecked constructor beside it so both sit with the layout they depend on
+
+warning: `u32` is reinterpreted as `meters::Meters` by `mem::transmute` here, but `Meters::from` is how `u32` becomes `meters::Meters`; this site goes around it
+  --> $DIR/bypassed_conversion.rs:150:14
+   |
+LL |     unsafe { core::mem::transmute::<&u32, &Meters>(n) }
+   |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the conversion this site skips
+  --> $DIR/bypassed_conversion.rs:74:9
+   |
+LL |         fn from(n: u32) -> Meters {
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: convert through that function, or put an unchecked constructor beside it so both sit with the layout they depend on
+
+warning: 7 warnings emitted
+

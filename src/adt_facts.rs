@@ -5,6 +5,8 @@
 //! lint fire or not -- privacy, `is_struct`, a minimum field count -- stays in
 //! the lint, so this module only ever answers, never decides.
 
+use rustc_hir::HirId;
+use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use rustc_lint::LateContext;
 use rustc_middle::ty::{self, AdtDef, FieldDef, Ty, TyCtxt, VariantDef};
@@ -106,4 +108,25 @@ pub(crate) fn result_err_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Ty<
         return None;
     };
     (tcx.is_diagnostic_item(sym::Result, adt.did()) && args.len() == 2).then(|| args.type_at(1))
+}
+
+/// Whether the code at `at` is the ADT's own: inside the module defining it
+/// (when this crate defines it) or inside any impl block, inherent or trait,
+/// whose self type it is.
+pub(crate) fn in_own_code_of(cx: &LateContext<'_>, at: HirId, adt: DefId) -> bool {
+    if let Some(local) = adt.as_local()
+        && cx.tcx.parent_module(at) == cx.tcx.parent_module_from_def_id(local)
+    {
+        return true;
+    }
+    let mut cur = cx.tcx.hir_enclosing_body_owner(at).to_def_id();
+    while let Some(parent) = cx.tcx.opt_parent(cur) {
+        if matches!(cx.tcx.def_kind(parent), DefKind::Impl { .. })
+            && impl_self_adt(cx, parent).is_some_and(|a| a.did() == adt)
+        {
+            return true;
+        }
+        cur = parent;
+    }
+    false
 }
