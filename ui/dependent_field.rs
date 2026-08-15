@@ -122,6 +122,33 @@ fn finished(j: &Job) -> Option<u64> {
     }
 }
 
+// Flagged: depth 1 is only ever reached through `+= 1`, never spelled out,
+// and `href` is set and read only there.
+struct Nest {
+    depth: u32,
+    href: Option<u8>,
+}
+
+fn nest() -> Nest {
+    Nest {
+        depth: 0,
+        href: None,
+    }
+}
+
+fn open(n: &mut Nest, h: u8) {
+    n.depth += 1;
+    if n.depth == 1 {
+        n.href = Some(h);
+    }
+}
+
+fn close(n: &mut Nest) -> Option<u8> {
+    let out = if n.depth == 1 { n.href.take() } else { None };
+    n.depth -= 1;
+    out
+}
+
 // Fine: `names` is filled in by an assignment that has nothing to do with
 // `dirty`, so it means something in both cases even though the one reader
 // happens to check `dirty` first.
@@ -301,8 +328,9 @@ fn tally(t: &Tally) -> u32 {
     }
 }
 
-// Fine: no `Printer` is ever made or set non-minifying, so `out` is dead
-// rather than the payload of a case the crate has.
+// Fine: no `Printer` is ever made or set non-minifying (the one assignment
+// sets `minify` again), so `out` is dead rather than the payload of a case
+// the crate has.
 struct Printer {
     minify: bool,
     out: String,
@@ -315,9 +343,83 @@ fn printer() -> Printer {
     }
 }
 
+fn reminify(p: &mut Printer) {
+    p.minify = true;
+}
+
 fn newline(p: &mut Printer) {
     if !p.minify {
         p.out.push('\n');
+    }
+}
+
+// Fine: the `..Default::default()` construction gives `line` a real value
+// beside `eof: false`, the case the reader does not test for.
+#[derive(Default)]
+struct Cursor {
+    eof: bool,
+    line: u32,
+    col: u32,
+}
+
+fn cursors(l: u32) -> [Cursor; 3] {
+    [
+        Cursor {
+            eof: true,
+            line: l,
+            col: 0,
+        },
+        Cursor {
+            eof: false,
+            line: l + 1,
+            ..Default::default()
+        },
+        Cursor {
+            eof: false,
+            line: 0,
+            col: 0,
+        },
+    ]
+}
+
+fn last_line(c: &Cursor) -> u32 {
+    let col = c.col;
+    if c.eof { c.line + col } else { col }
+}
+
+// Fine: `..h` hands `raw` on from a `Subproc` handle to a `Cmd` one, a real
+// value beside another tag.
+struct Handle {
+    node: u32,
+    tag: Tag,
+    raw: usize,
+}
+
+fn cmd_handle(node: u32) -> Handle {
+    Handle {
+        node,
+        tag: Tag::Cmd,
+        raw: 0,
+    }
+}
+
+fn sub_handle(raw: usize) -> Handle {
+    Handle {
+        node: 0,
+        tag: Tag::Subproc,
+        raw,
+    }
+}
+
+fn demote(h: Handle) -> Handle {
+    Handle { tag: Tag::Cmd, ..h }
+}
+
+fn handle_raw(h: &Handle) -> usize {
+    if h.tag == Tag::Subproc {
+        h.raw
+    } else {
+        h.node as usize
     }
 }
 
@@ -343,6 +445,9 @@ fn main() {
     let mut j = job();
     run(&mut j, 3);
     let _ = finished(&j);
+    let mut ne = nest();
+    open(&mut ne, 6);
+    let _ = close(&mut ne);
     let mut f = folder();
     scan(&mut f, vec![1], true);
     let _ = sweep(&f);
@@ -356,7 +461,14 @@ fn main() {
     let _ = (extra(&m), extra(&n));
     let [t, w] = tallies(7);
     let _ = (tally(&t), tally(&w));
-    newline(&mut printer());
+    let mut pr = printer();
+    reminify(&mut pr);
+    newline(&mut pr);
+    let _ = cursors(4).iter().map(last_line).sum::<u32>();
+    let _ = (
+        handle_raw(&cmd_handle(1)),
+        handle_raw(&demote(sub_handle(8))),
+    );
     let [u, v] = public(1);
     let _ = (public_data(&u), public_data(&v));
 }

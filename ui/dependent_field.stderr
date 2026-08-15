@@ -23,5 +23,13 @@ LL |     result: u64,
    |
    = help: the field is the payload of that one case, stored flat; an enum variant carrying it leaves the other cases nothing to fill in or misread
 
-warning: 3 warnings emitted
+warning: `href` is only read where `depth == 1` has been tested (1 read), and every `Nest` made with another `depth` fills it with a placeholder (1 site)
+  --> $DIR/dependent_field.rs:129:5
+   |
+LL |     href: Option<u8>,
+   |     ^^^^^^^^^^^^^^^^
+   |
+   = help: the field is the payload of that one case, stored flat; an enum variant carrying it leaves the other cases nothing to fill in or misread
+
+warning: 4 warnings emitted
 

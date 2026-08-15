@@ -13,6 +13,7 @@ use rustc_hir::{
 };
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
+use rustc_middle::ty::adjustment::{Adjust, AutoBorrow, AutoBorrowMutability};
 use rustc_span::{Span, Symbol, SyntaxContext, sym};
 
 rustc_session::declare_lint! {
@@ -33,8 +34,10 @@ rustc_session::declare_lint! {
     /// written by hand, a test on a copy of the sibling rather than the
     /// sibling itself — keeps it quiet. So does any write of a real value
     /// outside that case: a construction that gives the field one beside
-    /// another value of the sibling, or an assignment to it neither under
-    /// the test nor in a block that also assigns the sibling that value. A
+    /// another value of the sibling (a field taken from `..other` counts as
+    /// real, one from `..Default::default()` as a placeholder), or an
+    /// assignment to it neither under the test nor in a block that also
+    /// assigns the sibling that value. A
     /// sibling never given the tested value by any literal or assignment
     /// keeps it quiet too (the field is then dead, not dependent). Reads in
     /// derived impls are not counted.
@@ -82,9 +85,9 @@ pub struct DependentField {
     reads: HashMap<(DefId, Symbol), Vec<HashSet<Test>>>,
     /// struct -> per literal construction site, what each named field got.
     sites: HashMap<DefId, Vec<HashMap<Symbol, Init>>>,
-    /// Fields assigned after construction, whose values the sites do not
-    /// bound.
-    assigned: HashSet<(DefId, Symbol)>,
+    /// (struct, field) -> the values assigned to it after construction
+    /// (`None` for one not spelled out), which the sites do not bound.
+    assigned: HashMap<(DefId, Symbol), HashSet<Option<Value>>>,
     /// (struct, field) -> per assignment of a real value, the sibling tests
     /// dominating it plus the sibling values assigned beside it in the same
     /// block: the cases that write can belong to.
@@ -413,6 +416,25 @@ fn assigned_beside(cx: &LateContext<'_>, base: &Expr<'_>, at: HirId, out: &mut H
     }
 }
 
+/// `x.g += ..`, `&mut x.g`, or the auto-`&mut` a mutating method call takes:
+/// `g` changes to something not spelled out.
+fn mutated_in_place(cx: &LateContext<'_>, place: &Expr<'_>, parent: Node<'_>) -> bool {
+    if let Node::Expr(p) = parent
+        && let ExprKind::AssignOp(_, lhs, _)
+        | ExprKind::AddrOf(BorrowKind::Ref | BorrowKind::Raw, Mutability::Mut, lhs) = p.kind
+        && lhs.hir_id == place.hir_id
+    {
+        return true;
+    }
+    cx.typeck_results().expr_adjustments(place).iter().any(|a| {
+        matches!(
+            a.kind,
+            Adjust::Borrow(AutoBorrow::Ref(AutoBorrowMutability::Mut { .. }))
+                | Adjust::Borrow(AutoBorrow::RawPtr(Mutability::Mut))
+        )
+    })
+}
+
 impl DependentField {
     fn record_read(&mut self, adt: DefId, field: Symbol, tests: HashSet<Test>) {
         self.reads.entry((adt, field)).or_default().push(tests);
@@ -426,10 +448,16 @@ impl<'tcx> LateLintPass<'tcx> for DependentField {
                 let Some(adt) = relevant(cx, cx.typeck_results().expr_ty(expr)) else {
                     return;
                 };
-                if !matches!(tail, StructTailExpr::None) {
-                    return;
-                }
-                let site = fields
+                // What `..` fills the unlisted fields with: don't-cares from
+                // `..Default::default()` or declared defaults, somebody's real
+                // values from `..other`.
+                let rest = match tail {
+                    StructTailExpr::None => None,
+                    StructTailExpr::Base(b) => Some(is_placeholder(cx, b)),
+                    StructTailExpr::DefaultFields(_) => Some(true),
+                    StructTailExpr::NoneWithError(_) => return,
+                };
+                let mut site: HashMap<Symbol, Init> = fields
                     .iter()
                     .map(|f| {
                         let init = Init {
@@ -439,6 +467,14 @@ impl<'tcx> LateLintPass<'tcx> for DependentField {
                         (f.ident.name, init)
                     })
                     .collect();
+                if let Some(placeholder) = rest {
+                    for f in &adt.non_enum_variant().fields {
+                        site.entry(f.name).or_insert(Init {
+                            value: None,
+                            placeholder,
+                        });
+                    }
+                }
                 self.sites.entry(adt.did()).or_default().push(site);
             }
             ExprKind::Field(base, ident) => {
@@ -451,12 +487,17 @@ impl<'tcx> LateLintPass<'tcx> for DependentField {
                     return;
                 }
                 // `base.f = ..` writes; everything else, `base.f += ..` and
-                // `&mut base.f` included, reads.
-                if let Node::Expr(parent) = cx.tcx.parent_hir_node(expr.hir_id)
+                // `&mut base.f` included, reads (and, through the `&mut`,
+                // may leave behind a value no site spells out).
+                let parent = cx.tcx.parent_hir_node(expr.hir_id);
+                if let Node::Expr(parent) = parent
                     && let ExprKind::Assign(lhs, rhs, _) = parent.kind
                     && lhs.hir_id == expr.hir_id
                 {
-                    self.assigned.insert((adt.did(), ident.name));
+                    self.assigned
+                        .entry((adt.did(), ident.name))
+                        .or_default()
+                        .insert(expr_value(cx, rhs));
                     if !is_placeholder(cx, rhs) {
                         let mut cases = dominating_tests(cx, expr, base);
                         assigned_beside(cx, base, parent.hir_id, &mut cases);
@@ -466,6 +507,12 @@ impl<'tcx> LateLintPass<'tcx> for DependentField {
                             .push(cases);
                     }
                     return;
+                }
+                if mutated_in_place(cx, expr, parent) {
+                    self.assigned
+                        .entry((adt.did(), ident.name))
+                        .or_default()
+                        .insert(None);
                 }
                 let tests = dominating_tests(cx, expr, base);
                 self.record_read(adt.did(), ident.name, tests);
@@ -517,14 +564,17 @@ impl<'tcx> LateLintPass<'tcx> for DependentField {
             let sites = self.sites.get(did).map_or(&[][..], Vec::as_slice);
             for test in candidates {
                 // The tested case must be one the crate makes: a literal site
-                // with that value, a site whose value is not spelled out, or
-                // any later assignment. Otherwise the field is never read at
-                // all, which is not this lint's claim.
-                let reached = self.assigned.contains(&(*did, test.sibling))
-                    || sites.iter().any(|s| {
-                        s.get(&test.sibling)
-                            .is_some_and(|i| i.value.is_none_or(|v| v == test.value))
-                    });
+                // or a later assignment giving the sibling that value or one
+                // not spelled out. Otherwise the field is never read at all,
+                // which is not this lint's claim.
+                let admits = |v: Option<Value>| v.is_none_or(|v| v == test.value);
+                let reached = self
+                    .assigned
+                    .get(&(*did, test.sibling))
+                    .is_some_and(|vs| vs.iter().copied().any(admits))
+                    || sites
+                        .iter()
+                        .any(|s| s.get(&test.sibling).is_some_and(|i| admits(i.value)));
                 if !reached {
                     continue;
                 }
