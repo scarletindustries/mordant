@@ -5,9 +5,9 @@
 //! lint fire or not -- privacy, `is_struct`, a minimum field count -- stays in
 //! the lint, so this module only ever answers, never decides.
 
-use rustc_hir::HirId;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
+use rustc_hir::{HirId, find_attr};
 use rustc_lint::LateContext;
 use rustc_middle::ty::{self, AdtDef, FieldDef, Ty, TyCtxt, VariantDef};
 use rustc_span::{Symbol, sym};
@@ -146,6 +146,20 @@ pub(crate) fn inside_own_trait_impl(cx: &LateContext<'_>, hir_id: HirId, adt_did
         }
         match cx.tcx.opt_parent(cur) {
             Some(p) => cur = p,
+            None => return false,
+        }
+    }
+}
+
+/// The definition, or a module enclosing it, carries a `#[cfg]`: what it
+/// names is chosen per platform or feature rather than fixed by the program.
+pub(crate) fn cfg_selected(cx: &LateContext<'_>, mut did: DefId) -> bool {
+    loop {
+        if find_attr!(cx.tcx, did, CfgTrace(..)) {
+            return true;
+        }
+        match cx.tcx.opt_parent(did) {
+            Some(p) => did = p,
             None => return false,
         }
     }

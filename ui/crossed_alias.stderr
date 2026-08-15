@@ -63,5 +63,13 @@ LL |         return r.dependency;
    |
    = help: a newtype per id kind makes this a type error
 
-warning: 8 warnings emitted
+warning: `dep` is declared `DependencyId` but is compared with `INVALID_PACKAGE`, declared `PackageId`; both are `u32`, so nothing rejects the crossing
+  --> $DIR/crossed_alias.rs:76:8
+   |
+LL |     if dep == INVALID_PACKAGE {
+   |        ^^^
+   |
+   = help: a newtype per id kind makes this a type error
+
+warning: 9 warnings emitted
 

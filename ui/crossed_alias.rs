@@ -71,6 +71,29 @@ pub fn explicit_return_is_flagged(r: &Resolution, early: bool) -> PackageId {
     r.package
 }
 
+pub fn comparison_is_flagged(r: &Resolution, dep: DependencyId) -> bool {
+    // Flagged: a dependency id tested against the package sentinel.
+    if dep == INVALID_PACKAGE {
+        return false;
+    }
+    // Fine: same kind; a literal has no kind.
+    dep != r.dependency && r.package < LAST_PACKAGE && dep > 3
+}
+
+// One representation per platform, like `c_int`: not an identity.
+#[cfg(not(windows))]
+type Backing = u32;
+#[cfg(windows)]
+type Backing = u64;
+
+pub struct Handle(Backing);
+
+impl Handle {
+    pub fn cfg_selected_alias_is_fine(self) -> PackageId {
+        self.0
+    }
+}
+
 pub fn same_alias_is_fine(a: PackageId, r: &Resolution, dep: DependencyId) -> u32 {
     let b: PackageId = a;
     link(b, dep) + link(r.package, r.dependency)

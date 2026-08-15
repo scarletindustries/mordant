@@ -5,6 +5,7 @@ use rustc_hir::{BinOpKind, Body, Expr, ExprKind, LetStmt, Node, Ty as HirTy};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty::{self, Ty};
 
+use crate::adt_facts::cfg_selected;
 use crate::baseline::emit;
 use crate::hir_shapes::{
     Callee, assigned_adt_field, callee_of, declared_ty, field_decl_ty, param_decl_ty,
@@ -15,17 +16,19 @@ rustc_session::declare_lint! {
     /// Flags a value declared under one integer type alias arriving at a
     /// place declared under another: a `DependencyId` local passed as the
     /// `PackageId` parameter, stored in a `PackageId` field, bound by
-    /// `let p: PackageId = ..`, returned from a `-> PackageId` function, or
-    /// defining a `PackageId` const, where both aliases name the same
-    /// primitive integer. Two aliases over one integer exist to tell two
-    /// kinds of number apart, and rustc erases both, so nothing rejects the
-    /// crossing; a newtype per kind would. The kinds are read off the
-    /// written types of this crate's locals, parameters, fields, consts and
-    /// signatures, so the lint stays quiet when either side has no alias (a
-    /// literal, a plain `u32`, arithmetic between two values), when one
-    /// alias is declared as the other, through `as` casts, on aliases that
-    /// bottom out in `core`/`std`/`libc` (representation, not identity), and
-    /// on declarations in other crates, whose written types it cannot see.
+    /// `let p: PackageId = ..`, returned from a `-> PackageId` function,
+    /// defining a `PackageId` const, or compared with a `PackageId` value,
+    /// where both aliases name the same primitive integer. Two aliases over
+    /// one integer exist to tell two kinds of number apart, and rustc erases
+    /// both, so nothing rejects the crossing; a newtype per kind would. The
+    /// kinds are read off the written types of this crate's locals,
+    /// parameters, fields, consts and signatures, so the lint stays quiet
+    /// when either side has no alias (a literal, a plain `u32`, arithmetic
+    /// between two values), when one alias is declared as the other, through
+    /// `as` casts, on aliases that bottom out in `core`/`std`/`libc` or are
+    /// selected by `#[cfg]` (a platform's representation, not an identity),
+    /// and on declarations in other crates, whose written types it cannot
+    /// see.
     pub CROSSED_ALIAS,
     Warn,
     "a value declared as one integer alias flowing into a place declared as another"
@@ -56,19 +59,22 @@ fn alias_root(cx: &LateContext<'_>, mut did: DefId) -> DefId {
     did
 }
 
-fn is_representation_crate(cx: &LateContext<'_>, did: DefId) -> bool {
+/// A std or libc alias, or one picked by `#[cfg]`, names how a platform
+/// represents the number, not which kind of number it is.
+fn is_representation(cx: &LateContext<'_>, did: DefId) -> bool {
     matches!(
         cx.tcx.crate_name(did.krate).as_str(),
         "core" | "std" | "alloc" | "libc"
-    )
+    ) || cfg_selected(cx, did)
 }
 
 /// The identity a written type claims: an alias, generic-free, whose chain
-/// ends at a primitive integer without passing through a std crate.
+/// ends at a primitive integer without passing through a representation
+/// alias.
 fn kind_of<'tcx>(cx: &LateContext<'tcx>, ty: &HirTy<'_>) -> Option<Kind<'tcx>> {
     let written = written_alias(ty)?;
     let root = alias_root(cx, written);
-    if is_representation_crate(cx, written) || is_representation_crate(cx, root) {
+    if is_representation(cx, written) || is_representation(cx, root) {
         return None;
     }
     let int = cx
@@ -103,11 +109,16 @@ fn source_kind<'tcx>(cx: &LateContext<'tcx>, e: &'tcx Expr<'tcx>) -> Option<Kind
 
 /// Where the value lands, worded for the message.
 enum Slot {
-    Param { callee: DefId, idx: usize },
+    Param {
+        callee: DefId,
+        idx: usize,
+    },
     Field(DefId),
     Local(String),
     Return(DefId),
     Const(DefId),
+    /// The other operand of a comparison, as written.
+    Compared(String),
 }
 
 fn def_name(cx: &LateContext<'_>, did: DefId) -> String {
@@ -116,10 +127,25 @@ fn def_name(cx: &LateContext<'_>, did: DefId) -> String {
         .map_or_else(|| "this closure".to_owned(), |s| s.to_string())
 }
 
+fn is_comparison(op: BinOpKind) -> bool {
+    matches!(
+        op,
+        BinOpKind::Eq
+            | BinOpKind::Ne
+            | BinOpKind::Lt
+            | BinOpKind::Le
+            | BinOpKind::Gt
+            | BinOpKind::Ge
+    )
+}
+
 fn check_edge<'tcx>(cx: &LateContext<'tcx>, src: &'tcx Expr<'tcx>, dest: &HirTy<'_>, slot: Slot) {
-    let Some(to) = kind_of(cx, dest) else {
-        return;
-    };
+    if let Some(to) = kind_of(cx, dest) {
+        check_kinds(cx, src, &to, slot);
+    }
+}
+
+fn check_kinds<'tcx>(cx: &LateContext<'tcx>, src: &'tcx Expr<'tcx>, to: &Kind<'tcx>, slot: Slot) {
     let Some(from) = source_kind(cx, src) else {
         return;
     };
@@ -145,6 +171,7 @@ fn check_edge<'tcx>(cx: &LateContext<'tcx>, src: &'tcx Expr<'tcx>, dest: &HirTy<
         Slot::Local(pat) => format!("is bound to `{pat}: {to_name}`"),
         Slot::Return(f) => format!("is returned from `{}` as `{to_name}`", def_name(cx, f)),
         Slot::Const(c) => format!("defines `{to_name}` const `{}`", def_name(cx, c)),
+        Slot::Compared(other) => format!("is compared with `{other}`, declared `{to_name}`"),
     };
     let src = value_expr(src);
     emit(
@@ -164,6 +191,12 @@ fn check_edge<'tcx>(cx: &LateContext<'tcx>, src: &'tcx Expr<'tcx>, dest: &HirTy<
 impl<'tcx> LateLintPass<'tcx> for CrossedAlias {
     fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         match expr.kind {
+            ExprKind::Binary(op, l, r) if is_comparison(op.node) => {
+                if let Some(to) = source_kind(cx, r) {
+                    let other = snippet(cx, value_expr(r).span, "..").into_owned();
+                    check_kinds(cx, l, &to, Slot::Compared(other));
+                }
+            }
             ExprKind::Call(..) | ExprKind::MethodCall(..) => {
                 let (def, first, args) = match callee_of(cx, expr) {
                     Some(Callee::Path { def, args }) => (def, 0, args),
