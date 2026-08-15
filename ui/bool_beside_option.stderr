@@ -15,5 +15,13 @@ LL |     stale: bool,
    |
    = help: the `Option` already carries this state; drop the flag and ask the `Option`, so the two cannot disagree
 
-warning: 2 warnings emitted
+warning: `linked` is only ever written beside `up` of `Link`, `true` with `Some(..)` and `false` with `None` (3 sites): it stores `up.is_some()` a second time
+  --> $DIR/bool_beside_option.rs:73:5
+   |
+LL |     linked: bool,
+   |     ^^^^^^^^^^^^
+   |
+   = help: the `Option` already carries this state; drop the flag and ask the `Option`, so the two cannot disagree
+
+warning: 3 warnings emitted
 
