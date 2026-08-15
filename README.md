@@ -107,8 +107,8 @@ stringly-error-include-box-dyn = true
 # `parallel_params` are surveys to run once over a codebase (most of what they
 # name is legitimate once the real cases are fixed; for the third, a length the
 # caller vouches for that the function also uses as some other value's limit;
-# for the last, a context and the position it reports at, passed along together
-# by design), so they are off until turned on here.
+# for the last, a buffer and a cursor into it, passed along together by
+# design), so they are off until turned on here.
 flag-cluster-enabled = true
 stale-safety-comment-enabled = true
 unchecked-input-len-enabled = true

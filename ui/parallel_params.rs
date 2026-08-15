@@ -20,26 +20,55 @@ fn checksum(w: u32, h: u32, px: &[u8]) -> u64 {
     u64::from(w) * u64::from(h) + px.len() as u64
 }
 
-// Flagged: three parameters through methods; the receiver is not one of them,
-// and `&mut *sink` is still `sink`.
+// Flagged: `host`, `port` and `tls` through methods; the receiver is not one
+// of them, and neither is the `&mut` sink, a context threaded through by
+// design rather than part of the value.
+#[derive(Clone, Copy)]
+enum Tls {
+    Off,
+    On,
+}
+
 struct Conn {
     retries: u8,
 }
 
 impl Conn {
-    fn send(&self, host: &str, port: u16, sink: &mut Vec<String>) {
+    fn send(&self, host: &str, port: u16, tls: Tls, sink: &mut Vec<String>) {
         for _ in 0..self.retries {
-            self.dial(host, port, &mut *sink);
+            self.dial(host, port, tls, &mut *sink);
         }
     }
 
-    fn dial(&self, host: &str, port: u16, sink: &mut Vec<String>) {
-        log_target(host, port, sink);
+    fn dial(&self, host: &str, port: u16, tls: Tls, sink: &mut Vec<String>) {
+        log_target(host, port, tls, sink);
     }
 }
 
-fn log_target(host: &str, port: u16, sink: &mut Vec<String>) {
-    sink.push(format!("{host}:{port}"));
+fn log_target(host: &str, port: u16, tls: Tls, sink: &mut Vec<String>) {
+    sink.push(format!("{host}:{port} {}", tls as u8));
+}
+
+// Fine: a builder and the log it reports to are both contexts, not data, so
+// there is no value here to name however many functions pass them along.
+struct Builder {
+    depth: u32,
+}
+
+fn lower_block(builder: &mut Builder, log: &mut Vec<String>, stmts: &[u8]) {
+    for s in stmts {
+        lower_stmt(builder, log, *s);
+    }
+}
+
+fn lower_stmt(builder: &mut Builder, log: &mut Vec<String>, stmt: u8) {
+    builder.depth += 1;
+    lower_expr(builder, log, stmt / 2);
+    builder.depth -= 1;
+}
+
+fn lower_expr(builder: &mut Builder, log: &mut Vec<String>, expr: u8) {
+    log.push(format!("{} at depth {}", expr, builder.depth));
 }
 
 // Fine: only `derive` and `mix` declare `key` and `salt`; the threshold is
@@ -144,7 +173,9 @@ pub fn probe(path: &str, mode: u32) -> usize {
 fn main() {
     let _ = decode(&[1, 2, 3], 4, 4);
     let mut log = Vec::new();
-    Conn { retries: 2 }.send("h", 80, &mut log);
+    Conn { retries: 2 }.send("h", 80, Tls::Off, &mut log);
+    Conn { retries: 2 }.send("h", 443, Tls::On, &mut log);
+    lower_block(&mut Builder { depth: 0 }, &mut log, b"xy");
     let _ = derive(b"k", b"s");
     let _ = (clamp(5, 0, 9), within(5, 0, 9), width(0, 9));
     let _ = (copy_range(b"abc", 0, 2), check_range(b"abc", 0, 2));

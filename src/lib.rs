@@ -162,9 +162,9 @@ pub struct MordantConfig {
     /// which nothing inside the function tells from a missed check; run it
     /// once over parsing code and read the list.
     pub unchecked_input_len_enabled: bool,
-    /// Opt-in: run `parallel_params`. Off by default because a context and
-    /// the position it reports at, or a pointer and its length before a slice
-    /// exists, pass between functions together by design, and nothing in the
+    /// Opt-in: run `parallel_params`. Off by default because a buffer and a
+    /// cursor into it, or a precedence level and the flags in force at it,
+    /// pass between functions together by design, and nothing in the
     /// signatures tells those from a value nobody declared; run it once and
     /// read the list.
     pub parallel_params_enabled: bool,

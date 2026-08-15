@@ -10,6 +10,7 @@ use rustc_hir::intravisit::FnKind;
 use rustc_hir::{Body, Expr, ExprKind, FnDecl, HirId, Impl, ItemKind, Node, PatKind, UnOp};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty::print::with_no_trimmed_paths;
+use rustc_middle::ty::{self, Mutability, Ty};
 use rustc_span::def_id::LocalDefId;
 use rustc_span::symbol::kw;
 use rustc_span::{Span, Symbol};
@@ -19,26 +20,31 @@ use crate::baseline::emit;
 use crate::hir_shapes::{Callee, callee_of};
 
 rustc_session::declare_lint! {
-    /// Flags two or more parameters that `parallel-params-min-fns` or more
-    /// crate-private functions declare under the same names and types and
-    /// pass among themselves: every counted function hands the group,
-    /// unchanged and in one call, to another of them, or receives it that
-    /// way. The group arrives together, is checked together and leaves
+    /// Flags two or more plain-data parameters that `parallel-params-min-fns`
+    /// or more crate-private functions declare under the same names and
+    /// types and pass among themselves: every counted function hands the
+    /// group, unchanged and in one call, to another of them, or receives it
+    /// that way. The group arrives together, is checked together and leaves
     /// together: it is one value, and the only place it has no name is the
     /// type system, so nothing keeps a caller from passing half of it, or two
     /// halves of different wholes.
     ///
-    /// Stays quiet on exported functions, trait methods and their impls,
-    /// non-Rust ABIs, `#[no_mangle]` items and any function also used as a
-    /// value (a fn pointer's signature is fixed by its type), on `self`, on
-    /// `_`-prefixed parameters, on functions that merely declare the same
-    /// pair without handing it on, and whenever the callee renames or retypes
-    /// what it receives — that call is a translation, not a hand-off.
+    /// Plain data is scalars, `&str`, shared slices, and structs and enums
+    /// made only of those. `&mut` borrows, references and pointers to
+    /// structs, trait objects, type parameters and owned buffers never count:
+    /// they are the contexts, sinks and resources functions thread through by
+    /// design, and bundling those is a different refactor. Also quiet on
+    /// exported functions, trait methods and their impls, non-Rust ABIs,
+    /// `#[no_mangle]` items and any function also used as a value (a fn
+    /// pointer's signature is fixed by its type), on `self`, on `_`-prefixed
+    /// parameters, on functions that merely declare the same pair without
+    /// handing it on, and whenever the callee renames or retypes what it
+    /// receives — that call is a translation, not a hand-off.
     ///
     /// Runs only with `parallel-params-enabled = true` in `dylint.toml`: a
-    /// context and the position it reports at, or a pointer and its length
-    /// before a slice exists, travel together by design, and nothing in the
-    /// signatures tells those from an undeclared struct.
+    /// buffer and a cursor into it, or a level and the flags in force at it,
+    /// travel together by design, and nothing in the signatures tells those
+    /// from an undeclared struct.
     pub PARALLEL_PARAMS,
     Warn,
     "parameters that several functions declare and forward as a group"
@@ -107,6 +113,32 @@ fn forwarded_local(mut arg: &Expr<'_>) -> Option<HirId> {
     arg.res_local_id()
 }
 
+/// Plain data all the way down: scalars, `&str`, shared slices and arrays
+/// of plain data, and structs and enums whose every field is. A reference or
+/// pointer to a struct, a `&mut` borrow, a trait object, a type parameter or
+/// an owned buffer is a context, sink or resource a function threads through
+/// by design; a group of those is not a value nobody declared.
+fn plain_data<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>, seen: &mut HashSet<Ty<'tcx>>) -> bool {
+    match ty.kind() {
+        ty::Bool | ty::Char | ty::Int(_) | ty::Uint(_) | ty::Float(_) | ty::Str => true,
+        ty::Array(elem, _) | ty::Slice(elem) => plain_data(cx, *elem, seen),
+        ty::Tuple(tys) => tys.iter().all(|t| plain_data(cx, t, seen)),
+        ty::Ref(_, inner, Mutability::Not) => {
+            matches!(inner.kind(), ty::Slice(_) | ty::Str) && plain_data(cx, *inner, seen)
+        }
+        ty::Adt(adt, args) => {
+            // A type reached again through its own fields adds no new field
+            // kinds; the first visit decides.
+            if !seen.insert(ty) {
+                return true;
+            }
+            adt.all_fields()
+                .all(|f| plain_data(cx, f.ty(cx.tcx, args).skip_normalization(), seen))
+        }
+        _ => false,
+    }
+}
+
 /// A signature the crate is free to change: not exported, not extern, not
 /// dictated by a trait.
 fn owns_signature(cx: &LateContext<'_>, kind: FnKind<'_>, def_id: LocalDefId) -> bool {
@@ -160,6 +192,9 @@ impl<'tcx> LateLintPass<'tcx> for ParallelParams {
                 let ty = cx
                     .tcx
                     .erase_and_anonymize_regions(cx.typeck_results().pat_ty(param.pat));
+                if !plain_data(cx, ty, &mut HashSet::new()) {
+                    return None;
+                }
                 let written = decl
                     .inputs
                     .get(i)
@@ -327,18 +362,25 @@ impl<'tcx> LateLintPass<'tcx> for ParallelParams {
             };
             witnesses.sort_by_key(|f| f.span.lo());
             let witness = witnesses[0];
-            let names: Vec<String> = sig
-                .iter()
-                .map(|def| format!("`{}`", cx.tcx.item_name(*def)))
-                .collect();
+            // Two methods of different types often share a bare name; those
+            // get their path so the list names each function once.
+            let bare = |def: &DefId| cx.tcx.item_name(*def);
+            let name = |def: &DefId| {
+                if sig.iter().filter(|d| bare(d) == bare(def)).count() > 1 {
+                    format!("`{}`", cx.tcx.def_path_str(*def))
+                } else {
+                    format!("`{}`", bare(def))
+                }
+            };
+            let names: Vec<String> = sig.iter().map(name).collect();
             findings.push((
                 at,
                 format!(
-                    "parameters {} pass unchanged between {} (`{}` hands them to `{}` in one call): one value travelling as {} parameters",
+                    "parameters {} pass unchanged between {} ({} hands them to {} in one call): one value travelling as {} parameters",
                     join(&shown),
                     listed(&names),
-                    cx.tcx.item_name(witness.from),
-                    cx.tcx.item_name(witness.to),
+                    name(&witness.from),
+                    name(&witness.to),
                     slots.len(),
                 ),
             ));
