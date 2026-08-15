@@ -27,6 +27,7 @@ mod bypassed_conversion;
 mod bypassed_validator;
 mod claims;
 mod collapsed_error;
+mod crossed_alias;
 mod crossed_index;
 mod ctor_flow;
 mod defaulted_failure;
@@ -179,7 +180,7 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
     use {
         asymmetric_guard::AsymmetricGuard, baseline::BaselineWriter, bool_params::BoolParams,
         bypassed_conversion::BypassedConversion, bypassed_validator::BypassedValidator,
-        collapsed_error::CollapsedError, crossed_index::CrossedIndex,
+        collapsed_error::CollapsedError, crossed_alias::CrossedAlias, crossed_index::CrossedIndex,
         defaulted_failure::DefaultedFailure, dependent_field::DependentField,
         discarded_error::DiscardedError, exclusive_options::ExclusiveOptions,
         flag_cluster::FlagCluster, forbidden_reach::ForbiddenReach, guard_flag::GuardFlag,
@@ -249,6 +250,7 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
     });
     add(s, true, BoolParams::default);
     add(s, true, UnnamedTuple::default);
+    add(s, true, || CrossedAlias);
     // Last, so its check_crate_post flushes after every lint has recorded.
     add(s, true, || BaselineWriter);
 }

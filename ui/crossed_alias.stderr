@@ -1,0 +1,67 @@
+warning: `INVALID_PACKAGE - 1` is declared `PackageId` but defines `DependencyId` const `ROOT_DEPENDENCY`; both are `u32`, so nothing rejects the crossing
+  --> $DIR/crossed_alias.rs:11:43
+   |
+LL | pub const ROOT_DEPENDENCY: DependencyId = INVALID_PACKAGE - 1;
+   |                                           ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: a newtype per id kind makes this a type error
+   = note: `#[warn(crossed_alias)]` on by default
+
+warning: `dep` is declared `DependencyId` but is passed as `PackageId` parameter `package` of `link`; both are `u32`, so nothing rejects the crossing
+  --> $DIR/crossed_alias.rs:32:10
+   |
+LL |     link(dep, pkg)
+   |          ^^^
+   |
+   = help: a newtype per id kind makes this a type error
+
+warning: `pkg` is declared `PackageId` but is passed as `DependencyId` parameter `dependency` of `link`; both are `u32`, so nothing rejects the crossing
+  --> $DIR/crossed_alias.rs:32:15
+   |
+LL |     link(dep, pkg)
+   |               ^^^
+   |
+   = help: a newtype per id kind makes this a type error
+
+warning: `dep` is declared `DependencyId` but is stored in `PackageId` field `package`; both are `u32`, so nothing rejects the crossing
+  --> $DIR/crossed_alias.rs:38:18
+   |
+LL |         package: dep,
+   |                  ^^^
+   |
+   = help: a newtype per id kind makes this a type error
+
+warning: `other.dependency` is declared `DependencyId` but is stored in `PackageId` field `package`; both are `u32`, so nothing rejects the crossing
+  --> $DIR/crossed_alias.rs:50:17
+   |
+LL |     r.package = other.dependency;
+   |                 ^^^^^^^^^^^^^^^^
+   |
+   = help: a newtype per id kind makes this a type error
+
+warning: `first_dependency(r)` is declared `DependencyId` but is bound to `pkg: PackageId`; both are `u32`, so nothing rejects the crossing
+  --> $DIR/crossed_alias.rs:57:26
+   |
+LL |     let pkg: PackageId = first_dependency(r);
+   |                          ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: a newtype per id kind makes this a type error
+
+warning: `dep` is declared `DependencyId` but is returned from `return_is_flagged` as `PackageId`; both are `u32`, so nothing rejects the crossing
+  --> $DIR/crossed_alias.rs:63:5
+   |
+LL |     dep
+   |     ^^^
+   |
+   = help: a newtype per id kind makes this a type error
+
+warning: `r.dependency` is declared `DependencyId` but is returned from `explicit_return_is_flagged` as `PackageId`; both are `u32`, so nothing rejects the crossing
+  --> $DIR/crossed_alias.rs:69:16
+   |
+LL |         return r.dependency;
+   |                ^^^^^^^^^^^^
+   |
+   = help: a newtype per id kind makes this a type error
+
+warning: 8 warnings emitted
+
