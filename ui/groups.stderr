@@ -1,0 +1,24 @@
+warning: this arm absorbs every future variant of `Op` (3 variants today)
+  --> $DIR/groups.rs:14:9
+   |
+LL |         _ => 0,
+   |         ^
+   |
+   = note: `#[warn(wildcard_over_own_enum)]` on by default
+help: list the remaining variants; the compiler then flags every new one added
+   |
+LL -         _ => 0,
+LL +         Op::Sub | Op::Mul => 0,
+   |
+
+warning: `.ok()` in statement position discards the error unobserved
+  --> $DIR/groups.rs:30:5
+   |
+LL |     "1".parse::<u8>().ok();
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: handle the error, or state the discard with `let _ = ...`
+   = note: `#[warn(discarded_error)]` on by default
+
+warning: 2 warnings emitted
+

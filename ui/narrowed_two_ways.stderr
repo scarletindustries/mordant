@@ -1,0 +1,55 @@
+warning: narrowed two ways: `b.len` is `usize` and becomes `u32` through `as` here, which wraps silently, while another site converts the same place into `u32` with a range check
+  --> $DIR/narrowed_two_ways.rs:18:5
+   |
+LL |     b.len as u32
+   |     ^^^^^^^^^^^^
+   |
+note: the same place, converted with a check here
+  --> $DIR/narrowed_two_ways.rs:22:5
+   |
+LL |     u32::try_from(b.len).expect("length fits the header")
+   |     ^^^^^^^^^^^^^^^^^^^^
+   = help: the check says the value may not fit; declare the place with the narrow type, or a newtype whose constructor checks the range once, so no reader can truncate it (or convert with `try_from` here as well)
+   = note: `#[warn(narrowed_two_ways)]` on by default
+
+warning: narrowed two ways: `b.offset` is `u64` and becomes `i64` through `as` here, which wraps silently, while another site converts the same place into `i64` with a range check
+  --> $DIR/narrowed_two_ways.rs:27:5
+   |
+LL |     b.offset as i64
+   |     ^^^^^^^^^^^^^^^
+   |
+note: the same place, converted with a check here
+  --> $DIR/narrowed_two_ways.rs:31:5
+   |
+LL |     i64::try_from(b.offset).expect("offset fits off_t")
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+   = help: the check says the value may not fit; declare the place with the narrow type, or a newtype whose constructor checks the range once, so no reader can truncate it (or convert with `try_from` here as well)
+
+warning: narrowed two ways: `b.count` is `u32` and becomes `u8` through `as` here, which wraps silently, while another site converts the same place into `u8` with a range check
+  --> $DIR/narrowed_two_ways.rs:36:5
+   |
+LL |     b.count as u8
+   |     ^^^^^^^^^^^^^
+   |
+note: the same place, converted with a check here
+  --> $DIR/narrowed_two_ways.rs:40:17
+   |
+LL |     let c: u8 = b.count.try_into().unwrap_or(u8::MAX);
+   |                 ^^^^^^^^^^^^^^^^^^
+   = help: the check says the value may not fit; declare the place with the narrow type, or a newtype whose constructor checks the range once, so no reader can truncate it (or convert with `try_from` here as well)
+
+warning: narrowed two ways: `n` is `u64` and becomes `u16` through `as` here, which wraps silently, while another site converts the same place into `u16` with a range check
+  --> $DIR/narrowed_two_ways.rs:47:6
+   |
+LL |     (n as u16, checked)
+   |      ^^^^^^^^
+   |
+note: the same place, converted with a check here
+  --> $DIR/narrowed_two_ways.rs:46:19
+   |
+LL |     let checked = u16::try_from(n).unwrap_or(u16::MAX);
+   |                   ^^^^^^^^^^^^^^^^
+   = help: the check says the value may not fit; declare the place with the narrow type, or a newtype whose constructor checks the range once, so no reader can truncate it (or convert with `try_from` here as well)
+
+warning: 4 warnings emitted
+

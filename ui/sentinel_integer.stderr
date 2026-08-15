@@ -1,0 +1,43 @@
+warning: sentinel `INVALID_SLOT` can reach this use: `rename` indexes with `Entry.slot` and nothing in it tests the field, which the crate compares against that sentinel at 2 other sites
+  --> $DIR/sentinel_integer.rs:34:9
+   |
+LL |         self.names[e.slot as usize] = to;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: the field's value set is `Option<int>`; store that (a `NonZero`/`NonMax` niche keeps the size) and no reader can index without deciding the empty case
+   = note: `#[warn(sentinel_integer)]` on by default
+
+warning: sentinel `INVALID_SLOT` can reach this use: `name_after` indexes with `Entry.slot` and nothing in it tests the field, which the crate compares against that sentinel at 2 other sites
+  --> $DIR/sentinel_integer.rs:68:9
+   |
+LL |         self.names[e.width as usize + e.slot as usize]
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: the field's value set is `Option<int>`; store that (a `NonZero`/`NonMax` niche keeps the size) and no reader can index without deciding the empty case
+
+warning: sentinel `u32::MAX` can reach this use: `parent_ptr` offsets a pointer by `Entry.parent` and nothing in it tests the field, which the crate compares against that sentinel at 3 other sites
+  --> $DIR/sentinel_integer.rs:82:18
+   |
+LL |         unsafe { self.entries.as_ptr().add(e.parent as usize) }
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: the field's value set is `Option<int>`; store that (a `NonZero`/`NonMax` niche keeps the size) and no reader can index without deciding the empty case
+
+warning: sentinel `u32::MAX` can reach this use: `parent_ptr_wrapping` offsets a pointer by `Entry.parent` and nothing in it tests the field, which the crate compares against that sentinel at 3 other sites
+  --> $DIR/sentinel_integer.rs:87:9
+   |
+LL |         self.entries.as_ptr().wrapping_add(e.parent as usize)
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: the field's value set is `Option<int>`; store that (a `NonZero`/`NonMax` niche keeps the size) and no reader can index without deciding the empty case
+
+warning: sentinel `-1` can reach this use: `below` indexes with `Entry.depth` and nothing in it tests the field, which the crate compares against that sentinel at 2 other sites
+  --> $DIR/sentinel_integer.rs:133:10
+   |
+LL |         &self.entries[(e.depth + 1) as usize]
+   |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: the field's value set is `Option<int>`; store that (a `NonZero`/`NonMax` niche keeps the size) and no reader can index without deciding the empty case
+
+warning: 5 warnings emitted
+

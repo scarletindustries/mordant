@@ -67,7 +67,7 @@ note: one such call
 LL |     let _ = severity(true, false) + tier(3) as u8;
    |             ^^^^^^^^^^^^^^^^^^^^^
    = help: a two-variant enum per flag, or one options struct, names every argument at the call site and turns a swapped pair into a type error
-   = note: `#[warn(bool_params)]` on by default
+   = note: `#[warn(bare_bool_args)]` on by default
 
 warning: 8 warnings emitted
 

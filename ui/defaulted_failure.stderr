@@ -213,7 +213,7 @@ note: the error becomes `false` here, and nothing else is done with it
 LL |         return false;
    |         ^^^^^^^^^^^^
    = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
-   = note: `#[warn(collapsed_error)]` on by default
+   = note: `#[warn(error_collapsed_to_bool)]` on by default
 
 warning: `let_else_returning_none_is_fine` reports `ParseError` only as `None`, and this call drops the `None`: the failure can no longer be observed anywhere
   --> $DIR/defaulted_failure.rs:394:13
