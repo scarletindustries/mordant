@@ -127,6 +127,76 @@ fn logged_dropped(buf: &mut Vec<u8>, log: &mut Vec<i32>) {
     write_logged(buf, log);
 }
 
+// Fine: an `Err` arm that names a kind asked the error a question, and its
+// sibling saw the rest.
+fn write_unless_full(buf: &mut Vec<u8>, log: &mut Vec<i32>) -> bool {
+    match sys_write(buf, b"k") {
+        Ok(_) => true,
+        Err(SysError(28)) => false,
+        Err(e) => {
+            log.push(e.0);
+            false
+        }
+    }
+}
+
+fn unless_full_dropped(buf: &mut Vec<u8>, log: &mut Vec<i32>) {
+    write_unless_full(buf, log);
+}
+
+// Fine: the same, spelt as two `if let`s.
+fn write_unless_full_if(buf: &mut Vec<u8>, log: &mut Vec<i32>) -> bool {
+    let r = sys_write(buf, b"k");
+    if let Err(SysError(28)) = r {
+        return false;
+    }
+    if let Err(e) = r {
+        log.push(e.0);
+        return false;
+    }
+    true
+}
+
+fn unless_full_if_dropped(buf: &mut Vec<u8>, log: &mut Vec<i32>) {
+    write_unless_full_if(buf, log);
+}
+
+// Collapses in a `let .. else` directly inside a `loop` body.
+fn fill(buf: &mut Vec<u8>) -> bool {
+    loop {
+        let Ok(n) = sys_write(buf, b"f") else {
+            return false;
+        };
+        if n > 0 {
+            break;
+        }
+    }
+    true
+}
+
+// Flagged.
+fn fill_dropped(buf: &mut Vec<u8>) {
+    fill(buf);
+}
+
+// Collapses a `&str` error, which carried a message.
+fn parse_digit(s: &str) -> Result<u8, &'static str> {
+    match s.as_bytes() {
+        [b @ b'0'..=b'9'] => Ok(b - b'0'),
+        [] => Err("empty"),
+        _ => Err("not a digit"),
+    }
+}
+
+fn is_digit(s: &str) -> bool {
+    parse_digit(s).is_ok()
+}
+
+// Flagged.
+fn digit_discarded() {
+    let _ = is_digit("x");
+}
+
 // Fine: every call reads the `bool`.
 fn try_mark(buf: &mut Vec<u8>) -> bool {
     sys_write(buf, b"c").is_ok()
@@ -239,6 +309,10 @@ fn main() {
     chained_dropped(&mut buf);
     probe_dropped(&mut buf);
     logged_dropped(&mut buf, &mut log);
+    unless_full_dropped(&mut buf, &mut log);
+    unless_full_if_dropped(&mut buf, &mut log);
+    fill_dropped(&mut buf);
+    digit_discarded();
     let _ = mark_checked(&mut buf);
     sorted_discarded(&[1, 2, 3]);
     ping_discarded();

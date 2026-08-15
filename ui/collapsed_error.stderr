@@ -90,5 +90,31 @@ LL |         None
    |         ^^^^
    = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
 
-warning: 7 warnings emitted
+warning: `fill` reports `SysError` only as `false`, and this call drops the `false`: the failure can no longer be observed anywhere
+  --> $DIR/collapsed_error.rs:179:5
+   |
+LL |     fill(buf);
+   |     ^^^^^^^^^
+   |
+note: the error becomes `false` here, and nothing else is done with it
+  --> $DIR/collapsed_error.rs:168:13
+   |
+LL |             return false;
+   |             ^^^^^^^^^^^^
+   = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
+
+warning: `is_digit` reports `&str` only as `false`, and this call drops the `false`: the failure can no longer be observed anywhere
+  --> $DIR/collapsed_error.rs:197:13
+   |
+LL |     let _ = is_digit("x");
+   |             ^^^^^^^^^^^^^
+   |
+note: the error becomes `false` here, and nothing else is done with it
+  --> $DIR/collapsed_error.rs:192:5
+   |
+LL |     parse_digit(s).is_ok()
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+   = help: return the `Result` and let this caller decide; failing that, `#[must_use]`
+
+warning: 9 warnings emitted
 

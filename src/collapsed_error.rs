@@ -2,13 +2,15 @@ use std::collections::{HashMap, HashSet};
 use std::ops::ControlFlow;
 
 use clippy_utils::visitors::for_each_expr_without_closures;
-use clippy_utils::{get_expr_use_or_unification_node, is_def_id_trait_method, is_in_test};
+use clippy_utils::{
+    get_expr_use_or_unification_node, is_def_id_trait_method, is_in_test, is_refutable,
+};
 use rustc_abi::ExternAbi;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_hir::intravisit::FnKind;
 use rustc_hir::{
-    Block, Body, Expr, ExprKind, FnDecl, HirId, LangItem, LetStmt, MatchSource, Node, PatKind,
+    Block, Body, Expr, ExprKind, FnDecl, HirId, LangItem, LetStmt, MatchSource, Node, Pat, PatKind,
     StmtKind,
 };
 use rustc_lint::{LateContext, LateLintPass};
@@ -35,10 +37,12 @@ rustc_session::declare_lint! {
     /// A `Result` return would have made this caller decide.
     ///
     /// Silent when the `Err` arm or `else` block does anything besides exit
-    /// (logs, stores or converts the error: it was looked at); when the error
-    /// type had no kind to lose -- zero-sized (`()`, `AllocError`,
+    /// (logs, stores or converts the error: it was looked at), or an `Err`
+    /// pattern of that `match`/`if let` names a kind (`Err(Errno::NOENT) =>
+    /// false` answers a question, and the sibling arm saw the rest); when the
+    /// error type had no kind to lose -- zero-sized (`()`, `AllocError`,
     /// `TryFromIntError`, a lone unit variant), where `false` says as much as
-    /// the error did, or a bare number (`binary_search`'s `Err(idx)` is an
+    /// the error did, or a bare primitive (`binary_search`'s `Err(idx)` is an
     /// answer, not a failure); on trait methods and non-Rust-ABI functions
     /// (the signature is not the function's to choose); on collapses inside
     /// closures; on callees in other crates; on calls in tests or produced
@@ -96,14 +100,26 @@ rustc_session::impl_lint_pass!(CollapsedError => [COLLAPSED_ERROR]);
 /// The error type of `e`'s `Result`, when it has a kind that `false` loses:
 /// not a bare primitive, and not zero-sized (`()`, `!`, a unit struct, a
 /// lone unit variant), which distinguishes nothing a `bool` does not. A type
-/// whose layout is unknown here (generic) is given the benefit of the doubt.
+/// whose layout is unknown here (generic, unsized) is given the benefit of
+/// the doubt.
 fn err_of<'tcx>(cx: &LateContext<'tcx>, e: &Expr<'tcx>) -> Option<Ty<'tcx>> {
     let ty = cx.typeck_results().expr_ty(e).peel_refs();
-    let err = result_err_ty(cx.tcx, ty)?.peel_refs();
-    if err.is_primitive() || err.is_str() || cx.layout_of(err).is_ok_and(|l| l.is_zst()) {
+    let err = result_err_ty(cx.tcx, ty)?;
+    let bare = err.peel_refs();
+    if bare.is_primitive() || cx.layout_of(bare).is_ok_and(|l| l.is_zst()) {
         return None;
     }
     Some(err)
+}
+
+/// `pat` takes its variant's payload whole (`Err(_)`, `Err(e)`, `Err(..)`)
+/// rather than naming a kind of it (`Err(Errno::NOENT)`).
+fn takes_whole(cx: &LateContext<'_>, pat: &Pat<'_>) -> bool {
+    match pat.kind {
+        PatKind::TupleStruct(_, subs, _) => !subs.iter().any(|p| is_refutable(cx, p)),
+        PatKind::Struct(_, fields, _) => !fields.iter().any(|f| is_refutable(cx, f.pat)),
+        _ => false,
+    }
 }
 
 /// `v` is the bare exit value: the literal `false`, or the path `None`.
@@ -216,15 +232,24 @@ fn collapses<'tcx>(
     for_each_expr_without_closures(body.value, |e: &'tcx Expr<'tcx>| {
         let value_position = tails.branches.contains(&e.hir_id);
         match e.kind {
+            // One `Err` arm that names a kind, is guarded, or does more than
+            // exit means the error was looked at in this `match`.
             ExprKind::Match(scrut, arms, MatchSource::Normal) => {
                 if let Some(err) = err_of(cx, scrut) {
-                    for arm in arms {
-                        if arm.guard.is_none()
-                            && arm_variant(cx, arm.pat).is_some_and(|v| Some(v) == err_variant)
-                            && pure_exit(cx, arm.body, exit, value_position).is_some()
-                        {
-                            sites.push((arm.span, err));
-                        }
+                    let err_arms: Vec<_> = arms
+                        .iter()
+                        .filter(|arm| {
+                            arm_variant(cx, arm.pat).is_some_and(|v| Some(v) == err_variant)
+                        })
+                        .collect();
+                    if !err_arms.is_empty()
+                        && err_arms.iter().all(|arm| {
+                            arm.guard.is_none()
+                                && takes_whole(cx, arm.pat)
+                                && pure_exit(cx, arm.body, exit, value_position).is_some()
+                        })
+                    {
+                        sites.extend(err_arms.iter().map(|arm| (arm.span, err)));
                     }
                 }
             }
@@ -253,7 +278,7 @@ fn collapses<'tcx>(
                     ExprKind::Let(l) => err_of(cx, l.init).and_then(|err| {
                         let head = arm_variant(cx, l.pat)?;
                         let on_err = if Some(head) == err_variant {
-                            Some(then)
+                            takes_whole(cx, l.pat).then_some(then)
                         } else if Some(head) == ok_variant {
                             els
                         } else {
@@ -269,7 +294,8 @@ fn collapses<'tcx>(
                     sites.push((leave.span, err));
                 }
             }
-            ExprKind::Block(block, _) => {
+            // A `loop` body is the one block that is not also an expression.
+            ExprKind::Block(block, _) | ExprKind::Loop(block, ..) => {
                 let_else_collapses(cx, block, exit, ok_variant, &mut sites)
             }
             _ => {}
