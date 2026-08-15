@@ -12,7 +12,7 @@ use rustc_span::hygiene::{ExpnKind, MacroKind};
 use rustc_span::{DesugaringKind, Ident, Span, Symbol, sym};
 
 use crate::adt_facts::field_ty;
-use crate::baseline::emit_with_note;
+use crate::baseline::{emit_with_note, join};
 use crate::hir_shapes::{assigned_field, field_method_call, indexed_field};
 
 rustc_session::declare_lint! {
@@ -24,10 +24,9 @@ rustc_session::declare_lint! {
     /// other, on the same value, and every struct literal starts both empty
     /// -- and that some function reads at one index (`s.a[i]` with `s.b[i]`,
     /// `s.a.get(i)` with `s.b.get(i)`) or zips together. Element `i` of each
-    /// is one record split across several vecs whose lengths the struct lets
-    /// differ; only the discipline of every writer keeps `a[i]` describing
-    /// the same thing as `b[i]`. One `Vec` whose element struct has a field
-    /// for each has one length and one push.
+    /// is one record split across several vecs, and only the discipline of
+    /// every writer keeps `a[i]` describing the same thing as `b[i]`. One
+    /// `Vec` of a struct with a field for each has one length and one push.
     ///
     /// Only fields nothing outside the crate can write are considered: the
     /// struct is private to the crate, or the field is. One mutable access
@@ -559,22 +558,20 @@ impl<'tcx> LateLintPass<'tcx> for ParallelVecs {
         findings.sort_by_key(|(adt, ..)| cx.tcx.def_span(*adt).lo());
         for (adt, members, sites, read) in findings {
             let names: Vec<String> = members.iter().map(|m| format!("`{m}`")).collect();
+            let names = join(&names, "and");
             let n = members.len();
             emit_with_note(
                 cx,
                 PARALLEL_VECS,
                 cx.tcx.def_span(adt),
                 format!(
-                    "{} of `{}` only ever change length together ({sites} {}) and are read at the same index, so element `i` of each is one record split across {n} vecs whose lengths the struct lets differ",
-                    names.join(", "),
+                    "{names} of `{}` only change length together ({sites} {}) and are read at the same index. Element `i` of each is one record split across {n} vecs",
                     cx.tcx.def_path_str(adt),
                     if sites == 1 { "block" } else { "blocks" },
                 ),
                 read,
                 "one of the reads at a shared index",
-                format!(
-                    "replace the {n} fields with one `Vec` whose element struct has a field for each; then there is one length and one push"
-                ),
+                "use one `Vec` of a struct with a field for each. One length, one push",
             );
         }
     }

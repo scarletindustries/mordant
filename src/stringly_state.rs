@@ -14,13 +14,13 @@ use rustc_middle::ty::{self, Ty, TypeckResults};
 use rustc_span::{Span, Symbol, sym};
 
 use crate::adt_facts::{field_ty, has_fixed_repr, has_positional_fields, struct_field};
-use crate::baseline::emit_with_note;
+use crate::baseline::{emit_with_note, join};
 use crate::hir_shapes::{Callee, callee_of, peel_blocks_unsafe};
 
 rustc_session::declare_lint! {
     /// Flags a string or byte-string field or local that only ever holds one
-    /// of a fixed set of literals and is read by comparing against literals:
-    /// an enum spelled as a string, so a misspelt state on either side still
+    /// of a fixed set of literals and is read by comparing against literals.
+    /// It is an enum written as a string, so a typo on either side still
     /// compiles, a new state needs every comparison found by hand, and
     /// nothing says which strings are possible.
     ///
@@ -410,15 +410,12 @@ impl StringlyState {
         slot: Slot,
         facts: &Facts,
     ) -> Option<(Span, String, String)> {
-        let (span, name, scope) = match slot {
+        let (span, name) = match slot {
             Slot::Field(did, name) => {
                 let field = struct_field(cx.tcx.adt_def(did), name)?;
-                (cx.tcx.def_span(field.did), name, " across the crate")
+                (cx.tcx.def_span(field.did), name)
             }
-            Slot::Local(id) => {
-                let &(span, name) = self.locals.get(&id)?;
-                (span, name, "")
-            }
+            Slot::Local(id) => *self.locals.get(&id)?,
         };
         const SHOWN: usize = 6;
         let mut list: Vec<String> = facts
@@ -431,20 +428,18 @@ impl StringlyState {
         if more > 0 {
             list.push(format!("{more} more"));
         }
+        let values = join(&list, "or");
         Some((
             span,
             format!(
-                "`{name}` only ever holds one of {} ({} {}{}) and is read by comparing against \
-                 literals, so it is an enum spelled as a string and a misspelt state still \
-                 compiles",
-                list.join(", "),
+                "`{name}` only ever holds {values} ({} {}) and is read by comparing against \
+                 literals. It is an enum written as a string, and a typo still compiles",
                 facts.stores,
                 if facts.stores == 1 { "store" } else { "stores" },
-                scope,
             ),
             format!(
-                "declare an enum with a variant per string and store that in `{name}`; keep the \
-                 text in an `as_str` method for wherever it is printed"
+                "declare an enum with a variant per string and store that in `{name}`. Keep the \
+                 text in an `as_str` method for printing"
             ),
         ))
     }
@@ -573,7 +568,7 @@ impl<'tcx> LateLintPass<'tcx> for StringlyState {
                 span,
                 msg,
                 compared,
-                "one of the comparisons against a literal",
+                "one of the comparisons",
                 help,
             );
         }

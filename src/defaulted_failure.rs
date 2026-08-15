@@ -13,15 +13,15 @@ use crate::enum_facts::{arm_variant, ctor_literal_variant};
 use crate::hir_shapes::{callee_of, peel_blocks_unsafe, sole_expr};
 
 rustc_session::declare_lint! {
-    /// Flags a call to a function that can reject its input, whose
-    /// rejection is swapped for a fixed value and never looked at --
+    /// Flags a call to a function that can reject its input, where the
+    /// rejection is replaced with a fixed value and never looked at:
     /// `f(x).unwrap_or(0)`, `.unwrap_or_default()`,
     /// `.unwrap_or_else(|_| CONST)`, `.ok()` feeding one of those, `let
     /// Ok(v) = f(x) else { return Ok(()) }` or `let Some(v) = f(x).ok() else {
-    /// return }` -- when `f` is a `Result`-returning function of this crate
+    /// return }`, when `f` is a `Result`-returning function of this crate
     /// whose body rejects some of what it is handed (see
-    /// `ctor_flow::argument_decided_failure`): input `f` refused goes on
-    /// being processed as if it had passed. Callees the
+    /// `ctor_flow::argument_decided_failure`). Rejected input carries on as
+    /// if it were fine. Callees the
     /// analysis cannot see into (other crates, `Option` returners,
     /// combinator-built failures) are covered only when listed in
     /// `defaulted-failure-callees`.
@@ -97,15 +97,12 @@ impl DefaultedFailure {
         let name = cx.tcx.def_path_str(callee);
         let consequence = match replaced {
             Replaced::Default(method) => format!(
-                "`.{method}` here swaps that rejection for a fixed value, so input `{name}` refused is processed as if it had passed"
+                "`.{method}` here replaces the rejection with a fixed value. Rejected input carries on as if it were fine"
             ),
-            Replaced::ElseSuccess => format!(
-                "the `else` here returns success when it does, so input `{name}` refused is reported as handled"
-            ),
+            Replaced::ElseSuccess => "the `else` here returns success when that happens. Rejected input is reported as handled".to_string(),
         };
-        let help = format!(
-            "propagate the error with `?` or `return Err(..)`, or match on it here while `{name}`'s reason is still attached"
-        );
+        let help =
+            "pass the error on with `?`, or match on it here while the reason is still attached";
         if wrapper == Wrapper::Result
             && let Some(local) = callee.as_local()
             && let Some(check) = self.fact(cx, local)
@@ -116,7 +113,7 @@ impl DefaultedFailure {
                 at,
                 format!("`{name}` can reject its input, and {consequence}"),
                 check,
-                format!("the check in `{name}` whose failure is replaced"),
+                format!("the check in `{name}` that gets overridden"),
                 help,
             );
         } else if self.is_listed(cx, callee) {

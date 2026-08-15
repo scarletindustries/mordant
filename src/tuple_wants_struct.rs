@@ -14,7 +14,7 @@ use rustc_middle::ty::{self, AssocContainer, Ty, TyCtxt};
 use rustc_span::def_id::LocalDefId;
 use rustc_span::{Ident, Span, Symbol, sym};
 
-use crate::baseline::emit_with_note;
+use crate::baseline::{emit_with_note, join};
 use crate::hir_shapes::{callee_of, peel_blocks_unsafe};
 
 rustc_session::declare_lint! {
@@ -22,12 +22,11 @@ rustc_session::declare_lint! {
     /// `Option`/`Result`) with two members of one type, when every call in
     /// the crate unpacks it on the spot (`let (a, b) = f()`, an
     /// `if let`/`match` arm, or `(a, self.b) = f()`) and all of them, across
-    /// at least two functions, give the members the same names. Those are the
-    /// members' names everywhere but in the type, and since the members share
-    /// a type a swapped pair still compiles; when the function's own body
-    /// already returns them under those names in another order, the finding
-    /// says where. A struct with those fields puts the names in the
-    /// signature.
+    /// at least two functions, give the members the same names. The names
+    /// exist everywhere except in the type, and since the members share a
+    /// type a swapped pair compiles. When the function's own body already
+    /// returns them under those names in another order, the finding says
+    /// where. A struct with those fields puts the names in the signature.
     ///
     /// Silent when the member types all differ (the compiler already rejects
     /// a transposition), when any caller keeps the tuple whole (stores,
@@ -123,11 +122,16 @@ fn tuple_return(tcx: TyCtxt<'_>, def: DefId) -> Option<TupleReturn<'_>> {
     }
 }
 
-/// The first two members of one type, as "`.i` and `.j` are both `T`".
+/// The first two members of one type, as "both members are `T`" for a pair
+/// and "`.i` and `.j` are both `T`" for anything longer.
 fn same_typed_pair(members: &[Ty<'_>]) -> Option<String> {
     members.iter().enumerate().find_map(|(i, a)| {
         let j = i + 1 + members[i + 1..].iter().position(|b| a == b)?;
-        Some(format!("`.{i}` and `.{j}` are both `{a}`"))
+        Some(if members.len() == 2 {
+            format!("both members are `{a}`")
+        } else {
+            format!("`.{i}` and `.{j}` are both `{a}`")
+        })
     })
 }
 
@@ -510,10 +514,14 @@ impl<'tcx> LateLintPass<'tcx> for TupleWantsStruct {
                 continue;
             }
             let lead = format!(
-                "every one of the {} calls to `{}` (in {} functions) unpacks this as `{}`",
+                "{} {} calls to `{}` unpack the result as `{}`",
+                if sites.count == 2 {
+                    "both of the"
+                } else {
+                    "all"
+                },
                 sites.count,
                 cand.name,
-                sites.owners.len(),
                 tuple_of(names),
             );
             // The body spelling the same names in another order is the
@@ -529,7 +537,7 @@ impl<'tcx> LateLintPass<'tcx> for TupleWantsStruct {
             let (msg, at, note) = match transposed {
                 Some(r) => (
                     format!(
-                        "{lead}, but the body returns them as `{}`, and since {} both orders compile and one of them is wrong",
+                        "{lead}, but the body returns them as `{}`. Since {} both orders compile, and one of them is wrong",
                         tuple_of(&r.names),
                         cand.same,
                     ),
@@ -538,18 +546,15 @@ impl<'tcx> LateLintPass<'tcx> for TupleWantsStruct {
                 ),
                 None => (
                     format!(
-                        "{lead}, so those are the members' names everywhere but in the type, and since {} a swapped pair still compiles",
+                        "{lead}. The names exist everywhere except in the type, and since {} a swapped pair compiles",
                         cand.same,
                     ),
                     first,
-                    "one of the calls that names them",
+                    "one of the calls",
                 ),
             };
             let fields: Vec<String> = names.iter().map(|n| format!("`{n}`")).collect();
-            let help = format!(
-                "return a struct with fields {} instead of the tuple; the names then live in the signature and same-typed members cannot trade places",
-                fields.join(", "),
-            );
+            let help = format!("return a struct with fields {}", join(&fields, "and"));
             findings.push((cand.ret_span, msg, at, note, help));
         }
         // `candidates` is a HashMap; report in source order.

@@ -1,4 +1,4 @@
-warning: `w: u32` and `h: u32` are declared alike by `decode`, `scale` and `checksum` and handed between them unchanged, so they are one value that only exists as 2 loose parameters a caller can mix up or pass by halves
+warning: `w: u32` and `h: u32` are declared the same way by `decode`, `scale` and `checksum` and passed between them unchanged. They are one value travelling as 2 loose parameters
   --> $DIR/parallel_params.rs:5:23
    |
 LL | fn decode(src: &[u8], w: u32, h: u32) -> Vec<u8> {
@@ -9,10 +9,10 @@ note: `decode` hands them to `scale` here
    |
 LL |     let out = scale(src, w, h, 2);
    |               ^^^^^^^^^^^^^^^^^^^
-   = help: declare a struct with fields `w` and `h` and make `decode`, `scale` and `checksum` take it as one parameter
+   = help: put `w` and `h` in a struct and pass that
    = note: `#[warn(parallel_params)]` on by default
 
-warning: `host: &str`, `port: u16` and `tls: Tls` are declared alike by `send`, `dial` and `log_target` and handed between them unchanged, so they are one value that only exists as 3 loose parameters a caller can mix up or pass by halves
+warning: `host: &str`, `port: u16` and `tls: Tls` are declared the same way by `send`, `dial` and `log_target` and passed between them unchanged. They are one value travelling as 3 loose parameters
   --> $DIR/parallel_params.rs:37:20
    |
 LL |     fn send(&self, host: &str, port: u16, tls: Tls, sink: &mut Vec<String>) {
@@ -23,7 +23,7 @@ note: `send` hands them to `dial` here
    |
 LL |             self.dial(host, port, tls, &mut *sink);
    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   = help: declare a struct with fields `host`, `port` and `tls` and make `send`, `dial` and `log_target` take it as one parameter
+   = help: put `host`, `port` and `tls` in a struct and pass that
 
 warning: 2 warnings emitted
 

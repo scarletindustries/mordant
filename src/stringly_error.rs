@@ -12,8 +12,8 @@ use crate::MordantConfig;
 
 rustc_session::declare_lint! {
     /// Flags a public function whose error type is `String` (or `&str`,
-    /// `Cow<str>`): its callers can only tell failures apart by reading the
-    /// message text. An error enum gives them variants to match on.
+    /// `Cow<str>`): callers can only tell failures apart by reading the
+    /// message. An error enum gives them variants to match on.
     pub STRINGLY_ERROR,
     Warn,
     "public signature returns a Result with a string error type"
@@ -44,11 +44,9 @@ impl StringlyError {
                 STRINGLY_ERROR,
                 ret_hir_ty.span,
                 format!(
-                    "`{name}` is public and returns `Result<_, {desc}>`, so its callers can only tell failures apart by reading the message text"
+                    "`{name}` is public and returns `Result<_, {desc}>`. Callers can only tell failures apart by reading the message"
                 ),
-                format!(
-                    "define an error enum with a variant per way `{name}` can fail and return that; keep the text in its `Display` impl"
-                ),
+                "return an error enum with a variant per failure, and keep the text in its `Display` impl",
             );
         }
     }

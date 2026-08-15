@@ -18,7 +18,7 @@ use rustc_span::{Span, Symbol, SyntaxContext, sym};
 
 rustc_session::declare_lint! {
     /// Flags a struct field that only means something when a sibling field
-    /// has one particular value: every read in the crate sits under an `if`,
+    /// has one particular value: every read in the crate comes after an `if`,
     /// `match`, `let .. else` or diverging guard that tests the sibling
     /// against the same variant or literal, and every construction that
     /// gives the sibling another value fills the field with a placeholder
@@ -639,7 +639,7 @@ impl<'tcx> LateLintPass<'tcx> for FieldValidOnlyWhen {
                 findings.push((
                     cx.tcx.def_span(fdef.did),
                     format!(
-                        "`{field}` is read only after testing `{holds}` ({} read{}) and gets a placeholder wherever `{}` is constructed with another `{sibling}` ({placeholders} site{}), so it only means something in that one case, yet the struct carries it in all of them",
+                        "`{field}` is only read after checking `{holds}` ({} read{}), and every other `{}` fills it with a placeholder ({placeholders} place{}). The field only means something in that one case",
                         reads.len(),
                         if reads.len() == 1 { "" } else { "s" },
                         cx.tcx.item_name(*did),
@@ -647,7 +647,7 @@ impl<'tcx> LateLintPass<'tcx> for FieldValidOnlyWhen {
                     ),
                     first_read,
                     format!(
-                        "turn the {case} case of `{sibling}` into an enum variant that carries `{field}`, and delete the flat field; the other cases then have nothing to fill in or misread"
+                        "make the {case} case of `{sibling}` an enum variant that carries `{field}`, and drop the flat field"
                     ),
                 ));
                 break;
@@ -661,7 +661,7 @@ impl<'tcx> LateLintPass<'tcx> for FieldValidOnlyWhen {
                 span,
                 msg,
                 read,
-                "one of the reads, under that test",
+                "one of the guarded reads",
                 help,
             );
         }

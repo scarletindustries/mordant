@@ -14,11 +14,11 @@ use crate::baseline::emit_with_note;
 use crate::hir_clone::{bodies_equal, body_hash, fn_sigs_equal};
 
 rustc_session::declare_lint! {
-    /// Flags a function with the same signature and, up to renamed locals,
-    /// the same body as another function in the crate: the same parameter
-    /// and return types and bounds, parameters destructured the same way,
-    /// and the same computation. One helper exists twice under two names,
-    /// nothing ties the copies together, and a fix to either silently misses
+    /// Flags a function with the same signature and the same body as
+    /// another function in the crate, apart from local names: the same
+    /// parameter and return types and bounds, parameters destructured the
+    /// same way, and the same computation. One helper exists twice under two
+    /// names, nothing ties the copies together, and a fix to one will miss
     /// the other.
     ///
     /// Bodies smaller than `reimplemented-helper-min-nodes` expression nodes
@@ -130,12 +130,12 @@ impl<'tcx> LateLintPass<'tcx> for ReimplementedHelper {
                 REIMPLEMENTED_HELPER,
                 cx.tcx.def_span(copy.def),
                 format!(
-                    "`{copy_name}` has the same signature and, up to renamed locals, the same body as `{original_name}`, so one helper exists twice and a fix to either silently misses the other"
+                    "`{copy_name}` has the same signature and the same body as `{original_name}`, apart from local names. A fix to one will miss the other"
                 ),
                 cx.tcx.def_span(original.def),
                 format!("`{original_name}`, the other copy"),
                 format!(
-                    "delete `{copy_name}` and call `{original_name}` from its callers (or the reverse)"
+                    "delete `{copy_name}` and call `{original_name}` instead, or the other way round"
                 ),
             );
         }

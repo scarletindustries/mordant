@@ -12,13 +12,11 @@ use crate::baseline::emit_with_note;
 use crate::hir_shapes::{Callee, callee_of};
 
 rustc_session::declare_lint! {
-    /// Flags a crate-private function with two or more `bool` parameters
-    /// when a call fills at least two of them with bare `true` / `false`. At
-    /// `f(x, true, false)` nothing says which flag is which, and the
-    /// literals share a type, so the swapped call (or the wrong one flipped)
-    /// compiles too. The parameter names exist only in the signature; a
-    /// two-variant enum per flag (or an options struct) carries them to
-    /// every call and makes a swap a type error.
+    /// Flags a crate-private function that takes two or more bools when a
+    /// call passes bare `true` / `false` for at least two of them. At
+    /// `f(x, true, false)` nothing says which is which, and the swapped call
+    /// compiles too. A two-variant enum per flag, or an options struct,
+    /// makes every call name what it sets.
     ///
     /// Stays quiet on a single `bool` parameter (nothing to confuse it
     /// with), on exported, `extern` and trait functions (their signature is
@@ -187,12 +185,12 @@ impl<'tcx> LateLintPass<'tcx> for BareBoolArgs {
             findings.push((
                 span,
                 format!(
-                    "`{}` takes `bool` parameters {params}, and {k} of its {n} calls {pass} bare `true`/`false` for {which}, so at `{written}` nothing says which flag is which and the swapped call compiles too",
+                    "`{}` takes bools {params}, and {k} of its {n} calls {pass} bare `true`/`false` for {which}. At `{written}` nothing says which is which",
                     cx.tcx.item_name(*def),
                 ),
                 *first,
                 format!(
-                    "give {params} each a two-variant enum type named for the flag (or group them in an options struct), so every call names what it sets and a swap is a type error"
+                    "give {params} a two-variant enum each, or an options struct, so every call names what it sets"
                 ),
             ));
         }

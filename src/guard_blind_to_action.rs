@@ -16,9 +16,9 @@ use crate::hir_shapes::{
 };
 
 rustc_session::declare_lint! {
-    /// Flags a call that runs only if `self.can_x()` says yes, when the call
-    /// changes a field of `self` that `can_x` never looks at, directly or
-    /// through anything it calls: the check cannot know whether the call is
+    /// Flags a call that only runs when `self.can_x()` returns true, but
+    /// changes a field of `self` that `can_x` never reads, directly or
+    /// through anything it calls. The check cannot tell whether the call is
     /// safe. The guard/mutator pair drifting apart is how a live connection
     /// gets evicted by a donation its guard approved.
     ///
@@ -334,26 +334,26 @@ impl<'tcx> LateLintPass<'tcx> for GuardBlindToAction {
             let fields = fields.join(", ");
             guards.sort_by(|a, b| a.0.cmp(&b.0));
             let names: Vec<&str> = guards.iter().map(|(n, ..)| n.as_str()).collect();
-            let (named, says, blind, checks, either) = match names.as_slice() {
+            let (named, returns, blind, checks, either) = match names.as_slice() {
                 [one] => (
                     (*one).to_owned(),
-                    "says",
-                    format!("{one} never looks at"),
-                    "the check",
+                    "returns",
+                    format!("{one} never reads"),
+                    "The check",
                     (*one).to_owned(),
                 ),
                 [a, b] => (
                     format!("{a} and {b}"),
-                    "say",
-                    format!("neither {a} nor {b} looks at"),
-                    "the checks",
+                    "return",
+                    format!("neither {a} nor {b} reads"),
+                    "The checks",
                     format!("{a} or {b}"),
                 ),
                 [head @ .., last] => (
                     format!("{} and {last}", head.join(", ")),
-                    "say",
-                    format!("none of {} and {last} looks at", head.join(", ")),
-                    "the checks",
+                    "return",
+                    format!("none of {} and {last} reads", head.join(", ")),
+                    "The checks",
                     format!("{} or {last}", head.join(", ")),
                 ),
                 [] => continue,
@@ -365,7 +365,7 @@ impl<'tcx> LateLintPass<'tcx> for GuardBlindToAction {
                 cx.last_node_with_lint_attrs,
                 gate.span,
                 format!(
-                    "`{action}` runs only if {named} {says} yes, but it changes {fields}, which {blind}, so {checks} cannot know whether `{action}` is safe here"
+                    "`{action}` only runs when {named} {returns} true, but it changes {fields}, which {blind}. {checks} cannot tell whether `{action}` is safe"
                 ),
                 |diag| {
                     // What each guard does read: the other half of the

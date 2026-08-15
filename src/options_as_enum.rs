@@ -13,9 +13,9 @@ use crate::MordantConfig;
 
 rustc_session::declare_lint! {
     /// Flags a struct whose `Option` fields are alternatives: none of the
-    /// places it is built sets more than one of them to `Some`, yet the
-    /// struct lets them be set together. One enum field with a variant per
-    /// case says what the code means and cannot hold two at once.
+    /// places it is built sets more than one of them to `Some`, but the
+    /// struct allows both at once. One enum field with a variant per case
+    /// says what the code means and cannot hold two at once.
     ///
     /// Only fires on structs private to the crate, with every construction a
     /// literal `Some(..)`/`None` struct expression and no later field
@@ -144,15 +144,13 @@ impl<'tcx> LateLintPass<'tcx> for OptionsAsEnum {
                 OPTIONS_AS_ENUM,
                 cx.tcx.def_span(*did),
                 format!(
-                    "none of the {} places `{}` is constructed sets more than one of {names} to `Some`, so these fields are alternatives that the struct nevertheless lets be set together",
-                    facts.sites.len(),
+                    "`{}` is built in {} places and none sets more than one of {names} to `Some`. The fields are alternatives, but the struct allows both at once",
                     cx.tcx.def_path_str(*did),
+                    facts.sites.len(),
                 ),
                 facts.sites[0].0,
                 "one of the constructions",
-                format!(
-                    "replace {names} with one enum field that has a variant per case; two `Some`s at once then cannot be written"
-                ),
+                format!("replace {names} with one enum field, one variant per case"),
             );
         }
     }

@@ -6,10 +6,8 @@ use crate::claims::{self, DefNames};
 
 rustc_session::declare_lint! {
     /// Flags a `// SAFETY:` comment that relies on a backticked identifier
-    /// nothing by that name exists for any more: not in the file's code, and
-    /// not among the definitions of this crate or a crate it links. The
-    /// justification describes code that is gone, so it asserts an invariant
-    /// nothing provides.
+    /// when nothing with that name exists in the file, this crate, or any
+    /// crate it links. The justification describes code that is gone.
     ///
     /// Runs only with `stale-safety-comment-enabled = true` in `dylint.toml`.
     /// The crate cannot see names defined in C++, in scripts, or in crates
@@ -66,10 +64,10 @@ impl<'tcx> LateLintPass<'tcx> for StaleSafetyComment {
                     STALE_SAFETY_COMMENT,
                     comment_span,
                     format!(
-                        "this SAFETY comment relies on `{ident}`, but nothing by that name exists any more in this file's code, this crate, or any crate it links, so the justification describes code that is gone"
+                        "this SAFETY comment relies on `{ident}`, but nothing with that name exists in this file, this crate, or any crate it links. The justification describes code that is gone"
                     ),
                     format!(
-                        "find what replaced `{ident}` and restate the comment in its terms; if nothing did, this `unsafe` block has lost the guard it depended on and needs one"
+                        "restate the comment in terms of what replaced `{ident}`. If nothing did, this `unsafe` block has lost its guard and needs one"
                     ),
                 );
             }

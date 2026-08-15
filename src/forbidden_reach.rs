@@ -13,13 +13,13 @@ use crate::baseline::{emit, emit_with_note};
 use crate::hir_shapes::{callee_of, def_path_names};
 
 rustc_session::declare_lint! {
-    /// Flags a function that can call something this project's
-    /// `forbidden-reach` config bans from it ("from `scheduler::pick`, no
-    /// call path may reach allocation, locking, or panic"), printing the
-    /// chain of calls that gets there, every edge of which is a real call
-    /// expression in this crate. Dynamic dispatch and function pointers are
-    /// invisible to the walk, so absence of a finding proves nothing — but a
-    /// finding is a concrete path that exists.
+    /// Flags a function that can reach something the `forbidden-reach`
+    /// config bans for it ("from `scheduler::pick`, no call path may reach
+    /// allocation, locking, or panic"), printing the path of calls that gets
+    /// there, each arrow of which is a real call expression in this crate.
+    /// Dynamic dispatch and function pointers are invisible to the walk, so
+    /// absence of a finding proves nothing, but a finding is a concrete path
+    /// that exists.
     ///
     /// **One finding per (root, banned definition).** A root breaking two
     /// entries of its `never` list reports twice; several call paths to the
@@ -158,19 +158,19 @@ impl<'tcx> LateLintPass<'tcx> for ForbiddenReach {
                 // than the one call site on it.
                 let more = match sites {
                     0 | 1 => String::new(),
-                    2 => " (and 1 further call site to it)".to_string(),
-                    n => format!(" (and {} further call sites to it)", n - 1),
+                    2 => " (1 more call site reaches it)".to_string(),
+                    n => format!(" ({} more call sites reach it)", n - 1),
                 };
                 let (root_name, banned_name) =
                     (cx.tcx.def_path_str(root), cx.tcx.def_path_str(banned));
                 let msg = format!(
-                    "`{root_name}` can call `{banned_name}`, which this project's `forbidden-reach` \
-                     config bans from it, through {}{more}",
+                    "`{root_name}` can reach `{banned_name}`, which the `forbidden-reach` config \
+                     bans for it. Path: {}{more}",
                     chain.join(" -> "),
                 );
                 let help = format!(
-                    "break that chain (every arrow is a real call in this crate), or if the call \
-                     is acceptable after all, amend the `forbidden-reach` rule for `{}`",
+                    "break the path (each arrow is a real call in this crate), or relax the \
+                     `forbidden-reach` rule for `{}` if the call is fine",
                     rule.from,
                 );
                 match parent.get(&banned) {
@@ -180,7 +180,7 @@ impl<'tcx> LateLintPass<'tcx> for ForbiddenReach {
                         root_span,
                         msg,
                         at,
-                        format!("the last call in the chain, reaching `{banned_name}`"),
+                        format!("the last call in that path, to `{banned_name}`"),
                         help,
                     ),
                     None => emit(cx, FORBIDDEN_REACH, root_span, msg, help),

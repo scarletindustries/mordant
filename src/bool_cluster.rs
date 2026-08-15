@@ -7,9 +7,8 @@ use crate::MordantConfig;
 
 rustc_session::declare_lint! {
     /// Flags a named-field struct with `bool-cluster-min-bools` or more
-    /// `bool` fields, however they are assigned: `n` bools allow `2^n`
-    /// combinations whether or not all of them mean something. If only some
-    /// are legal, an enum names those.
+    /// `bool` fields, however they are assigned. `n` bools are `2^n`
+    /// possible combinations. If only some are valid, an enum names those.
     ///
     /// Silent on any struct with an explicit `repr` — its layout is dictated
     /// from outside Rust (a hardware register, a wire format), so all `2^n`
@@ -60,12 +59,12 @@ impl<'tcx> LateLintPass<'tcx> for BoolCluster {
             BOOL_CLUSTER,
             cx.tcx.def_span(did),
             format!(
-                "`{path}` has {} bool fields ({}), which allows {n} combinations whether or not all {n} mean something",
+                "`{path}` has {} bool fields ({}). That is {n} possible combinations",
                 bools.len(),
                 names.join(", "),
             ),
             format!(
-                "if only some of the {n} are legal, replace these bools with an enum of the legal ones; if the layout is fixed from outside, say so with a `repr` on `{path}`"
+                "if only some combinations are valid, replace the bools with an enum of those. If the layout is fixed from outside, add a `repr` to `{path}` to say so"
             ),
         );
     }

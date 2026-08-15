@@ -11,9 +11,9 @@ use crate::baseline::emit_with_note;
 use crate::hir_shapes::{FieldChain, dotted, field_chain, is_self_path, stmt_expr};
 
 rustc_session::declare_lint! {
-    /// Flags two locks the crate takes in both orders: one body locks `b`
+    /// Flags two locks the crate takes in both orders: one place locks `b`
     /// while `a` is held, another locks `a` while `b` is held. Each order
-    /// alone is fine; with both, two threads taking one path each can
+    /// alone is fine. With both, two threads, one on each path, can
     /// deadlock. The claim is only that both orders exist, with the two
     /// locations shown.
     ///
@@ -168,12 +168,12 @@ impl<'tcx> LateLintPass<'tcx> for LockOrder {
                 findings.push((
                     *span,
                     format!(
-                        "`{b}` is locked here while `{a}` is held, and another place locks `{a}` while `{b}` is held, so two threads taking one path each can deadlock"
+                        "`{b}` is locked here while `{a}` is held. Another place locks `{a}` while `{b}` is held. Two threads, one on each path, can deadlock"
                     ),
                     *rev_span,
-                    format!("the opposite order: `{a}` locked while `{b}` is held"),
+                    "the opposite order is here".to_string(),
                     format!(
-                        "pick one order for `{a}` and `{b}` and take them that way in both places, or take both under one lock"
+                        "pick one order for `{a}` and `{b}` and use it in both places, or guard both with one lock"
                     ),
                 ));
             }

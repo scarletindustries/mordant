@@ -15,11 +15,11 @@ use crate::baseline::emit_with_note;
 use crate::hir_shapes::{Callee, callee_of};
 
 rustc_session::declare_lint! {
-    /// Flags an integer place — a struct field, or a local or parameter
-    /// within one function — that is cut down with a bare `as` at one site,
-    /// which silently wraps a value that does not fit, while another site
-    /// converts the same place into a type no wider with `u32::try_from(x)`
-    /// or `x.try_into()` because it might not fit. The place's declared type
+    /// Flags an integer place (a struct field, or a local or parameter
+    /// within one function) that is cut down with a bare `as` at one site,
+    /// which wraps silently, while another site converts the same place into
+    /// a type no wider with `u32::try_from(x)` or `x.try_into()` because it
+    /// might not fit. The place's declared type
     /// is wider than what its readers need, so the range check lives in
     /// whichever reader remembered it.
     ///
@@ -336,14 +336,14 @@ impl<'tcx> LateLintPass<'tcx> for NarrowedTwoWays {
                     site.span,
                     check.span,
                     format!(
-                        "`{shown}` is `{}` and is cut down to `{dst}` with `as` here, which silently wraps a value that does not fit, while another place converts the same `{shown}` to `{}` with `try_from`/`try_into` because it might not",
+                        "`{shown}` is a `{}` cut down to `{dst}` with `as` here, which wraps silently. Another place converts the same `{shown}` to `{}` with `try_from` because it might not fit",
                         site.src,
                         check.dst,
                         shown = site.shown,
                         dst = site.dst,
                     ),
                     format!(
-                        "declare `{}` as `{dst}` (or a newtype whose constructor checks the range once) so no reader has to narrow it, or at least use `{dst}::try_from` here too",
+                        "store `{}` as `{dst}` (or a newtype checked once at construction) so nobody has to narrow it. At least use `{dst}::try_from` here as well",
                         site.shown,
                         dst = site.dst,
                     ),
@@ -359,7 +359,7 @@ impl<'tcx> LateLintPass<'tcx> for NarrowedTwoWays {
                 span,
                 msg,
                 check,
-                "the checked conversion of the same place",
+                "the checked conversion",
                 help,
             );
         }

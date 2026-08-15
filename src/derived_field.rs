@@ -13,11 +13,10 @@ use crate::enum_facts::ctor_literal_variant;
 use crate::hir_shapes::{assigned_adt_field, peel_blocks_unsafe};
 
 rustc_session::declare_lint! {
-    /// Flags a field that always holds the same value for a given value of a
-    /// sibling field, in every place the type is built: it is a copy of
-    /// something the sibling already decides, and nothing rejects a
-    /// mismatched pair written by hand. A method on the sibling's enum
-    /// replaces it.
+    /// Flags a field that always has the same value for a given value of a
+    /// sibling field, in every place the type is built. It is a stored copy
+    /// of something the sibling decides, and nothing rejects a mismatched
+    /// pair written by hand. A method on the sibling's enum replaces it.
     ///
     /// Fires only when one of the two is a variant of an enum *this crate
     /// defined* at every site — a closed set of states, which is what makes
@@ -239,17 +238,16 @@ impl<'tcx> LateLintPass<'tcx> for DerivedField {
                         DERIVED_FIELD,
                         cx.tcx.def_span(did),
                         format!(
-                            "`{derived}` is always the same value for a given `{deciding}` in all {} \
-                             places `{}` is constructed, so it is a copy of something `{deciding}` \
-                             already decides",
+                            "`{derived}` always has the same value for a given `{deciding}`, in all \
+                             {} places `{}` is built. It is a stored copy of something `{deciding}` \
+                             decides",
                             sites.len(),
                             cx.tcx.def_path_str(did),
                         ),
                         sites[0].span,
-                        "one of the constructions that pairs them",
+                        "one of the constructions",
                         format!(
-                            "give `{enum_name}` a `fn {derived}(&self)` and delete the `{derived}` \
-                             field; then a mismatched pair cannot be written"
+                            "add `fn {derived}(&self)` to `{enum_name}` and delete the `{derived}` field"
                         ),
                     );
                 }

@@ -259,6 +259,15 @@ fn weigh(cx: &LateContext<'_>, lint: &'static Lint, span: Span, hir_id: HirId) -
     }
 }
 
+/// `a`, `a and b`, `a, b and c`, with `conj` as the last separator.
+pub fn join(items: &[String], conj: &str) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [head @ .., last] => format!("{} {conj} {last}", head.join(", ")),
+    }
+}
+
 /// Every mordant lint reports through here so the ratchet sees all of them.
 pub fn emit(
     cx: &LateContext<'_>,

@@ -12,10 +12,10 @@ use crate::hir_clone::{expr_hash, exprs_equal};
 rustc_session::declare_lint! {
     /// Flags a `match` over an enum that repeats another one somewhere else
     /// in the crate arm for arm: same scrutinee type, same patterns, same arm
-    /// bodies up to the names of the locals they read. The same table from
-    /// variants to results exists twice, which is a method the enum does not
-    /// have; a change to one copy silently misses the other, and a variant
-    /// added later is handled in whichever copy the author remembers.
+    /// bodies up to the names of the locals they read. The mapping exists
+    /// twice, which is a method the enum does not have. A change to one copy
+    /// will miss the other, and a variant added later is handled in
+    /// whichever copy the author remembers.
     ///
     /// Only matches with at least two arms that name a pattern count (a
     /// `_`/binding catch-all plus one arm is a test, not a table), and only
@@ -124,7 +124,7 @@ impl<'tcx> LateLintPass<'tcx> for SameMatchTwice {
                 SAME_MATCH_TWICE,
                 span,
                 format!(
-                    "this `match` on `{name}` repeats an earlier one arm for arm, so the same table from variants to results exists twice and a change to one copy silently misses the other"
+                    "this `match` on `{name}` repeats an earlier one arm for arm. The mapping exists twice, and a change to one copy will miss the other"
                 ),
                 earlier,
                 "the other copy",

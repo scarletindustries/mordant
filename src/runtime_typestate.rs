@@ -12,11 +12,11 @@ use rustc_span::def_id::LocalDefId;
 use rustc_span::{Span, Symbol};
 
 rustc_session::declare_lint! {
-    /// Flags a bool field that two or more methods start by checking and
+    /// Flags a bool field that two or more methods begin by testing and
     /// returning early on: `if self.flag { return ... }` as the first
-    /// statement. Whether those methods may be called is decided at runtime,
-    /// method by method, and only where someone remembered. A type per state
-    /// decides it at compile time everywhere.
+    /// statement. Whether those methods may be called yet is checked at
+    /// runtime, one method at a time, and only where someone remembered. A
+    /// type per state checks it at compile time everywhere.
     ///
     /// The field must also be written somewhere after construction: a flag
     /// that is only ever set in a literal (`is_server`, `minify`) is a role
@@ -24,7 +24,7 @@ rustc_session::declare_lint! {
     /// order.
     pub RUNTIME_TYPESTATE,
     Warn,
-    "bool field enforcing an ordering invariant at runtime"
+    "bool field tested at the top of several methods to order calls at runtime"
 }
 
 #[derive(Default)]
@@ -124,12 +124,12 @@ impl<'tcx> LateLintPass<'tcx> for RuntimeTypestate {
                 RUNTIME_TYPESTATE,
                 cx.tcx.def_span(fdef.did),
                 format!(
-                    "{count} methods of `{owner}` start by testing `{field}` and returning early, so whether they may be called yet is decided at runtime, method by method"
+                    "{count} methods of `{owner}` begin by testing `{field}` and returning early. Whether they may be called yet is checked at runtime, one method at a time"
                 ),
                 *first,
-                "the test at the top of one of those methods",
+                "the test at the top of one of them",
                 format!(
-                    "split `{owner}` into one type per state and put those {count} methods only on the type where `{field}` allows them; calling one too early is then a compile error"
+                    "split `{owner}` into a type per state and put those {count} methods only on the one `{field}` allows. Calling them too early becomes a compile error"
                 ),
             );
         }

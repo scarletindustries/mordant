@@ -14,7 +14,7 @@ use rustc_middle::ty;
 use rustc_span::{Span, Symbol, sym};
 
 rustc_session::declare_lint! {
-    /// Flags a value of a validated type made or changed by hand, skipping
+    /// Flags a value of a validated type built or changed by hand, skipping
     /// the check its validating constructor makes. A validating constructor
     /// is a receiver-less inherent function returning `Result<Self, _>` or
     /// `Option<Self>` whose body rejects some value it then stores in a field
@@ -24,8 +24,8 @@ rustc_session::declare_lint! {
     /// * a struct literal, `S(x)` on a tuple struct included -- one with a
     ///   `..base` tail only when it names a field some validator checks,
     ///   since the fields it takes from `base` were checked when `base` was
-    ///   made;
-    /// * an assignment, plain or compound, to a checked field;
+    ///   made,
+    /// * an assignment, plain or compound, to a checked field,
     /// * `mem::zeroed`, `mem::transmute` or `MaybeUninit::assume_init`
     ///   producing the type.
     ///
@@ -317,12 +317,12 @@ impl<'tcx> LateLintPass<'tcx> for UncheckedConstruction {
                     let (ctor, checked) = (by.ctor, checked(by));
                     (
                         format!(
-                            "`{path}` is constructed by hand here, skipping the check on {checked} that `{ty}::{ctor}` makes before it will construct one"
+                            "`{path}` is built by hand here, skipping the check on {checked} that `{ty}::{ctor}` makes"
                         ),
                         check.check,
-                        format!("the check in `{ty}::{ctor}` that this literal skips"),
+                        format!("the check in `{ty}::{ctor}`"),
                         format!(
-                            "construct it with `{ty}::{ctor}(..)`, or make {checked} private so a literal like this only compiles inside `{ty}`'s own module"
+                            "build it with `{ty}::{ctor}(..)`, or make {checked} private so a literal like this only compiles inside `{ty}`'s module"
                         ),
                     )
                 }
@@ -333,12 +333,12 @@ impl<'tcx> LateLintPass<'tcx> for UncheckedConstruction {
                     let (ctor, checked) = (by.ctor, checked(by));
                     (
                         format!(
-                            "`{path}` is produced with `{what}` here, skipping the check on {checked} that `{ty}::{ctor}` makes before it will construct one"
+                            "`{path}` is produced with `{what}` here, skipping the check on {checked} that `{ty}::{ctor}` makes"
                         ),
                         by.first.check,
-                        format!("the check in `{ty}::{ctor}` that this value never went through"),
+                        format!("the check in `{ty}::{ctor}`"),
                         format!(
-                            "construct it with `{ty}::{ctor}(..)`, or add an explicitly unchecked constructor beside `{ty}::{ctor}` and call that, so the bypass is visible where the check lives"
+                            "build it with `{ty}::{ctor}(..)`. If this path must skip the check, add an unchecked constructor next to `{ty}::{ctor}` and call that"
                         ),
                     )
                 }
@@ -350,12 +350,12 @@ impl<'tcx> LateLintPass<'tcx> for UncheckedConstruction {
                     let ctor = by.ctor;
                     (
                         format!(
-                            "`{path}::{name}` is assigned directly here, skipping the check that `{ty}::{ctor}` runs on `{name}` before storing it"
+                            "`{path}::{name}` is assigned directly here, skipping the check on `{name}` that `{ty}::{ctor}` makes"
                         ),
                         check.check,
-                        format!("the check in `{ty}::{ctor}` that this write skips"),
+                        format!("the check in `{ty}::{ctor}`"),
                         format!(
-                            "change `{name}` through a method of `{ty}` that repeats the check, or make `{name}` private so this write only compiles inside `{ty}`'s own module"
+                            "change `{name}` through a method of `{ty}` that repeats the check, or make `{name}` private so this write only compiles inside `{ty}`'s module"
                         ),
                     )
                 }

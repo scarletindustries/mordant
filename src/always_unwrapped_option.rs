@@ -9,9 +9,9 @@ use crate::adt_facts::{field_ty, is_option_ty, private_local_struct, struct_fiel
 use crate::baseline::emit_with_note;
 
 rustc_session::declare_lint! {
-    /// Flags an `Option` field that is unwrapped at every one of its reads
-    /// (two or more `unwrap`/`expect`s) while nothing ever handles `None`, so
-    /// `None` only exists to crash on. That usually means a two-phase object:
+    /// Flags an `Option` field that is unwrapped at all of its reads (two or
+    /// more `unwrap`/`expect`s) and `None` is never handled, so `None` can
+    /// only crash. That usually means a two-phase object:
     /// `None` between construction and setup. Storing the value directly and
     /// constructing the struct once it is available, or splitting it into a
     /// before type and an after type, deletes every one of those panics.
@@ -116,13 +116,13 @@ impl<'tcx> LateLintPass<'tcx> for AlwaysUnwrappedOption {
                 ALWAYS_UNWRAPPED_OPTION,
                 cx.tcx.def_span(fdef.did),
                 format!(
-                    "`{owner}.{field}` is unwrapped at every one of its {} reads and nothing ever handles `None`, so `None` only exists to crash on",
+                    "`{owner}.{field}` is unwrapped at all {} of its reads and `None` is never handled, so `None` can only crash",
                     facts.panicking.len(),
                 ),
                 facts.panicking[0],
                 "one of the reads",
                 format!(
-                    "store the `{field}` value directly and construct `{owner}` once you have it, or split `{owner}` into a type without `{field}` and a later one with it"
+                    "store the `{field}` value itself and build `{owner}` once you have it. Or split `{owner}` into a type without `{field}` and one with it"
                 ),
             );
         }

@@ -1,94 +1,94 @@
-warning: `height` and `width` are passed where `resize` expects `width` and `height`, in that order, and since all are `u32` the compiler cannot tell they are swapped
+warning: `height` and `width` are passed where `resize` expects `width` then `height`. All are `u32`, so the swap compiles
   --> $DIR/arg_named_like_other_param.rs:71:5
    |
 LL |     resize(height, width)
    |     ^^^^^^^^^^^^^^^^^^^^^
    |
-note: `resize`'s parameters, in the order it declares them
+note: `resize` declares them in this order
   --> $DIR/arg_named_like_other_param.rs:3:1
    |
 LL | fn resize(width: u32, height: u32) -> u32 {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   = help: swap them, or if the call is right as written, rename the values so they stop contradicting the parameters; then give `width` and `height` distinct types (a newtype per quantity, an enum per flag) so the next mix-up is a type error
+   = help: swap the arguments. If the call is right, rename the values to match. Distinct types for `width` and `height` would make the next swap a compile error
    = note: `#[warn(arg_named_like_other_param)]` on by default
 
-warning: `inherit_stderr` and `inherit_stdout` are passed where `spawn` expects `inherit_stdout` and `inherit_stderr`, in that order, and since all are `bool` the compiler cannot tell they are swapped
+warning: `inherit_stderr` and `inherit_stdout` are passed where `spawn` expects `inherit_stdout` then `inherit_stderr`. All are `bool`, so the swap compiles
   --> $DIR/arg_named_like_other_param.rs:76:5
    |
 LL |     spawn(opts.inherit_stderr, opts.inherit_stdout)
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-note: `spawn`'s parameters, in the order it declares them
+note: `spawn` declares them in this order
   --> $DIR/arg_named_like_other_param.rs:16:1
    |
 LL | fn spawn(inherit_stdout: bool, inherit_stderr: bool) -> bool {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   = help: swap them, or if the call is right as written, rename the values so they stop contradicting the parameters; then give `inherit_stdout` and `inherit_stderr` distinct types (a newtype per quantity, an enum per flag) so the next mix-up is a type error
+   = help: swap the arguments. If the call is right, rename the values to match. Distinct types for `inherit_stdout` and `inherit_stderr` would make the next swap a compile error
 
-warning: `column` is passed as `place`'s `line` parameter, though `place` also has a `column` parameter of the same type `u32`, so this looks like an argument in the wrong position and the compiler cannot tell
+warning: `column` is passed as `place`'s `line` parameter, but `place` also has a parameter named `column` and both are `u32`. This looks like an argument in the wrong position
   --> $DIR/arg_named_like_other_param.rs:81:11
    |
 LL |     place(column, extra, 0)
    |           ^^^^^^
    |
-note: `place`'s parameters, in the order it declares them
+note: `place` declares them in this order
   --> $DIR/arg_named_like_other_param.rs:20:1
    |
 LL | fn place(line: u32, column: u32, offset: u32) -> u32 {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   = help: move `column` to the `column` position, or if it really is the `line` here, rename it; then give `line` and `column` distinct types (a newtype per quantity, an enum per flag) so the next mix-up is a type error
+   = help: move `column` to the `column` position. If it really is the `line` here, rename it. Distinct types for `line` and `column` would make the next swap a compile error
 
-warning: `dst` and `src` are passed where `blit` expects `src` and `dst`, in that order, and since all are `usize` the compiler cannot tell they are swapped
+warning: `dst` and `src` are passed where `blit` expects `src` then `dst`. All are `usize`, so the swap compiles
   --> $DIR/arg_named_like_other_param.rs:86:5
    |
 LL |     c.blit(dst, src)
    |     ^^^^^^^^^^^^^^^^
    |
-note: `blit`'s parameters, in the order it declares them
+note: `blit` declares them in this order
   --> $DIR/arg_named_like_other_param.rs:43:5
    |
 LL |     fn blit(&self, src: usize, dst: usize) -> usize {
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   = help: swap them, or if the call is right as written, rename the values so they stop contradicting the parameters; then give `src` and `dst` distinct types (a newtype per quantity, an enum per flag) so the next mix-up is a type error
+   = help: swap the arguments. If the call is right, rename the values to match. Distinct types for `src` and `dst` would make the next swap a compile error
 
-warning: `registry` and `url` are passed where `under` expects `url` and `registry`, in that order, and since all are `&str` the compiler cannot tell they are swapped
+warning: `registry` and `url` are passed where `under` expects `url` then `registry`. All are `&str`, so the swap compiles
   --> $DIR/arg_named_like_other_param.rs:91:5
    |
 LL |     under(registry, url)
    |     ^^^^^^^^^^^^^^^^^^^^
    |
-note: `under`'s parameters, in the order it declares them
+note: `under` declares them in this order
   --> $DIR/arg_named_like_other_param.rs:48:1
    |
 LL | fn under(url: &str, registry: &str) -> bool {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   = help: swap them, or if the call is right as written, rename the values so they stop contradicting the parameters; then give `url` and `registry` distinct types (a newtype per quantity, an enum per flag) so the next mix-up is a type error
+   = help: swap the arguments. If the call is right, rename the values to match. Distinct types for `url` and `registry` would make the next swap a compile error
 
-warning: `inherit_stdout` is passed as `spawn`'s `inherit_stderr` parameter, though `spawn` also has a `inherit_stdout` parameter of the same type `bool`, so this looks like an argument in the wrong position and the compiler cannot tell
+warning: `inherit_stdout` is passed as `spawn`'s `inherit_stderr` parameter, but `spawn` also has a parameter named `inherit_stdout` and both are `bool`. This looks like an argument in the wrong position
   --> $DIR/arg_named_like_other_param.rs:97:25
    |
 LL |     let _ = spawn(true, opts.inherit_stdout);
    |                         ^^^^^^^^^^^^^^^^^^^
    |
-note: `spawn`'s parameters, in the order it declares them
+note: `spawn` declares them in this order
   --> $DIR/arg_named_like_other_param.rs:16:1
    |
 LL | fn spawn(inherit_stdout: bool, inherit_stderr: bool) -> bool {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   = help: move `inherit_stdout` to the `inherit_stdout` position, or if it really is the `inherit_stderr` here, rename it; then give `inherit_stderr` and `inherit_stdout` distinct types (a newtype per quantity, an enum per flag) so the next mix-up is a type error
+   = help: move `inherit_stdout` to the `inherit_stdout` position. If it really is the `inherit_stderr` here, rename it. Distinct types for `inherit_stderr` and `inherit_stdout` would make the next swap a compile error
 
-warning: `height` is passed as `resize`'s `width` parameter, though `resize` also has a `height` parameter of the same type `u32`, so this looks like an argument in the wrong position and the compiler cannot tell
+warning: `height` is passed as `resize`'s `width` parameter, but `resize` also has a parameter named `height` and both are `u32`. This looks like an argument in the wrong position
   --> $DIR/arg_named_like_other_param.rs:98:12
    |
 LL |     resize(height, 0)
    |            ^^^^^^
    |
-note: `resize`'s parameters, in the order it declares them
+note: `resize` declares them in this order
   --> $DIR/arg_named_like_other_param.rs:3:1
    |
 LL | fn resize(width: u32, height: u32) -> u32 {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   = help: move `height` to the `height` position, or if it really is the `width` here, rename it; then give `width` and `height` distinct types (a newtype per quantity, an enum per flag) so the next mix-up is a type error
+   = help: move `height` to the `height` position. If it really is the `width` here, rename it. Distinct types for `width` and `height` would make the next swap a compile error
 
 warning: 7 warnings emitted
 

@@ -20,13 +20,13 @@ use crate::hir_shapes::{
 };
 
 rustc_session::declare_lint! {
-    /// Flags a value read off a field of `self` (`let n = self.items.len()`,
+    /// Flags a value read from a field of `self` (`let n = self.items.len()`,
     /// `let p = self.buf.as_ptr()`, `let had = self.cb.is_some()`), then a
-    /// call that can run code with access to `self`, then a later statement
-    /// that uses the value as if the field could not have changed in between:
+    /// call that can run other code with access to `self`, then a later
+    /// statement that uses the value as if the field had not changed:
     /// indexing or removing at `n`, unwrapping under `had`, or touching `p`
     /// at all. Whatever ran in between may have pushed, popped, taken, or
-    /// reallocated; the panic or dangling access only shows up on the
+    /// reallocated. The panic or dangling access only shows up on the
     /// re-entrant path, which is the one tests skip.
     ///
     /// The re-entrant statements are calls through a closure or fn-pointer
@@ -195,10 +195,10 @@ impl Fact {
     fn help(self, name: Symbol, place: &str) -> String {
         match self {
             Fact::Count | Fact::Flag => format!(
-                "re-read `{place}` after that call instead of reusing `{name}`, or hold the element itself rather than its position across the call"
+                "read `{place}` again after the call instead of reusing `{name}`, or hold the element itself across the call"
             ),
             Fact::Pointer => format!(
-                "take the pointer from `{place}` again after that call, or keep the data alive across it by value"
+                "take the pointer from `{place}` again after the call, or keep the data alive across it by value"
             ),
         }
     }
@@ -753,10 +753,10 @@ impl<'tcx> LateLintPass<'tcx> for StaleAcrossReentry {
                             let name = t.name;
                             let msg = match t.fact {
                                 Fact::Count | Fact::Flag => format!(
-                                    "`{name}` was read off `{place}` before a call that can run code with access to `self`, and is used here as if `{place}` could not have changed in between"
+                                    "`{name}` was read from `{place}` before a call that can run other code with access to `self`. It is used here as if `{place}` had not changed"
                                 ),
                                 Fact::Pointer => format!(
-                                    "`{name}` points into `{place}` as it was before a call that can run code with access to `self`, which may have moved or freed that buffer by the time `{name}` is used here"
+                                    "`{name}` points into `{place}` as it was before a call that can run other code with access to `self`. That code may have moved or freed the buffer by the time `{name}` is used here"
                                 ),
                             };
                             emit_with_note(
@@ -766,7 +766,7 @@ impl<'tcx> LateLintPass<'tcx> for StaleAcrossReentry {
                                 msg,
                                 call,
                                 format!(
-                                    "control leaves this function here, and whatever runs can reach `{place}`"
+                                    "control leaves this function here, and what runs can reach `{place}`"
                                 ),
                                 t.fact.help(name, &place),
                             );

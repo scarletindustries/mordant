@@ -18,9 +18,9 @@ rustc_session::declare_lint! {
     /// own name and the same type: `resize(height, width)` against
     /// `fn resize(width: u32, height: u32)`, or `spawn(opts.inherit_stderr,
     /// opts.inherit_stdout)`. It looks like an argument in the wrong
-    /// position, and since the two share a type the compiler cannot tell;
-    /// distinct types per parameter (a newtype per quantity, an enum per
-    /// flag) would.
+    /// position, and since the two share a type the swap compiles. Distinct
+    /// types per parameter (a newtype per quantity, an enum per flag) would
+    /// make it a compile error.
     ///
     /// The argument's name is a local or parameter it is spelled as, or the
     /// last field of a field access. Silent when the names agree after
@@ -222,7 +222,7 @@ impl<'tcx> LateLintPass<'tcx> for ArgNamedLikeOtherParam {
                     span,
                     msg,
                     cx.tcx.def_span(def),
-                    format!("`{fn_name}`'s parameters, in the order it declares them"),
+                    format!("`{fn_name}` declares them in this order"),
                     help,
                 );
             } else {
@@ -241,8 +241,7 @@ impl<'tcx> LateLintPass<'tcx> for ArgNamedLikeOtherParam {
             });
             let other = param_name(c.names_param).unwrap_or(c.name);
             let types = format!(
-                "give `{}` and `{other}` distinct types (a newtype per quantity, an enum per \
-                 flag) so the next mix-up is a type error",
+                "Distinct types for `{}` and `{other}` would make the next swap a compile error",
                 c.bound_to,
             );
             if let Some(j) = partner {
@@ -251,27 +250,27 @@ impl<'tcx> LateLintPass<'tcx> for ArgNamedLikeOtherParam {
                 report(
                     expr.span,
                     format!(
-                        "`{}` and `{}` are passed where `{fn_name}` expects `{}` and `{}`, in that \
-                         order, and since all are `{}` the compiler cannot tell they are swapped",
+                        "`{}` and `{}` are passed where `{fn_name}` expects `{}` then `{}`. All \
+                         are `{}`, so the swap compiles",
                         c.name, d.name, c.bound_to, d.bound_to, c.ty,
                     ),
                     format!(
-                        "swap them, or if the call is right as written, rename the values so they \
-                         stop contradicting the parameters; then {types}"
+                        "swap the arguments. If the call is right, rename the values to match. \
+                         {types}"
                     ),
                 );
             } else {
                 report(
                     args[c.arg].span,
                     format!(
-                        "`{}` is passed as `{fn_name}`'s `{}` parameter, though `{fn_name}` also \
-                         has a `{other}` parameter of the same type `{}`, so this looks like an \
-                         argument in the wrong position and the compiler cannot tell",
+                        "`{}` is passed as `{fn_name}`'s `{}` parameter, but `{fn_name}` also \
+                         has a parameter named `{other}` and both are `{}`. This looks like an \
+                         argument in the wrong position",
                         c.name, c.bound_to, c.ty,
                     ),
                     format!(
-                        "move `{}` to the `{other}` position, or if it really is the `{}` here, \
-                         rename it; then {types}",
+                        "move `{}` to the `{other}` position. If it really is the `{}` here, \
+                         rename it. {types}",
                         c.name, c.bound_to,
                     ),
                 );

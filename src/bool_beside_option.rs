@@ -21,13 +21,12 @@ use rustc_span::hygiene::{ExpnKind, MacroKind};
 use rustc_span::{Span, Symbol, sym};
 
 rustc_session::declare_lint! {
-    /// Flags a bool field that is only ever written together with a sibling
-    /// `Option` field, `true` with `Some(..)` and `false` with `None` (or
-    /// always the reverse): every write to either, struct literal or field
+    /// Flags a bool field that is only ever written next to a sibling
+    /// `Option` field, `true` with `Some` and `false` with `None` (or always
+    /// the reverse): every write to either, struct literal or field
     /// assignment, sits beside a write to the other in the same struct
     /// expression or straight-line block. The flag is that field's
-    /// `is_some()` stored a second time, and nothing but habit keeps the two
-    /// equal.
+    /// `is_some()` stored twice.
     ///
     /// Only fires on named fields nothing outside the crate can name, when
     /// every write to the pair is a literal `true`/`false` and
@@ -402,8 +401,8 @@ impl<'tcx> LateLintPass<'tcx> for BoolBesideOption {
                         continue;
                     };
                     let (with_true, with_false) = match reading {
-                        "is_some" => ("Some(..)", "None"),
-                        _ => ("None", "Some(..)"),
+                        "is_some" => ("Some", "None"),
+                        _ => ("None", "Some"),
                     };
                     let Some(field) = struct_field(adt, *flag) else {
                         continue;
@@ -411,13 +410,13 @@ impl<'tcx> LateLintPass<'tcx> for BoolBesideOption {
                     findings.push((
                         cx.tcx.def_span(field.did),
                         format!(
-                            "`{flag}` of `{}` is written only together with `{opt}` in all {} places, `true` with `{with_true}` and `false` with `{with_false}`, so it is `{opt}.{reading}()` stored a second time and kept equal only by habit",
+                            "`{}.{flag}` is only ever written next to `{opt}`, `true` with `{with_true}` and `false` with `{with_false}`, in all {} places. It is `{opt}.{reading}()` stored twice",
                             cx.tcx.def_path_str(did),
                             flag_facts.sites.len(),
                         ),
                         first,
                         format!(
-                            "delete `{flag}` and ask `{opt}.{reading}()` where it was read; the two then cannot disagree"
+                            "delete `{flag}` and call `{opt}.{reading}()` where it was read"
                         ),
                     ));
                     break;
@@ -432,7 +431,7 @@ impl<'tcx> LateLintPass<'tcx> for BoolBesideOption {
                 span,
                 msg,
                 first,
-                "one of the writes that pairs them",
+                "one of the paired writes",
                 help,
             );
         }

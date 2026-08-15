@@ -16,9 +16,9 @@ rustc_session::declare_lint! {
     /// on a place that everywhere else in the function is indexed by names
     /// of another kind, when the function also shows the crossing name
     /// indexing a table named after it: `sources[source_index]`,
-    /// `parts[part_index]` twice, then `parts[source_index]`. It looks like
-    /// an index into the wrong table, and both indices being plain integers,
-    /// it compiles. `[]`, `.get`, `.get_mut` and `get_unchecked*` with an
+    /// `parts[part_index]` twice, then `parts[source_index]`. This looks
+    /// like the wrong table, and since both indices are plain integers it
+    /// compiles. `[]`, `.get`, `.get_mut` and `get_unchecked*` with an
     /// integer operand all count as indexing (a newtyped index is already
     /// told apart by the compiler); a place is the binding or item at the
     /// root plus the
@@ -367,19 +367,18 @@ impl<'tcx> LateLintPass<'tcx> for IndexOfOtherKind {
                 INDEX_OF_OTHER_KIND,
                 site.span,
                 format!(
-                    "`{place}` is indexed by `{name}` here, but everywhere else in this function \
-                     ({major_n} site{s}) it is indexed by `{major}` and {by} is what indexes \
-                     `{home_place}`, so this looks like an index into the wrong table and, both \
-                     being plain integers, it compiles",
+                    "`{place}` is indexed by `{name}` here. Elsewhere in this function it is \
+                     indexed by `{major}` ({major_n} place{s}), and {by} indexes `{home_place}`. \
+                     This looks like the wrong table",
                     major = major_first.name,
                     s = if major_n == 1 { "" } else { "s" },
                 ),
                 major_first.span,
-                format!("`{place}` indexed by its usual kind"),
+                format!("`{place}` indexed the usual way"),
                 format!(
-                    "give `{place}` and `{home_place}` each an index newtype and implement `Index` \
-                     only for its own, so `{place}[{name}]` is a type error; if this line is \
-                     intended, rename the index to say so"
+                    "give `{place}` and `{home_place}` their own index newtypes so \
+                     `{place}[{name}]` cannot compile. If this line is intended, rename the \
+                     index to say so"
                 ),
             );
         }

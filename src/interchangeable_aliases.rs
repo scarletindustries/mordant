@@ -20,10 +20,10 @@ rustc_session::declare_lint! {
     /// `let p: PackageId = ..`, returned from a `-> PackageId` function,
     /// defining a `PackageId` const, or compared with a `PackageId` value,
     /// where both aliases name the same primitive integer. Two aliases over
-    /// one integer exist to tell two kinds of number apart, but since both
-    /// are the plain integer the compiler accepts one where the other is
-    /// meant; a newtype per kind would not. The
-    /// kinds are read off the written types of this crate's locals,
+    /// one integer exist to tell two kinds of number apart, but both are the
+    /// plain integer, so the mix-up compiles. A newtype per kind would
+    /// reject it. The kinds are read off the written types of this crate's
+    /// locals,
     /// parameters, fields, consts and signatures, so the lint stays quiet
     /// when either side has no alias (a literal, a plain `u32`, arithmetic
     /// between two values), when one alias is declared as the other, through
@@ -221,15 +221,18 @@ fn check_value<'tcx>(cx: &LateContext<'tcx>, src: &'tcx Expr<'tcx>, to: &Kind<'t
                 .flatten()
                 .map_or_else(|| format!("#{idx}"), |i| i.to_string());
             format!(
-                "is passed as `{to_name}` parameter `{param}` of `{}`",
+                "is passed as the `{to_name}` parameter `{param}` of `{}`",
                 def_name(cx, callee)
             )
         }
-        &Slot::Field(f) => format!("is stored in `{to_name}` field `{}`", def_name(cx, f)),
+        &Slot::Field(f) => format!("is stored in the `{to_name}` field `{}`", def_name(cx, f)),
         Slot::Local(pat) => format!("is bound to `{pat}: {to_name}`"),
-        &Slot::Return(f) => format!("is returned from `{}` as `{to_name}`", def_name(cx, f)),
-        &Slot::Const(c) => format!("defines `{to_name}` const `{}`", def_name(cx, c)),
-        Slot::Compared(other) => format!("is compared with `{other}`, declared `{to_name}`"),
+        &Slot::Return(f) => format!("is returned from `{}` as a `{to_name}`", def_name(cx, f)),
+        &Slot::Const(c) => format!(
+            "is used to define the `{to_name}` const `{}`",
+            def_name(cx, c)
+        ),
+        Slot::Compared(other) => format!("is compared with `{other}`, a `{to_name}`"),
     };
     let from_name = def_name(cx, from.written);
     emit_with_note(
@@ -237,15 +240,14 @@ fn check_value<'tcx>(cx: &LateContext<'tcx>, src: &'tcx Expr<'tcx>, to: &Kind<'t
         INTERCHANGEABLE_ALIASES,
         src.span,
         format!(
-            "`{}` is declared `{from_name}` but {lands}, and since both aliases are plain `{}` the compiler accepts one where the other is meant",
+            "`{}` is a `{from_name}` but {lands}. Both are plain `{}`, so the mix-up compiles",
             snippet(cx, src.span, ".."),
             to.int,
         ),
         from.decl,
-        format!("the `{from_name}` declaration this value comes from"),
+        format!("the `{from_name}` this value comes from"),
         format!(
-            "make `{from_name}` and `{to_name}` newtypes (`struct {to_name}({});`) instead of aliases; this line then fails to compile until the right id is passed",
-            to.int,
+            "make `{from_name}` and `{to_name}` newtypes instead of aliases. This line then fails to compile until the right id is used"
         ),
     );
 }

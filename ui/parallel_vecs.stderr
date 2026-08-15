@@ -1,4 +1,4 @@
-warning: `ages`, `names` of `People` only ever change length together (2 blocks) and are read at the same index, so element `i` of each is one record split across 2 vecs whose lengths the struct lets differ
+warning: `ages` and `names` of `People` only change length together (2 blocks) and are read at the same index. Element `i` of each is one record split across 2 vecs
   --> $DIR/parallel_vecs.rs:7:1
    |
 LL | struct People {
@@ -9,10 +9,10 @@ note: one of the reads at a shared index
    |
 LL |         format!("{} is {}", self.names[i], self.ages[i])
    |                                            ^^^^^^^^^^^^
-   = help: replace the 2 fields with one `Vec` whose element struct has a field for each; then there is one length and one push
+   = help: use one `Vec` of a struct with a field for each. One length, one push
    = note: `#[warn(parallel_vecs)]` on by default
 
-warning: `keys`, `phases`, `values` of `Table` only ever change length together (1 block) and are read at the same index, so element `i` of each is one record split across 3 vecs whose lengths the struct lets differ
+warning: `keys`, `phases` and `values` of `Table` only change length together (1 block) and are read at the same index. Element `i` of each is one record split across 3 vecs
   --> $DIR/parallel_vecs.rs:54:1
    |
 LL | struct Table {
@@ -23,9 +23,9 @@ note: one of the reads at a shared index
    |
 LL |     for (k, v) in t.keys.iter().zip(&t.values) {
    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   = help: replace the 3 fields with one `Vec` whose element struct has a field for each; then there is one length and one push
+   = help: use one `Vec` of a struct with a field for each. One length, one push
 
-warning: `items`, `locs` of `Tape` only ever change length together (2 blocks) and are read at the same index, so element `i` of each is one record split across 2 vecs whose lengths the struct lets differ
+warning: `items` and `locs` of `Tape` only change length together (2 blocks) and are read at the same index. Element `i` of each is one record split across 2 vecs
   --> $DIR/parallel_vecs.rs:73:1
    |
 LL | struct Tape {
@@ -36,7 +36,7 @@ note: one of the reads at a shared index
    |
 LL |         let n = self.tape.items[mark..].len() + self.tape.locs[mark..].len();
    |                                                 ^^^^^^^^^^^^^^^^^^^^^^
-   = help: replace the 2 fields with one `Vec` whose element struct has a field for each; then there is one length and one push
+   = help: use one `Vec` of a struct with a field for each. One length, one push
 
 warning: 3 warnings emitted
 

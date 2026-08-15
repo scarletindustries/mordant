@@ -18,15 +18,15 @@ use crate::baseline::emit_with_note;
 use crate::hir_shapes::{assigned_field, callee_of, peel_blocks_unsafe};
 
 rustc_session::declare_lint! {
-    /// Flags an integer struct field that can hold a sentinel — some
+    /// Flags an integer struct field that can hold a sentinel (some
     /// function compares it `==`/`!=` against `T::MAX`, `-1`, or a constant
-    /// named `INVALID`/`NONE`/`SENTINEL`, treating that value as "no value" —
+    /// named `INVALID`/`NONE`/`SENTINEL`, treating that value as "no value")
     /// and that another function indexes with (`v[x.f as usize]`, a slice
     /// range end, `buf[off..off + len]`, `get_unchecked`) or offsets a pointer
-    /// by without any such test. One reader knows the magic value means
-    /// "none"; the other turns it into an out-of-range index or a wild
-    /// offset. The type is `u32` when the value set is `Option<u32>`, and only
-    /// convention tells the readers apart.
+    /// by without checking. One reader knows the magic value means "none".
+    /// The other turns it into an out-of-range index or a wild offset. The
+    /// type is `u32` when the value set is `Option<u32>`, and only convention
+    /// tells the readers apart.
     ///
     /// Reported on the unchecked reader. A function counts as checking the
     /// field if it compares the field, or a local read off it, against
@@ -642,27 +642,27 @@ impl<'tcx> LateLintPass<'tcx> for SentinelInteger {
                 if self.checks(body, *field) || self.callers_check(body, *field) {
                     continue;
                 }
-                let (how, becomes) = match read.how {
-                    Use::Index => ("indexes with", "an out-of-range index"),
-                    Use::Offset => ("offsets a pointer by", "a wild offset"),
+                let (how, becomes, use_it) = match read.how {
+                    Use::Index => ("indexes with", "an out-of-range index", "index"),
+                    Use::Offset => ("offsets a pointer by", "a wild offset", "offset"),
                 };
                 let reader = match cx.tcx.opt_item_name(body) {
                     Some(name) => format!("`{name}`"),
-                    None => "this body".to_owned(),
+                    None => "This body".to_owned(),
                 };
                 let (owner, name, sentinel) = (cx.tcx.item_name(field.0), field.1, &ev.spelling);
                 findings.push((
                     read.span,
                     format!(
-                        "`{owner}.{name}` can be `{sentinel}`, which {} other place{} in the crate test{} for as \"no value\", but {reader} {how} it here without any such test, so the sentinel becomes {becomes}",
+                        "`{owner}.{name}` can be `{sentinel}`, which {} other place{} treat{} as \"no value\". {reader} {how} it here without checking, so the sentinel becomes {becomes}",
                         ev.compared,
                         if ev.compared == 1 { "" } else { "s" },
                         if ev.compared == 1 { "s" } else { "" },
                     ),
                     evidence_at,
-                    format!("one of the places that treats `{sentinel}` as \"no value\""),
+                    format!("one of the places that checks for `{sentinel}`"),
                     format!(
-                        "store `{name}` as an `Option` (over a `NonZero`/`NonMax` type to keep the size), so {reader} has to decide the empty case before it can use the number"
+                        "store `{name}` as an `Option` (over `NonZero` or `NonMax` to keep the size). {reader} then has to handle the empty case before it can {use_it}"
                     ),
                 ));
             }

@@ -16,17 +16,17 @@ use rustc_span::symbol::kw;
 use rustc_span::{Span, Symbol};
 
 use crate::MordantConfig;
-use crate::baseline::emit_with_note;
+use crate::baseline::{emit_with_note, join};
 use crate::hir_shapes::{Callee, callee_of};
 
 rustc_session::declare_lint! {
     /// Flags two or more plain-data parameters that `parallel-params-min-fns`
     /// or more crate-private functions declare alike (same names and types)
-    /// and hand each other unchanged: every counted function passes the
+    /// and pass between them unchanged: every counted function passes the
     /// group in one call to another of them, or receives it that way. The
-    /// group is one value that only exists as loose parameters, so nothing
-    /// keeps a caller from mixing them up or passing half of it; a struct
-    /// with those fields does.
+    /// group is one value travelling as loose parameters, so nothing keeps a
+    /// caller from mixing them up or passing half of it. A struct with those
+    /// fields does.
     ///
     /// Plain data is scalars, `&str`, shared slices, and structs and enums
     /// made only of those. `&mut` borrows, references and pointers to
@@ -377,8 +377,8 @@ impl<'tcx> LateLintPass<'tcx> for ParallelParams {
             findings.push((
                 at,
                 format!(
-                    "{} are declared alike by {fns} and handed between them unchanged, so they are one value that only exists as {} loose parameters a caller can mix up or pass by halves",
-                    join(&shown),
+                    "{} are declared the same way by {fns} and passed between them unchanged. They are one value travelling as {} loose parameters",
+                    join(&shown, "and"),
                     slots.len(),
                 ),
                 witness.span,
@@ -387,10 +387,7 @@ impl<'tcx> LateLintPass<'tcx> for ParallelParams {
                     name(&witness.from),
                     name(&witness.to)
                 ),
-                format!(
-                    "declare a struct with fields {} and make {fns} take it as one parameter",
-                    join(&fields),
-                ),
+                format!("put {} in a struct and pass that", join(&fields, "and")),
             ));
         }
         findings.sort_by_key(|(span, ..)| span.lo());
@@ -400,20 +397,11 @@ impl<'tcx> LateLintPass<'tcx> for ParallelParams {
     }
 }
 
-/// `a`, `a and b`, `a, b and c`.
-fn join(items: &[String]) -> String {
-    match items {
-        [] => String::new(),
-        [one] => one.clone(),
-        [head @ .., last] => format!("{} and {last}", head.join(", ")),
-    }
-}
-
 /// Up to four names, then a count of the rest.
 fn listed(names: &[String]) -> String {
     const SHOWN: usize = 4;
     if names.len() <= SHOWN {
-        join(names)
+        join(names, "and")
     } else {
         format!(
             "{} and {} more functions",
@@ -425,7 +413,8 @@ fn listed(names: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{join, listed};
+    use super::listed;
+    use crate::baseline::join;
 
     fn owned(xs: &[&str]) -> Vec<String> {
         xs.iter().map(|s| (*s).to_owned()).collect()
@@ -433,9 +422,9 @@ mod tests {
 
     #[test]
     fn join_reads_as_prose() {
-        assert_eq!(join(&owned(&["a"])), "a");
-        assert_eq!(join(&owned(&["a", "b"])), "a and b");
-        assert_eq!(join(&owned(&["a", "b", "c"])), "a, b and c");
+        assert_eq!(join(&owned(&["a"]), "and"), "a");
+        assert_eq!(join(&owned(&["a", "b"]), "and"), "a and b");
+        assert_eq!(join(&owned(&["a", "b", "c"]), "or"), "a, b or c");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-warning: none of the 2 places `Outcome` is constructed sets more than one of `ok`, `err` to `Some`, so these fields are alternatives that the struct nevertheless lets be set together
+warning: `Outcome` is b$DIRlt in 2 places and none sets more than one of `ok`, `err` to `Some`. The fields are alternatives, but the struct allows both at once
   --> $DIR/options_as_enum.rs:4:1
    |
 LL | struct Outcome {
@@ -12,7 +12,7 @@ LL | |         ok: Some(1),
 LL | |         err: None,
 LL | |     }
    | |_____^
-   = help: replace `ok`, `err` with one enum field that has a variant per case; two `Some`s at once then cannot be written
+   = help: replace `ok`, `err` with one enum field, one variant per case
    = note: `#[warn(options_as_enum)]` on by default
 
 warning: 1 warning emitted

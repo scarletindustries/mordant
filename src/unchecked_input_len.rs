@@ -67,11 +67,10 @@ rustc_session::declare_lint! {
     /// `self`, or a field reached from one) passed to `split_at`,
     /// `get_unchecked`, `with_capacity`, `reserve`, `set_len`,
     /// `from_raw_parts`, `copy_nonoverlapping` or a raw-pointer
-    /// `add`/`offset` on a path where nothing has checked it, although the
-    /// same function does bound it (`<`, `<=`, `>`, `>=`, also via
-    /// arithmetic on it) on another path: the author knew it needed a bound
-    /// and this path skips it. Reported at the use; the note points at the
-    /// bound.
+    /// `add`/`offset` with no check on that path, although the same
+    /// function does bound it (`<`, `<=`, `>`, `>=`, also via arithmetic on
+    /// it) on another path: the author knew it needed a bound and this path
+    /// skips it. Reported at the use, and the note points at the bound.
     ///
     /// Silent when every such use is dominated by a branch that tests the
     /// value (a clamp, an early return, an equality test, a `debug_assert!`,
@@ -1009,12 +1008,12 @@ impl<'tcx> LateLintPass<'tcx> for UncheckedInputLen {
                 UNCHECKED_INPUT_LEN,
                 span,
                 format!(
-                    "`{name}` comes from the caller and is passed to `{callee}` here on a path where nothing has checked it, although this function does bound `{name}` on another path"
+                    "`{name}` comes from the caller and reaches `{callee}` here with no check on this path. The function does bound `{name}` on another path"
                 ),
                 bound,
-                format!("the bound on `{name}` that does not cover this path"),
+                "the bound that does not cover this path",
                 format!(
-                    "check `{name}` before this call on every path (or once, before the paths split), or make the checked value the only thing `{callee}` can be given here"
+                    "check `{name}` on every path before this call, or once before the paths split"
                 ),
             );
         }

@@ -23,7 +23,7 @@ The lints come in families, and each family is a lint group whose name is in its
 | `options_as_enum`            | a struct whose `Option` fields are never populated together, so the valid combinations are really an enum                                                                 |
 | `parallel_bools`             | bool fields only ever assigned as a pair, which together encode a state machine                                                                                           |
 | `bool_cluster`               | opt-in via `bool-cluster-enabled`: a named-field struct with several independent bools, 2^n representable states; if fewer are legal an enum names the ones that are      |
-| `runtime_typestate`          | a bool field that several methods test and bail on at entry, enforcing an ordering invariant at runtime                                                                   |
+| `runtime_typestate`          | a bool field that several methods test and bail on at entry, so whether they may be called yet is checked at runtime, one method at a time                                |
 | `always_unwrapped_option`    | an `Option` field unwrapped at every read while nothing handles `None`, so `None` only exists to crash on: usually a two-phase object wanting two types                   |
 | `derived_field`              | a field that always holds the same value for a given sibling wherever the type is built: a copy of something the sibling decides, and a mismatched pair still compiles    |
 | `field_valid_only_when`      | a field every reader tests a sibling for one value before touching, and every other construction fills with a placeholder: an enum payload stored flat beside its tag     |
@@ -40,7 +40,7 @@ The lints come in families, and each family is a lint group whose name is in its
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `unchecked_construction`     | a literal, a write to a checked field, or `mem::zeroed`/`transmute` outside a validated type's module and impls, none of which runs the constructor's check               |
 | `defaulted_failure`          | `f(x).unwrap_or(0)` or `let Ok(v) = f(x) else { return Ok(()) }` where `f`'s own body rejects some of `x`: the rejection becomes a value and processing carries on        |
-| `unchecked_input_len`        | opt-in via `unchecked-input-len-enabled`: a received integer bounded on one path and turned into memory (`split_at`, `set_len`, `ptr.add`) on a path no check dominates   |
+| `unchecked_input_len`        | opt-in via `unchecked-input-len-enabled`: a received integer bounded on one path and turned into memory (`split_at`, `set_len`, `ptr.add`) on another path with no check  |
 | `guard_blind_to_action`      | `self.can_x()` gating a mutation that changes state `can_x` never looks at, so the check cannot know whether the action is safe                                           |
 | `stale_across_reentry`       | a length, flag, or pointer read off a field of `self`, then a call that can re-enter (closure, fn pointer, `dyn`, `.await`, configured), then the field used through it   |
 | `error_collapsed_to_bool`    | `f(x);` or `let _ = f(x)` on a crate fn whose `false`/`None` is the bare `Err` arm of a `Result` it held: the typed error became one bit, and this call drops the bit     |
@@ -86,7 +86,7 @@ The lints come in families, and each family is a lint group whose name is in its
 
 | lint                         | flags                                                                                                                                                                     |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `key_not_identity`           | a map keyed on something that is not the canonical identity of what it names: a span, a pointer's bits, an unresolved path                                                |
+| `key_not_identity`           | a map keyed on something that does not identify what it names: a span, a pointer's bits, an unresolved path                                                               |
 | `insert_then_unwrap`         | `map.get(&k).unwrap()` re-fetching what `map.insert(k, ..)` just proved present, with nothing in between that could disturb either                                        |
 | `lock_order`                 | two locks the crate acquires in both orders, with both locations named: the shape of a deadlock                                                                           |
 

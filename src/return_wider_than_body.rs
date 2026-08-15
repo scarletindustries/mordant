@@ -18,9 +18,8 @@ rustc_session::declare_lint! {
     /// Flags a match arm that panics on a variant the matched call never
     /// returns: the callee's return type is a crate-local enum, every value
     /// its body returns is a constructor literal, and the panicked-on variant
-    /// is not among them. The arm exists only because the return type is
-    /// wider than what the function produces; narrowing it deletes the arm
-    /// at compile time.
+    /// is not among them. The return type is wider than what the function
+    /// produces. Narrowing it deletes the arm at compile time.
     ///
     /// The return set comes from MIR dataflow: constructor aggregates traced
     /// through plain copies between locals, so `let t = ...; t` and branches
@@ -121,13 +120,13 @@ impl<'tcx> LateLintPass<'tcx> for ReturnWiderThanBody {
                 RETURN_WIDER_THAN_BODY,
                 *span,
                 format!(
-                    "this arm panics on `{variant}`, but `{fn_name}` only ever returns {}, so the arm exists only because `{fn_name}`'s return type `{enum_name}` is wider than what it produces",
+                    "this arm panics on `{variant}`, but `{fn_name}` only ever returns {}. The return type `{enum_name}` is wider than what the function produces",
                     names.join(", "),
                 ),
                 cx.tcx.def_span(*callee),
-                format!("`{fn_name}`, declared to return any `{enum_name}`"),
+                format!("`{fn_name}`'s signature"),
                 format!(
-                    "give `{fn_name}` a return type without `{variant}` (a smaller enum, or a struct for the one shape); this arm then cannot be written"
+                    "give `{fn_name}` a return type without `{variant}`. This arm then cannot be written"
                 ),
             );
         }

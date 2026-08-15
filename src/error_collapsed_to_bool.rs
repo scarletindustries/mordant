@@ -27,13 +27,13 @@ use crate::hir_shapes::{callee_of, peel_blocks_unsafe, peel_not, sole_expr};
 rustc_session::declare_lint! {
     /// Flags a call that ignores the `bool` or `Option` a function of this
     /// crate turned its typed error into, so a failure inside that function
-    /// is silently treated as success. The callee returns `bool` (or
+    /// is treated as success. The callee returns `bool` (or
     /// `Option<T>`) and somewhere in its body the `Err` of a `Result` it held
     /// becomes a bare `false` (or `None`) and nothing else -- `match r {
     /// Err(_) => return false, .. }`, `if r.is_err() { return false }`, `let
     /// Ok(v) = r else { return None }`, `r.ok()?`, or `r.is_ok()` / `r.ok()`
     /// as the value returned -- so the error's kind is already gone from its
-    /// signature; the reported call then ignores even that bit (`f(x);`,
+    /// signature. The reported call then ignores even that bit (`f(x);`,
     /// `let _ = f(x);`). A `Result` return would have made this caller decide.
     ///
     /// Silent when the `Err` arm or `else` block does anything besides exit
@@ -436,19 +436,19 @@ impl<'tcx> LateLintPass<'tcx> for ErrorCollapsedToBool {
                 dropped.hir_id,
                 dropped.span,
                 format!(
-                    "`{name}` turns its `{err}` into `{exit}`, and this call ignores the `{exit}`, so a failure inside `{name}` is silently treated as success"
+                    "`{name}` turns its `{err}` into `{exit}`, and this call ignores the `{exit}`. A failure inside `{name}` is treated as success"
                 ),
                 |diag| {
                     let more = match collapse.more {
                         0 => String::new(),
-                        n => format!(" (and at {n} more like it)"),
+                        n => format!(" (and in {n} more places)"),
                     };
                     diag.span_note(
                         collapse.at,
                         format!("the error becomes `{exit}` here{more}"),
                     );
                     diag.help(format!(
-                        "make `{name}` return the `Result` and decide here what a failure means; failing that, mark it `#[must_use]` so this call cannot drop the answer"
+                        "return the `Result` from `{name}` and decide here what failure means. At minimum mark it `#[must_use]`"
                     ));
                 },
             );

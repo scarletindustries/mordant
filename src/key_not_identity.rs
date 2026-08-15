@@ -9,14 +9,15 @@ use crate::MordantConfig;
 
 rustc_session::declare_lint! {
     /// Flags a map keyed on something that does not identify the thing it
-    /// names, so distinct things can collide under one key or one thing can
-    /// land under several: a type or method the project lists as not an
-    /// identity, a float's `to_bits()`, a pointer cast to an integer. Which
-    /// types and expression forms count is declared per project in
-    /// `dylint.toml`; with no configuration the lint is silent.
+    /// names, so two different things can share a key and overwrite each
+    /// other, or one thing can land under several: a type or method the
+    /// project lists as not an identity, a float's `to_bits()`, a pointer
+    /// cast to an integer. Which types and expression forms count is declared
+    /// per project in `dylint.toml`. With no configuration the lint is
+    /// silent.
     pub KEY_NOT_IDENTITY,
     Warn,
-    "map keyed on a value that is not the canonical identity of what it names"
+    "map keyed on a value that does not identify what it names"
 }
 
 /// A key-expression form `key-not-identity-forms` can opt into. These variants
@@ -89,14 +90,17 @@ impl KeyNotIdentity {
 
     /// A direct hit, or (opt-in) a denied type inside a tuple or one level of
     /// struct fields with no declared identity-fixing component beside it:
-    /// the key as the message shows it, and the denied type in it.
+    /// how the message introduces the key, and the denied type in it.
     fn denied_type_name<'tcx>(
         &self,
         cx: &LateContext<'tcx>,
         key_ty: Ty<'tcx>,
     ) -> Option<(String, String)> {
         if let Some(path) = self.is_denied(cx, key_ty) {
-            return Some((format!("`{path}`"), path));
+            return Some((
+                format!("`{path}`, which this project's config says is not an identity"),
+                path,
+            ));
         }
         if !self.config.key_not_identity_composite {
             return None;
@@ -115,7 +119,12 @@ impl KeyNotIdentity {
         if components.iter().any(|t| self.is_fixing(cx, *t)) {
             return None;
         }
-        Some((format!("`{key_ty}`, which contains a `{hit}`"), hit))
+        Some((
+            format!(
+                "`{key_ty}`, which contains a `{hit}`, and this project's config says `{hit}` is not an identity"
+            ),
+            hit,
+        ))
     }
 }
 
@@ -196,12 +205,10 @@ impl<'tcx> LateLintPass<'tcx> for KeyNotIdentity {
                 .map(|f| format!("`{f}`"))
                 .collect();
             let help = if fixes.is_empty() {
-                format!(
-                    "key on what does identify the value in this project instead of its `{denied}`"
-                )
+                format!("key on something that does identify the value instead of its `{denied}`")
             } else {
                 format!(
-                    "key on what does identify the value: this project's `key-not-identity-fixes` names {} as what makes a `{denied}` unambiguous, so put that in the key beside it",
+                    "key on something that does identify the value. The config names {} as what makes a `{denied}` unambiguous, so add it to the key",
                     fixes.join(", "),
                 )
             };
@@ -210,7 +217,7 @@ impl<'tcx> LateLintPass<'tcx> for KeyNotIdentity {
                 KEY_NOT_IDENTITY,
                 expr.span,
                 format!(
-                    "this map is keyed on {shown}, and `{denied}` is listed in this project's `key-not-identity-types`: equal `{denied}`s need not mean the same thing, so distinct entries can collide"
+                    "this map is keyed on {shown}. Two different things can share a `{denied}` and overwrite each other"
                 ),
                 help,
             );
@@ -230,8 +237,8 @@ impl<'tcx> LateLintPass<'tcx> for KeyNotIdentity {
                 cx,
                 KEY_NOT_IDENTITY,
                 key_expr.span,
-                "this map is keyed on a float's `to_bits()`; for a NaN-boxed or interned value those bits are a pointer, so two equal values can land under different keys",
-                "key on the value itself or its canonical handle, not on its bit pattern",
+                "this map is keyed on a float's `to_bits()`. For a NaN-boxed or interned value those bits are a pointer, so two equal values can land under different keys",
+                "key on the value itself or its handle, not on its bit pattern",
             );
         }
         // Project-declared methods whose result is not an identity (e.g. a
@@ -248,9 +255,9 @@ impl<'tcx> LateLintPass<'tcx> for KeyNotIdentity {
                 KEY_NOT_IDENTITY,
                 key_expr.span,
                 format!(
-                    "this map is keyed on the result of `{method}()`, which this project's `key-not-identity-methods` lists as not an identity, so equal things can land under different keys"
+                    "this map is keyed on the result of `{method}()`, which this project's config says is not an identity. Two equal things can land under different keys"
                 ),
-                format!("key on the value's identity rather than on what `{method}()` returns"),
+                format!("key on what identifies the value, not on what `{method}()` returns"),
             );
         }
         if self.forms.contains(&KeyForm::PtrCast) && is_ptr_to_int_cast(cx, key_expr) {
@@ -258,7 +265,7 @@ impl<'tcx> LateLintPass<'tcx> for KeyNotIdentity {
                 cx,
                 KEY_NOT_IDENTITY,
                 key_expr.span,
-                "this map is keyed on a pointer cast to an integer, which names an allocation rather than a value: equal values at two addresses get two entries, and a freed-and-reused address aliases an old one",
+                "this map is keyed on a pointer cast to an integer, which names an allocation and not a value. Equal values at two addresses get two entries, and a freed and reused address looks like an old one",
                 "key on the value, or on an id assigned when it is created, not on its address",
             );
         }

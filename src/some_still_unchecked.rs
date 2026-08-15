@@ -16,13 +16,13 @@ use crate::hir_shapes::sole_expr;
 rustc_session::declare_lint! {
     /// Flags a `match` or `if let` over an `Option` or `Result` whose
     /// present case is only taken under a further condition on the value,
-    /// with the value that fails it handled exactly as the absent case is:
+    /// with the value that fails it treated exactly like the absent case:
     /// `Some(x) if x.ready() => go(x), _ => wait()`, `if let Some(x) = next
     /// && x.ready() { .. } else { .. }`, or the same with the condition as an
     /// inner `if` whose `else` repeats the outer one. A `Some` that fails
-    /// the condition is handled exactly like `None`, so at this point `Some`
+    /// the condition is treated exactly like `None`, so at this point `Some`
     /// alone does not mean usable, and the condition saying which is written
-    /// here, at a consumer, rather than where the value is produced; every
+    /// here, at a consumer, rather than where the value is produced. Every
     /// other consumer has to repeat it or takes the unwanted `Some` as a
     /// valid one. Filtering at the source, or a payload type that cannot
     /// hold the unwanted value, makes `Some` mean present.
@@ -97,32 +97,27 @@ impl Wrapper {
             Wrapper::Result => "an",
         };
         format!(
-            "{article} `{present}` that fails `{cond}` is handled exactly like `{absent}` here, so `{present}` alone does not mean usable and every other consumer of this value has to repeat the check"
+            "{article} `{present}` that fails `{cond}` is treated exactly like `{absent}` here. `{present}` alone does not mean usable, and every consumer has to repeat the check"
         )
     }
 
     fn note(self) -> String {
         format!(
-            "the failing `{}` lands here, together with `{}`",
+            "the failing `{}` ends up here, with `{}`",
             self.present_name(),
             self.absent_name()
         )
     }
 
     fn help(self, scrut: &str, cond: &str) -> String {
-        let (present, means) = match self {
-            Wrapper::Option => (
-                "a `Some`",
-                "a `.filter(..)`, or a payload type that cannot fail it",
+        match self {
+            Wrapper::Option => format!(
+                "filter where `{scrut}` is produced, with `.filter(..)` or a payload type that cannot fail `{cond}`"
             ),
-            Wrapper::Result => (
-                "an `Ok`",
-                "an error for that case, or a payload type that cannot fail it",
+            Wrapper::Result => format!(
+                "reject that case where `{scrut}` is produced, with an error for it or a payload type that cannot fail `{cond}`"
             ),
-        };
-        format!(
-            "make whatever produces `{scrut}` reject values failing `{cond}` ({means}), so {present} reaching here needs no second check"
-        )
+        }
     }
 }
 

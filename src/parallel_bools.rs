@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::adt_facts::{field_ty, private_local_struct, struct_field};
-use crate::baseline::emit_with_note;
+use crate::baseline::{emit_with_note, join};
 use crate::hir_shapes::assigned_field;
 use clippy_utils::get_enclosing_block;
 use rustc_hir::def_id::DefId;
@@ -13,8 +13,8 @@ use rustc_span::{Span, Symbol};
 rustc_session::declare_lint! {
     /// Flags bool fields that are always assigned together: every write to
     /// one sits in the same block as a write to the other, across at least two
-    /// functions, so between them they hold one state that the struct lets
-    /// fall out of step. One enum field naming those states cannot.
+    /// functions. Together they hold one state, and the struct lets them
+    /// drift apart. One enum field naming those states cannot.
     ///
     /// Only fires on structs private to the crate. One lone write to either
     /// field anywhere — `s.f = ..`, `s.f |= ..`, or either through a `Box`,
@@ -124,21 +124,22 @@ impl<'tcx> LateLintPass<'tcx> for ParallelBools {
                     continue;
                 }
                 let names: Vec<String> = members.iter().map(|s| format!("`{s}`")).collect();
+                let anded = join(&names, "and");
                 let names = names.join(", ");
                 emit_with_note(
                     cx,
                     PARALLEL_BOOLS,
                     cx.tcx.def_span(did),
                     format!(
-                        "the bool fields {names} of `{}` are always assigned together ({} blocks in {} functions), so between them they hold one state that the struct lets fall out of step",
+                        "{anded} of `{}` are always assigned together ({} blocks in {} functions). Together they hold one state, and the struct lets them drift apart",
                         cx.tcx.def_path_str(did),
                         sites.len(),
                         bodies.len(),
                     ),
                     first,
-                    "one of the blocks that assigns them together",
+                    "one of the blocks that sets both",
                     format!(
-                        "replace {names} with one enum field naming the states those blocks set; a combination no block writes then cannot exist"
+                        "replace {names} with one enum field whose variants are the states those blocks set"
                     ),
                 );
             }

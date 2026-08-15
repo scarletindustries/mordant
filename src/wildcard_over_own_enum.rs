@@ -15,9 +15,9 @@ use crate::hir_shapes::{callee_of, peel_blocks_unsafe};
 
 rustc_session::declare_lint! {
     /// Flags `_` (or a catch-all binding) matching over a small crate-local
-    /// enum. The catch-all also matches any variant added to the enum later,
-    /// so a new variant lands in it silently instead of failing to compile.
-    /// Spelling out the remaining variants keeps exhaustiveness checking
+    /// enum. The catch-all will also match any variant added to the enum
+    /// later, so a new variant lands in it silently instead of failing to
+    /// compile. Listing the remaining variants keeps exhaustiveness checking
     /// alive.
     ///
     /// Silent on an arm that answers "not this shape" (`None`, `false`, an
@@ -233,19 +233,18 @@ impl<'tcx> LateLintPass<'tcx> for WildcardOverOwnEnum {
                 arm.hir_id,
                 arm.pat.span,
                 format!(
-                    "this catch-all also matches any variant added to `{name}` later ({n} today), so a new variant lands here silently instead of failing to compile"
+                    "this catch-all will also match any variant added to `{name}` later ({n} today). A new variant lands here silently instead of failing to compile"
                 ),
                 |diag| {
                     diag.span_note(
                         cx.tcx.def_span(adt.did()),
-                        format!("`{name}`, whose new variants would fall into this arm"),
+                        format!("`{name}` is defined here"),
                     );
-                    let msg = format!(
-                        "spell out the remaining variants instead; the compiler then points at this `match` whenever `{name}` grows"
-                    );
+                    let wildcard = snippet_opt(cx, arm.pat.span).unwrap_or_else(|| "_".into());
+                    let msg = format!("list the remaining variants instead of `{wildcard}`");
                     match &fix {
                         Some(sugg) => {
-                            diag.span_suggestion(
+                            diag.span_suggestion_verbose(
                                 arm.pat.span,
                                 msg,
                                 sugg,

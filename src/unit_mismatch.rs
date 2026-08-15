@@ -6,8 +6,8 @@ use crate::hir_shapes::value_name;
 
 rustc_session::declare_lint! {
     /// Flags addition, subtraction, and comparison between values whose names
-    /// say they are in different units: `timeout_ms + deadline_ns` uses them
-    /// as if they were the same unit, compiles, and is always wrong.
+    /// say they are in different units: `timeout_ms + deadline_ns` mixes
+    /// them, compiles, and is always wrong.
     /// Multiplication and division stay silent, since they are how units
     /// legitimately convert.
     pub UNIT_MISMATCH,
@@ -21,15 +21,15 @@ rustc_session::declare_lint_pass!(UnitMismatch => [UNIT_MISMATCH]);
 /// operands from different classes.
 fn unit_class(suffix: &str) -> Option<&'static str> {
     Some(match suffix {
-        "ns" | "nanos" => "ns",
-        "us" | "micros" => "us",
-        "ms" | "millis" => "ms",
-        "sec" | "secs" | "seconds" => "s",
-        "mins" | "minutes" => "min",
+        "ns" | "nanos" => "nanoseconds",
+        "us" | "micros" => "microseconds",
+        "ms" | "millis" => "milliseconds",
+        "sec" | "secs" | "seconds" => "seconds",
+        "mins" | "minutes" => "minutes",
         "bytes" => "bytes",
-        "kb" | "kib" => "kb",
-        "mb" | "mib" => "mb",
-        "gb" | "gib" => "gb",
+        "kb" | "kib" => "kilobytes",
+        "mb" | "mib" => "megabytes",
+        "gb" | "gib" => "gigabytes",
         "tenths" => "tenths",
         _ => return None,
     })
@@ -78,12 +78,8 @@ impl<'tcx> LateLintPass<'tcx> for UnitMismatch {
                 cx,
                 UNIT_MISMATCH,
                 expr.span,
-                format!(
-                    "`{ln}` says it is in {lc} and `{rn}` says {rc}, and this {op} uses them as if they were the same unit"
-                ),
-                format!(
-                    "convert one side to the other's unit first, or if `{ln}` or `{rn}` is wrong about its unit, rename it; a `Duration` or a unit newtype makes the compiler catch the next one"
-                ),
+                format!("`{ln}` says {lc} and `{rn}` says {rc}, and this {op} mixes them"),
+                "convert one side first. If a name is wrong about its unit, rename it. A `Duration` or a unit newtype would catch the next one",
             );
         }
     }

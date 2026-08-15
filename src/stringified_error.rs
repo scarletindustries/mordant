@@ -7,9 +7,9 @@ use rustc_middle::ty;
 
 rustc_session::declare_lint! {
     /// Flags a `.map_err(|e| e.to_string())` that turns a typed error into a
-    /// `String`, after which callers cannot match on which failure it was.
-    /// `stringly_error` flags the signature that demands this; this lint
-    /// flags the expression that does it.
+    /// `String`. From there on, callers cannot match on which failure it
+    /// was. `stringly_error` flags the signature that demands this, and this
+    /// lint flags the expression that does it.
     pub STRINGIFIED_ERROR,
     Warn,
     "typed error collapsed into a string"
@@ -62,10 +62,10 @@ impl<'tcx> LateLintPass<'tcx> for StringifiedError {
                 STRINGIFIED_ERROR,
                 expr.span,
                 format!(
-                    "this `map_err` turns `{err_ty}` into `String`, so from here on callers cannot match on which failure it was"
+                    "this `map_err` turns a `{err_ty}` into a `String`. From here on, callers cannot match on which failure it was"
                 ),
                 format!(
-                    "return `{err_ty}` itself, or an error enum with a variant that wraps it, and turn it into text only where it is displayed"
+                    "return `{err_ty}` itself, or an error enum that wraps it, and turn it into text only where it is shown"
                 ),
             );
         }

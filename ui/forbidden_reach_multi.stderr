@@ -1,4 +1,4 @@
-warning: `two_bans` can call `std::vec::Vec::<T, A>::push`, which this project's `forbidden-reach` config bans from it, through two_bans -> std::vec::Vec::<T, A>::push
+warning: `two_bans` can reach `std::vec::Vec::<T, A>::push`, which the `forbidden-reach` config bans for it. Path: two_bans -> std::vec::Vec::<T, A>::push
   --> $DIR/forbidden_reach_multi.rs:7:1
    |
 LL | / fn two_bans(n: u32) -> u32 {
@@ -8,15 +8,15 @@ LL | |     v[0] + Some(n).expect("n")
 LL | | }
    | |_^
    |
-note: the last call in the chain, reaching `std::vec::Vec::<T, A>::push`
+note: the last call in that path, to `std::vec::Vec::<T, A>::push`
   --> $DIR/forbidden_reach_multi.rs:9:5
    |
 LL |     v.push(n);
    |     ^^^^^^^^^
-   = help: break that chain (every arrow is a real call in this crate), or if the call is acceptable after all, amend the `forbidden-reach` rule for `two_bans`
+   = help: break the path (each arrow is a real call in this crate), or relax the `forbidden-reach` rule for `two_bans` if the call is fine
    = note: `#[warn(forbidden_reach)]` on by default
 
-warning: `two_bans` can call `std::option::Option::<T>::expect`, which this project's `forbidden-reach` config bans from it, through two_bans -> std::option::Option::<T>::expect
+warning: `two_bans` can reach `std::option::Option::<T>::expect`, which the `forbidden-reach` config bans for it. Path: two_bans -> std::option::Option::<T>::expect
   --> $DIR/forbidden_reach_multi.rs:7:1
    |
 LL | / fn two_bans(n: u32) -> u32 {
@@ -26,14 +26,14 @@ LL | |     v[0] + Some(n).expect("n")
 LL | | }
    | |_^
    |
-note: the last call in the chain, reaching `std::option::Option::<T>::expect`
+note: the last call in that path, to `std::option::Option::<T>::expect`
   --> $DIR/forbidden_reach_multi.rs:10:12
    |
 LL |     v[0] + Some(n).expect("n")
    |            ^^^^^^^^^^^^^^^^^^^
-   = help: break that chain (every arrow is a real call in this crate), or if the call is acceptable after all, amend the `forbidden-reach` rule for `two_bans`
+   = help: break the path (each arrow is a real call in this crate), or relax the `forbidden-reach` rule for `two_bans` if the call is fine
 
-warning: `one_ban_twice` can call `std::vec::Vec::<T, A>::push`, which this project's `forbidden-reach` config bans from it, through one_ban_twice -> std::vec::Vec::<T, A>::push (and 1 further call site to it)
+warning: `one_ban_twice` can reach `std::vec::Vec::<T, A>::push`, which the `forbidden-reach` config bans for it. Path: one_ban_twice -> std::vec::Vec::<T, A>::push (1 more call site reaches it)
   --> $DIR/forbidden_reach_multi.rs:15:1
    |
 LL | / fn one_ban_twice(n: u32) -> u32 {
@@ -44,12 +44,12 @@ LL | |     v[0]
 LL | | }
    | |_^
    |
-note: the last call in the chain, reaching `std::vec::Vec::<T, A>::push`
+note: the last call in that path, to `std::vec::Vec::<T, A>::push`
   --> $DIR/forbidden_reach_multi.rs:17:5
    |
 LL |     v.push(n);
    |     ^^^^^^^^^
-   = help: break that chain (every arrow is a real call in this crate), or if the call is acceptable after all, amend the `forbidden-reach` rule for `one_ban_twice`
+   = help: break the path (each arrow is a real call in this crate), or relax the `forbidden-reach` rule for `one_ban_twice` if the call is fine
 
 warning: 3 warnings emitted
 
