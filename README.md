@@ -91,6 +91,12 @@ Configure per project in `dylint.toml` at the workspace root:
 
 ```toml
 [mordant]
+# Lints this project does not want, by name. A disabled lint never runs, but
+# it stays registered, so an `#[allow(guard_flag)]` left in the code still
+# resolves instead of tripping `unknown_lints`. A name that matches no lint
+# gets a warning naming it, not an error.
+disabled = ["guard_flag", "unit_mismatch"]
+
 nonidentity-key-types = ["my_crate::span::Span"]
 nonidentity-key-forms = ["ptr-cast"]
 nonidentity-key-methods = ["my_crate::value::Value::to_bits"]
