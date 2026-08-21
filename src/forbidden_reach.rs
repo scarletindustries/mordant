@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use clippy_utils::visitors::for_each_expr;
 use rustc_hir::def_id::DefId;
 use rustc_hir::intravisit::FnKind;
-use rustc_hir::{Body, Expr, FnDecl};
+use rustc_hir::{Body, Expr, ExprKind, FnDecl, LangItem};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_span::Span;
 use rustc_span::def_id::LocalDefId;
@@ -73,6 +73,31 @@ impl ForbiddenReach {
     }
 }
 
+/// The definition an `ExprKind::Index` reaches, for the same edge table a
+/// call or method call feeds.
+///
+/// `[]` on a type with a user `Index`/`IndexMut` impl is operator-overload
+/// resolution, recorded in `typeck_results` exactly like a method call --
+/// `type_dependent_def_id` is the same lookup `callee_of` makes for
+/// `ExprKind::MethodCall`, just on the index expression's `hir_id` instead of
+/// the method call's.
+///
+/// Built-in slice/array indexing is not overload resolution at all: rustc
+/// lowers it straight to a MIR place projection plus an `Assert(BoundsCheck)`
+/// terminator during MIR building, so `type_dependent_def_id` comes back
+/// `None` and there is no HIR call for a walk to have found in the first
+/// place. That `None` is the signal, not the absence of one: it is exactly
+/// the shape a caller cannot tell from "not an index at all" without also
+/// knowing `e.kind` was `Index`, which is why this only runs from that arm.
+/// Substitute the lang item behind that terminator, `core::panicking::
+/// panic_bounds_check`, as the edge instead.
+fn index_edge<'tcx>(cx: &LateContext<'tcx>, e: &Expr<'tcx>) -> Option<DefId> {
+    match cx.typeck_results().type_dependent_def_id(e.hir_id) {
+        Some(def) => Some(def),
+        None => cx.tcx.lang_items().get(LangItem::PanicBoundsCheck),
+    }
+}
+
 impl<'tcx> LateLintPass<'tcx> for ForbiddenReach {
     fn check_fn(
         &mut self,
@@ -91,6 +116,10 @@ impl<'tcx> LateLintPass<'tcx> for ForbiddenReach {
         for_each_expr(cx, body.value, |e: &Expr<'tcx>| {
             if let Some(callee) = callee_of(cx, e) {
                 edges.push((callee.def(), e.span));
+            } else if matches!(e.kind, ExprKind::Index(..))
+                && let Some(def) = index_edge(cx, e)
+            {
+                edges.push((def, e.span));
             }
             std::ops::ControlFlow::<()>::Continue(())
         });

@@ -392,6 +392,10 @@ fn ui() {
             [[mordant.forbidden-reach]]
             from = "one_ban_twice"
             never = ["std::vec::Vec::push"]
+
+            [[mordant.forbidden-reach]]
+            from = "index_root"
+            never = ["panic_bounds_check"]
             "#,
         )
         .run();

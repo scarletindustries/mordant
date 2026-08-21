@@ -14,5 +14,20 @@ LL |     v.push(n);
    = help: break the path (each arrow is a real call in this crate), or relax the `forbidden-reach` rule for `hot_path` if the call is fine
    = note: `#[warn(forbidden_reach)]` on by default
 
-warning: 1 warning emitted
+warning: `index_root` can reach `core::panicking::panic_bounds_check`, which the `forbidden-reach` config bans for it. Path: index_root -> core::panicking::panic_bounds_check
+  --> $DIR/forbidden_reach.rs:29:1
+   |
+LL | / fn index_root(arr: &[u32], i: usize) -> u32 {
+LL | |     arr[i]
+LL | | }
+   | |_^
+   |
+note: the last call in that path, to `core::panicking::panic_bounds_check`
+  --> $DIR/forbidden_reach.rs:30:5
+   |
+LL |     arr[i]
+   |     ^^^^^^
+   = help: break the path (each arrow is a real call in this crate), or relax the `forbidden-reach` rule for `index_root` if the call is fine
+
+warning: 2 warnings emitted
 
