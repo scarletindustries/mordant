@@ -57,6 +57,7 @@ mod runtime_typestate;
 mod same_match_twice;
 mod sentinel_integer;
 mod some_still_unchecked;
+mod source_rev;
 mod stale_across_reentry;
 mod stale_panic_message;
 mod stale_safety_comment;
@@ -188,6 +189,7 @@ pub struct MordantConfig {
 #[unsafe(no_mangle)]
 pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintStore) {
     dylint_linting::init_config(sess);
+    source_rev::register(s);
     let config: MordantConfig = dylint_linting::config_or_default(env!("CARGO_PKG_NAME"));
     let config: &'static MordantConfig = Box::leak(Box::new(config));
     baseline::setup(&config.baseline);
