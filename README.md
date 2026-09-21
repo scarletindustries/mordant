@@ -102,7 +102,7 @@ The lints come in families, and each family is a lint group whose name is in its
 
 | lint                         | flags                                                                                                                                                                     |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `unused_pub`                 | a `pub` item that no crate in the workspace names, calls or imports: rustc's `dead_code` skips it because `pub` alone makes it reachable; judged across `--workspace`     |
+| `unused_pub`                 | a `pub` item that no crate in the run names, calls or imports: rustc's `dead_code` skips it because `pub` alone makes it reachable; judged once the whole run is built, so `--all-targets` counts what tests use |
 
 ### Custom (`mordant_custom`)
 
@@ -128,10 +128,10 @@ Add `--rev <commit>` to pin the lints, so they change only when you move the pin
 Run the lints:
 
 ```sh
-cargo mordant --workspace
+cargo mordant --workspace --all-targets
 ```
 
-Every option other than `--fix` goes to `cargo check` as written. The run builds into `target/mordant/check`, apart from your usual builds. `MORDANT_RUSTFLAGS` passes rustc flags to the linted crates only, so `MORDANT_RUSTFLAGS="-D warnings"` fails a CI run on any finding without rebuilding the dependencies.
+Every option other than `--fix` goes to `cargo check` as written. `--all-targets` lints tests, benches and examples too, and lets `unused_pub` count what they use. The run builds into `target/mordant/check`, apart from your usual builds. `MORDANT_RUSTFLAGS` passes rustc flags to the linted crates only, so `MORDANT_RUSTFLAGS="-D warnings"` fails a CI run on any finding without rebuilding the dependencies.
 
 Findings are warnings, so a workspace that denies warnings (`[workspace.lints.rust] warnings = "deny"`, `RUSTFLAGS=-Dwarnings`) turns the first one in a crate into an error and never sees the rest. Run under a baseline instead (see [Ratchet](#ratchet)): with one configured, mordant reports new findings as warnings that no lint level can raise, and such a workspace needs no extra flags.
 

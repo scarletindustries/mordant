@@ -15,6 +15,7 @@ fn workspace(name: &str, files: &[(&str, &str)]) -> PathBuf {
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("src")).expect("create the workspace");
+    fs::create_dir_all(root.join("tests")).expect("create the workspace");
     fs::write(
         root.join("Cargo.toml"),
         "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n",
@@ -27,12 +28,19 @@ fn workspace(name: &str, files: &[(&str, &str)]) -> PathBuf {
 }
 
 fn cargo_mordant(root: &Path) -> Output {
+    cargo_mordant_with(root, &[], &[])
+}
+
+/// `cargo mordant <args>` in `root`, with `env` added.
+fn cargo_mordant_with(root: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
     Command::new(CARGO_MORDANT)
         .arg("mordant")
+        .args(args)
         .current_dir(root)
         .env("CARGO_TARGET_DIR", root.join("target"))
         .env_remove("MORDANT_TOML")
         .env_remove("MORDANT_RUSTFLAGS")
+        .envs(env.iter().copied())
         .output()
         .expect("run cargo-mordant")
 }
@@ -100,9 +108,8 @@ fn list_prints_each_lint_with_its_level() {
     assert!(names.contains(&"unused_pub"), "{names:?}");
 }
 
-/// `cargo new` names a package's library and binary alike. The binary is
-/// compiled after the library and uses it, so it is the one that reports
-/// the library's items, and what it calls is used.
+/// `cargo new` names a package's library and binary alike, and what the
+/// binary calls in the library is used.
 #[test]
 fn unused_pub_counts_uses_from_a_binary_named_like_its_library() {
     let root = workspace(
@@ -118,4 +125,115 @@ fn unused_pub_counts_uses_from_a_binary_named_like_its_library() {
     let out = stderr(&cargo_mordant(&root));
     assert!(out.contains("`demo::never_called` is public"), "{out}");
     assert!(!out.contains("`demo::called` is public"), "{out}");
+}
+
+const LIB: &str = "pub fn by_unit_test() {}\n\npub fn by_integration_test() {}\n\n\
+                   pub fn by_nothing() {}\n\n\
+                   #[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        \
+                   super::by_unit_test();\n    }\n}\n";
+
+const BIN: &str = "pub fn by_bin_test() {}\n\nfn main() {}\n\n\
+                   #[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        \
+                   super::by_bin_test();\n    }\n}\n";
+
+const INTEGRATION_TEST: &str = "#[test]\nfn t() {\n    demo::by_integration_test();\n}\n";
+
+fn tested(name: &str) -> PathBuf {
+    workspace(
+        name,
+        &[
+            ("src/lib.rs", LIB),
+            ("src/main.rs", BIN),
+            ("tests/it.rs", INTEGRATION_TEST),
+        ],
+    )
+}
+
+/// With `--all-targets` the tests are part of the run, and what they use is
+/// used. Without it they are not, and the records they left in the run
+/// before are not read.
+#[test]
+fn unused_pub_counts_what_tests_use_when_they_are_built() {
+    let root = tested("tests_count");
+    let all = stderr(&cargo_mordant_with(&root, &["--all-targets"], &[]));
+    assert!(all.contains("`demo::by_nothing` is public"), "{all}");
+    for used in ["by_unit_test", "by_integration_test", "by_bin_test"] {
+        assert!(
+            !all.contains(&format!("::{used}` is public")),
+            "{used}: {all}"
+        );
+    }
+
+    let plain = stderr(&cargo_mordant(&root));
+    for unused in [
+        "by_nothing",
+        "by_unit_test",
+        "by_integration_test",
+        "by_bin_test",
+    ] {
+        assert!(
+            plain.contains(&format!("::{unused}` is public")),
+            "{unused}: {plain}"
+        );
+    }
+}
+
+/// Asked for JSON, cargo's messages come through and the findings arrive as
+/// cargo would have printed them, for the package whose file they are in.
+#[test]
+fn unused_pub_findings_are_compiler_messages_in_json() {
+    let root = tested("json");
+    let out = cargo_mordant_with(&root, &["--message-format=json"], &[]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let messages: Vec<serde_json::Value> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("every stdout line is JSON"))
+        .collect();
+    assert!(messages.iter().any(|m| m["reason"] == "compiler-artifact"));
+    let finding = messages
+        .iter()
+        .find(|m| m["reason"] == "compiler-message" && m["message"]["code"]["code"] == "unused_pub")
+        .expect("an unused_pub compiler-message");
+    assert!(
+        finding["package_id"]
+            .as_str()
+            .is_some_and(|id| id.contains("demo")),
+        "{finding}"
+    );
+    assert_eq!(finding["message"]["spans"][0]["file_name"], "src/lib.rs");
+}
+
+/// `MORDANT_RUSTFLAGS="-D warnings"` fails the run on an unused item as on
+/// any other finding.
+#[test]
+fn unused_pub_findings_fail_the_run_under_deny_warnings() {
+    let root = tested("deny");
+    let out = cargo_mordant_with(
+        &root,
+        &["--all-targets"],
+        &[("MORDANT_RUSTFLAGS", "-D warnings")],
+    );
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("error: function `demo::by_nothing` is public"),
+        "{stderr}"
+    );
+}
+
+/// A unit cargo does not rebuild is judged from what it recorded before;
+/// with those records gone, `unused_pub` says so instead of calling
+/// everything unused.
+#[test]
+fn unused_pub_names_the_units_whose_records_are_missing() {
+    let root = tested("missing");
+    stderr(&cargo_mordant(&root));
+    fs::remove_dir_all(root.join("target/mordant/unused_pub")).expect("remove the records");
+    let out = stderr(&cargo_mordant(&root));
+    assert!(out.contains("did not judge the workspace"), "{out}");
+    assert!(!out.contains("is public, but"), "{out}");
 }

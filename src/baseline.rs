@@ -131,10 +131,6 @@ fn cargo_target_dir() -> Option<PathBuf> {
 
 /// `${CARGO_TARGET_DIR or <root>/target}`, a relative `CARGO_TARGET_DIR`
 /// taken from the workspace root as cargo does.
-pub(crate) fn target_dir(root: &Path) -> PathBuf {
-    resolve_target_dir(root, cargo_target_dir().as_deref())
-}
-
 fn resolve_target_dir(root: &Path, target_dir: Option<&Path>) -> PathBuf {
     match target_dir {
         Some(dir) => root.join(dir),

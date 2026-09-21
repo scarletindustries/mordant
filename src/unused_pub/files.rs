@@ -1,16 +1,18 @@
-//! The two files each member writes under `<target>/mordant/unused_pub/`.
-//! `<crate>.defs` has one line per `pub` item a library defines.
-//! `<package>.<crate>.<lib|bin>.refs` has one line per workspace item the
-//! crate uses. Items are keyed by crate name plus definition path, which
-//! reads the same from every crate. A file is written whole under a
-//! temporary name and renamed, so a reader never sees half of one.
+//! The files each compilation of a member writes under
+//! `<target>/mordant/unused_pub/`, named for its [`Unit`]. `<unit>.refs` has
+//! one line per workspace item the compilation uses. `<unit>.defs` has one
+//! line per `pub` item it defines, written by a library's or a binary's own
+//! build and not by its test build. Items are keyed by crate name plus
+//! definition path, which reads the same from every crate. A file is
+//! written whole under a temporary name and renamed, so a reader never sees
+//! half of one.
 
 use std::collections::{BTreeSet, HashSet};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use rustc_hir::def_id::DefId;
 
-use super::workspace::Kind;
 use rustc_lint::LateContext;
 use rustc_middle::ty::TyCtxt;
 use rustc_span::{BytePos, FileName, Span, SyntaxContext};
@@ -36,24 +38,65 @@ pub struct Def {
 
 /// Crate name plus definition path: `bun_core::fmt::raw`,
 /// `bun_css::{impl#3}::eql`. The same string whichever crate computes it.
+/// An item of a binary carries `[bin]` after the crate name: a package's
+/// library and binary are often both the crate `tool`, and nothing outside
+/// the binary can name its items.
 pub fn key(tcx: TyCtxt<'_>, def_id: DefId) -> String {
+    let bin = if def_id.is_local() && std::env::var_os("CARGO_BIN_NAME").is_some() {
+        "[bin]"
+    } else {
+        ""
+    };
     format!(
-        "{}{}",
+        "{}{bin}{}",
         tcx.crate_name(def_id.krate),
         tcx.def_path(def_id).to_string_no_crate_verbose()
     )
 }
 
-pub fn defs_path(dir: &Path, crate_name: &str) -> PathBuf {
-    dir.join(format!("{crate_name}.defs"))
+/// One compilation cargo runs: a target's crate root, and whether it is
+/// built as a test harness. `cargo mordant` names the same units from
+/// cargo's own report of the run.
+pub struct Unit {
+    pub src: PathBuf,
+    pub test: bool,
 }
 
-pub fn refs_path(dir: &Path, package: &str, crate_name: &str, kind: Kind) -> PathBuf {
-    let kind = match kind {
-        Kind::Lib => "lib",
-        Kind::Bin => "bin",
+impl Unit {
+    /// The stem both files of this unit are named with. The path is
+    /// canonical, so rustc's relative path and cargo's absolute one agree.
+    fn stem(&self) -> String {
+        let src = std::fs::canonicalize(&self.src).unwrap_or_else(|_| self.src.clone());
+        let mut hasher = DefaultHasher::new();
+        src.hash(&mut hasher);
+        self.test.hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
+    }
+
+    pub fn defs(&self, dir: &Path) -> PathBuf {
+        dir.join(format!("{}.defs", self.stem()))
+    }
+
+    pub fn refs(&self, dir: &Path) -> PathBuf {
+        dir.join(format!("{}.refs", self.stem()))
+    }
+}
+
+/// The units `cargo mordant` saw in a run, one per line as `<0|1>\t<path>`:
+/// whether it is a test build, and its crate root.
+pub fn read_units(path: &Path) -> Vec<Unit> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
     };
-    dir.join(format!("{package}.{crate_name}.{kind}.refs"))
+    text.lines()
+        .filter_map(|line| {
+            let (test, src) = line.split_once('\t')?;
+            Some(Unit {
+                src: src.into(),
+                test: test == "1",
+            })
+        })
+        .collect()
 }
 
 pub fn write_defs<'a>(path: &Path, defs: impl Iterator<Item = &'a Def>) {
@@ -106,26 +149,10 @@ pub fn all_def_keys(dir: &Path) -> HashSet<String> {
     keys
 }
 
-/// The union of every `.refs` file in `dir`. A file whose package is no
-/// longer a member is deleted instead, so a removed crate stops keeping
-/// items in use.
-pub fn all_refs(dir: &Path, members: &BTreeSet<String>) -> HashSet<String> {
-    let mut refs = HashSet::new();
-    for path in files_with_extension(dir, "refs") {
-        let package = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .and_then(|n| n.split('.').next())
-            .unwrap_or("");
-        if !members.contains(package) {
-            let _ = std::fs::remove_file(&path);
-            continue;
-        }
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            refs.extend(text.lines().map(str::to_string));
-        }
-    }
-    refs
+/// The keys a `.refs` file lists; `None` if it is missing.
+pub fn read_refs(path: &Path) -> Option<HashSet<String>> {
+    let text = std::fs::read_to_string(path).ok()?;
+    Some(text.lines().map(str::to_string).collect())
 }
 
 fn files_with_extension(dir: &Path, ext: &str) -> Vec<PathBuf> {
