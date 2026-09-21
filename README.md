@@ -131,7 +131,7 @@ Run the lints:
 cargo mordant --workspace --all-targets
 ```
 
-Every option other than `--fix` goes to `cargo check` as written. `--all-targets` lints tests, benches and examples too, and lets `unused_pub` count what they use. The run builds into `target/mordant/check`, apart from your usual builds. `MORDANT_RUSTFLAGS` passes rustc flags to the linted crates only, so `MORDANT_RUSTFLAGS="-D warnings"` fails a CI run on any finding without rebuilding the dependencies.
+Every option other than `--fix` goes to `cargo check` as written. `--all-targets` lints tests, benches and examples too, and lets `unused_pub` count what they use. `unused_pub` judges a member only when every member that depends on it is in the run, so a run under `-p` says nothing about the crates the rest of the workspace uses. The run builds into `target/mordant/check`, apart from your usual builds. `MORDANT_RUSTFLAGS` passes rustc flags to the linted crates only, so `MORDANT_RUSTFLAGS="-D warnings"` fails a CI run on any finding without rebuilding the dependencies.
 
 Findings are warnings, so a workspace that denies warnings (`[workspace.lints.rust] warnings = "deny"`, `RUSTFLAGS=-Dwarnings`) turns the first one in a crate into an error and never sees the rest. Run under a baseline instead (see [Ratchet](#ratchet)): with one configured, mordant reports new findings as warnings that no lint level can raise, and such a workspace needs no extra flags.
 

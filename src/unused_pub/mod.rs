@@ -53,7 +53,9 @@ rustc_lint::declare_lint! {
     /// compiled first. With `--all-targets` that includes tests, benches and
     /// examples, and an item only they use is used. A crate compiled without
     /// `cargo mordant` is judged alone. A use that only exists under a `cfg`,
-    /// target or feature not compiled in this run is not seen.
+    /// target or feature not compiled in this run is not seen. A member is
+    /// judged only when every member that depends on it is in the run too:
+    /// under `-p`, the crates the rest of the workspace uses are left alone.
     pub UNUSED_PUB,
     Warn,
     "a public item that no crate in the workspace uses"

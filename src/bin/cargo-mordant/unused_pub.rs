@@ -77,7 +77,9 @@ impl Severity {
     }
 }
 
-fn judge<'a>(facts: &Path, units: &'a [RunUnit]) -> Records<'a> {
+/// `judged` names the members whose items the run can judge. Every unit's
+/// uses count, whatever member it is of.
+fn judge<'a>(facts: &Path, units: &'a [RunUnit], judged: &HashSet<&str>) -> Records<'a> {
     let mut refs = HashSet::new();
     let mut found = Vec::new();
     let mut sections = BTreeSet::new();
@@ -100,7 +102,9 @@ fn judge<'a>(facts: &Path, units: &'a [RunUnit]) -> Records<'a> {
             Some(unit_refs) => refs.extend(unit_refs),
             None => missing.push(unit.src.as_path()),
         }
-        if let Some(defs) = records::read_defs(&unit.defs(facts)) {
+        if judged.contains(run_unit.package_id.as_str())
+            && let Some(defs) = records::read_defs(&unit.defs(facts))
+        {
             sections.insert(defs.section.clone());
             found.extend(defs.defs.into_iter().map(|def| Finding {
                 def,
@@ -131,12 +135,13 @@ pub(crate) fn report(
     root: &Path,
     facts: &Path,
     units: &[RunUnit],
+    judged: &HashSet<&str>,
     output: &Output,
     styled: bool,
     baseline: Option<&str>,
 ) -> bool {
     let mut printer = Printer::new(root, output, styled, units.first());
-    let (unused, sections) = match judge(facts, units) {
+    let (unused, sections) = match judge(facts, units, judged) {
         Records::Missing(units) => {
             let named: Vec<String> = units
                 .iter()

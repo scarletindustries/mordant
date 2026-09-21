@@ -13,6 +13,7 @@
 //! This binary does not link the compiler, so it starts, and can say what is
 //! missing, where the toolchain it was built with is gone.
 
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fmt::Display;
@@ -59,6 +60,102 @@ struct Metadata {
     workspace_root: PathBuf,
     target_directory: PathBuf,
     workspace_members: Vec<String>,
+    packages: Vec<Package>,
+}
+
+/// A member, as `cargo metadata --no-deps` lists it.
+#[derive(serde::Deserialize)]
+struct Package {
+    id: String,
+    name: String,
+    manifest_path: PathBuf,
+    dependencies: Vec<Dependency>,
+}
+
+#[derive(serde::Deserialize)]
+struct Dependency {
+    /// The package's name, whatever the manifest renames it to.
+    name: String,
+    /// Set for a path dependency, which is how one member names another.
+    path: Option<PathBuf>,
+}
+
+impl Metadata {
+    /// The members whose items this run can judge: those that no member
+    /// the run leaves out depends on, directly or through others, for any
+    /// kind of target. A member left out, as the rest of the workspace is
+    /// under `-p`, may hold the only use of an item, and its records are not
+    /// read.
+    ///
+    /// An edge is a path dependency on the member's directory, or failing a
+    /// path, a dependency of the member's name: one more edge than there is
+    /// only keeps an item from being judged, and one fewer would call it
+    /// unused.
+    fn judged(&self, args: &[OsString], units: &[unused_pub::RunUnit]) -> HashSet<&str> {
+        let mut direct: HashMap<&str, Vec<&str>> = HashMap::new();
+        for package in &self.packages {
+            for dep in &package.dependencies {
+                let on = self.packages.iter().find(|p| match &dep.path {
+                    Some(path) => p.manifest_path.parent() == Some(path.as_path()),
+                    None => p.name == dep.name,
+                });
+                if let Some(on) = on {
+                    direct.entry(&on.id).or_default().push(&package.id);
+                }
+            }
+        }
+        let left_out = self.left_out(args, units);
+        let judged = |package: &&Package| {
+            let mut seen: HashSet<&str> = HashSet::new();
+            let mut queue = vec![package.id.as_str()];
+            while let Some(id) = queue.pop() {
+                for dependent in direct.get(id).into_iter().flatten() {
+                    if left_out.contains(dependent) {
+                        return false;
+                    }
+                    if seen.insert(dependent) {
+                        queue.push(dependent);
+                    }
+                }
+            }
+            true
+        };
+        self.packages
+            .iter()
+            .filter(judged)
+            .map(|p| p.id.as_str())
+            .collect()
+    }
+
+    /// The members the run does not select. Under `--workspace` they are
+    /// the ones `--exclude` names. A member the run selects and builds
+    /// nothing of (its only target wants a feature that is off) is not left
+    /// out: there is no use in it to miss. Any other selection is read off
+    /// the units cargo built, which is every member the run selected and a
+    /// few it only depends on.
+    fn left_out(&self, args: &[OsString], units: &[unused_pub::RunUnit]) -> HashSet<&str> {
+        let excluded = option_values(args, "--exclude");
+        let named = |spec: &&OsStr| {
+            spec.to_str().is_some_and(|s| {
+                s.chars()
+                    .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+            })
+        };
+        if args.iter().any(|a| a == "--workspace" || a == "--all") && excluded.iter().all(named) {
+            return self
+                .packages
+                .iter()
+                .filter(|p| excluded.iter().any(|spec| *spec == p.name.as_str()))
+                .map(|p| p.id.as_str())
+                .collect();
+        }
+        let built: HashSet<&str> = units.iter().map(|u| u.package_id.as_str()).collect();
+        self.packages
+            .iter()
+            .map(|p| p.id.as_str())
+            .filter(|id| !built.contains(id))
+            .collect()
+    }
 }
 
 /// What `--message-format` asked for.
@@ -195,6 +292,7 @@ fn main() -> ExitCode {
         &meta.workspace_root,
         &facts,
         &units,
+        &meta.judged(&args, &units),
         &output,
         styled,
         baseline.as_deref(),
@@ -338,18 +436,23 @@ fn metadata(cargo: &OsStr, manifest_path: Option<&OsStr>) -> Option<Metadata> {
 
 /// The value of `--name <value>` or `--name=<value>` in cargo's arguments.
 fn option_value<'a>(args: &'a [OsString], name: &str) -> Option<&'a OsStr> {
+    option_values(args, name).into_iter().next()
+}
+
+/// Every value `--name` is given.
+fn option_values<'a>(args: &'a [OsString], name: &str) -> Vec<&'a OsStr> {
+    let mut values = Vec::new();
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         if arg == name {
-            return iter.next().map(OsString::as_os_str);
-        }
-        if let Some(value) = arg
+            values.extend(iter.next().map(OsString::as_os_str));
+        } else if let Some(value) = arg
             .to_str()
             .and_then(|a| a.strip_prefix(name))
             .and_then(|a| a.strip_prefix('='))
         {
-            return Some(OsStr::new(value));
+            values.push(OsStr::new(value));
         }
     }
-    None
+    values
 }

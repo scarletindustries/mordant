@@ -200,6 +200,68 @@ fn unused_pub_matches_a_unit_tests_use_past_a_cfg_test_impl() {
     assert!(!out.contains("`demo::A::get` is public"), "{out}");
 }
 
+/// A workspace of three members: the library `a`; the binary `b`, which
+/// depends on it; and `c`, which depends on it too and whose only target
+/// wants a feature that is off, so `--workspace` selects it and builds
+/// nothing of it.
+fn members(name: &str, a_lib: &str, b_main: &str) -> PathBuf {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _ = fs::remove_dir_all(&root);
+    let package = |name: &str, rest: &str| {
+        format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n{rest}")
+    };
+    let on_a = "[dependencies]\na = { path = \"../a\" }\n";
+    let files = [
+        (
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"a\", \"b\", \"c\"]\nresolver = \"2\"\n".to_string(),
+        ),
+        ("a/Cargo.toml", package("a", "")),
+        ("a/src/lib.rs", a_lib.to_string()),
+        ("b/Cargo.toml", package("b", on_a)),
+        ("b/src/main.rs", b_main.to_string()),
+        (
+            "c/Cargo.toml",
+            package(
+                "c",
+                &format!(
+                    "[features]\nextra = []\n\n[[bin]]\nname = \"c\"\npath = \"src/main.rs\"\n\
+                     required-features = [\"extra\"]\n\n{on_a}"
+                ),
+            ),
+        ),
+        ("c/src/main.rs", "fn main() {}\n".to_string()),
+    ];
+    for (path, text) in files {
+        let path = root.join(path);
+        fs::create_dir_all(path.parent().expect("a file in the workspace"))
+            .expect("create the member");
+        fs::write(path, text).expect("write a workspace file");
+    }
+    root
+}
+
+/// A run of part of the workspace cannot see what the rest of it uses, so it
+/// leaves alone a member that something outside the run depends on. A run
+/// of the whole workspace judges it, also when it builds nothing of one of
+/// its dependents.
+#[test]
+fn unused_pub_judges_a_member_only_with_its_dependents_in_the_run() {
+    let root = members(
+        "partial",
+        "pub fn by_b() {}\n\npub fn by_nothing() {}\n",
+        "fn main() {\n    a::by_b();\n}\n",
+    );
+    for run in [&["-p", "a"][..], &["--workspace", "--exclude", "b"][..]] {
+        let out = stderr(&cargo_mordant_with(&root, run, &[]));
+        assert!(!out.contains("is public, but"), "{run:?}: {out}");
+    }
+
+    let whole = stderr(&cargo_mordant_with(&root, &["--workspace"], &[]));
+    assert!(whole.contains("`a::by_nothing` is public"), "{whole}");
+    assert!(!whole.contains("`a::by_b` is public"), "{whole}");
+}
+
 /// Asked for JSON, cargo's messages come through and the findings arrive as
 /// cargo would have printed them, for the package whose file they are in.
 #[test]
