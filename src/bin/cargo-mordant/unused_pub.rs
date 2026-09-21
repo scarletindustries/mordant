@@ -143,18 +143,28 @@ pub(crate) fn report(
     let mut printer = Printer::new(root, output, styled, units.first());
     let (unused, sections) = match judge(facts, units, judged) {
         Records::Missing(units) => {
-            let named: Vec<String> = units
-                .iter()
-                .map(|src| format!("`{}`", src.strip_prefix(root).unwrap_or(src).display()))
-                .collect();
-            printer.plain(format!(
-                "mordant: `unused_pub` did not judge the workspace: {} left no record of what \
-                 it uses; remove `{}`, which holds those records and the build `cargo mordant` \
-                 reuses, then run again",
-                join(&named),
-                facts.parent().unwrap_or(facts).display(),
-            ));
-            return false;
+            // Cargo can build one target more than once in a run.
+            let mut named: Vec<String> = Vec::new();
+            for src in units {
+                let name = format!("`{}`", src.strip_prefix(root).unwrap_or(src).display());
+                if !named.contains(&name) {
+                    named.push(name);
+                }
+            }
+            // An error: a run that judged nothing must not pass for a run
+            // that found nothing, least of all where `over-baseline.txt`
+            // staying empty is what CI tests.
+            printer.plain(
+                Severity::Error,
+                format!(
+                    "mordant: `unused_pub` did not judge the workspace: {} left no record of \
+                     what it uses; remove `{}`, which holds those records and the build `cargo \
+                     mordant` reuses, then run again",
+                    join(&named),
+                    facts.parent().unwrap_or(facts).display(),
+                ),
+            );
+            return true;
         }
         Records::Judged { unused, sections } => (unused, sections),
     };
@@ -193,9 +203,10 @@ pub(crate) fn report(
     let status =
         baseline_file::status_file(&baseline_root, baseline_file::cargo_target_dir().as_deref());
     for (section, n) in over {
-        printer.plain(format!(
-            "mordant: {n} finding(s) over the baseline in {section}"
-        ));
+        printer.plain(
+            Severity::Warning,
+            format!("mordant: {n} finding(s) over the baseline in {section}"),
+        );
         baseline_file::append_status(&status, section, n);
     }
     printer.tally()
@@ -299,10 +310,10 @@ impl<'a> Printer<'a> {
             def.descr, def.path
         );
         let Some(source) = self.source(&def.file) else {
-            self.plain(format!(
-                "mordant: {message} ({} could not be read)",
-                def.file
-            ));
+            self.plain(
+                Severity::Warning,
+                format!("mordant: {message} ({} could not be read)", def.file),
+            );
             return;
         };
         // Over the baseline, it is the baseline's warning, not the lint.
@@ -380,11 +391,11 @@ impl<'a> Printer<'a> {
         emit(finding.unit, diagnostic);
     }
 
-    /// A message about no one item: `mordant: ...` as a plain warning.
-    fn plain(&mut self, message: String) {
+    /// A message about no one item: `mordant: ...`, with no code and no span.
+    fn plain(&mut self, severity: Severity, message: String) {
         let report = |renderer: &Renderer| {
             renderer.render(&[Group::with_title(
-                Level::WARNING.primary_title(message.as_str()),
+                severity.level().primary_title(message.as_str()),
             )])
         };
         match (self.output, self.fallback) {
@@ -394,7 +405,7 @@ impl<'a> Printer<'a> {
                     "$message_type": "diagnostic",
                     "message": message,
                     "code": null,
-                    "level": "warning",
+                    "level": severity.word(),
                     "spans": [],
                     "children": [],
                     "rendered": rendered,

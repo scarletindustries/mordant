@@ -311,15 +311,23 @@ fn unused_pub_findings_fail_the_run_under_deny_warnings() {
 
 /// A unit cargo does not rebuild is judged from what it recorded before;
 /// with those records gone, `unused_pub` says so instead of calling
-/// everything unused.
+/// everything unused, and the run fails: it judged nothing, which is not the
+/// same as finding nothing.
 #[test]
 fn unused_pub_names_the_units_whose_records_are_missing() {
     let root = tested("missing");
-    stderr(&cargo_mordant(&root));
+    stderr(&cargo_mordant_with(&root, &["--all-targets"], &[]));
     fs::remove_dir_all(root.join("target/mordant/unused_pub")).expect("remove the records");
-    let out = stderr(&cargo_mordant(&root));
-    assert!(out.contains("did not judge the workspace"), "{out}");
-    assert!(!out.contains("is public, but"), "{out}");
+    let out = cargo_mordant_with(&root, &["--all-targets"], &[]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("error: mordant: `unused_pub` did not judge the workspace"),
+        "{stderr}"
+    );
+    // Named once, though the run built it twice: on its own and as a test.
+    assert_eq!(stderr.matches("`src/lib.rs`").count(), 1, "{stderr}");
+    assert!(!stderr.contains("is public, but"), "{stderr}");
 }
 
 /// Test code is where the crate is exercised, not what the lints are about:
