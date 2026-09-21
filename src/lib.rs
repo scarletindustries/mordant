@@ -235,6 +235,22 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
     }
 }
 
+/// The variable that selects baseline write mode.
+pub use baseline_file::WRITE_ENV as BASELINE_WRITE_ENV;
+
+/// The baseline file this compilation is held to, once there is one. With
+/// [`BASELINE_WRITE_ENV`] it decides what the lints report, and rustc sees
+/// neither, so `mordant-driver` names both in the dep-info. Read from the
+/// configuration directly: the driver asks before `register_lints` runs.
+pub fn baseline_path() -> Option<std::path::PathBuf> {
+    let text = std::env::var(protocol::CONFIG_ENV).ok()?;
+    let name = parse_config(&text).ok()?.baseline?;
+    let (_, path) = baseline::locate(&name)?;
+    // A file that is not there would make cargo rebuild the crate on every
+    // run. Its first write sets the variable, which reruns the lints anyway.
+    path.is_file().then_some(path)
+}
+
 /// Every lint this pack registers, whatever the configuration: a disabled
 /// lint stays registered.
 pub fn lints() -> Vec<&'static rustc_lint::Lint> {

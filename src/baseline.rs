@@ -83,10 +83,16 @@ pub fn setup(file_name: &Option<String>) {
     let _ = STATE.set(file_name.as_ref().and_then(|f| init(f)));
 }
 
+/// The baseline named `file_name`, as this compilation finds it: `(the
+/// directory it is in, its path)`.
+pub fn locate(file_name: &str) -> Option<(PathBuf, PathBuf)> {
+    let manifest_dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR")?);
+    baseline_file::find(&manifest_dir, file_name, baseline_file::write_mode())
+}
+
 fn init(file_name: &str) -> Option<Baseline> {
     let record = baseline_file::write_mode();
-    let manifest_dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR")?);
-    let (root, path) = baseline_file::find(&manifest_dir, file_name, record)?;
+    let (root, path) = locate(file_name)?;
     let mode = if record {
         Mode::Record {
             path,

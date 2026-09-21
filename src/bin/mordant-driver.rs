@@ -28,6 +28,7 @@ use rustc_session::config::ErrorOutputType;
 use rustc_session::{EarlyDiagCtxt, Session};
 use rustc_span::Symbol;
 
+use mordant::BASELINE_WRITE_ENV;
 use mordant::protocol::{CONFIG_ENV, FACTS_ENV, LIST_ARG};
 
 /// Extra rustc flags for the linted crates only, split on whitespace:
@@ -146,20 +147,25 @@ impl rustc_driver::Callbacks for MordantCallbacks {
 /// Inputs rustc does not see that change what the lints report, written to
 /// the dep-info file so cargo reruns a crate when one changes: the
 /// configuration, the extra flags, where `unused_pub` keeps its records,
-/// and this binary, which a reinstall or a rebuild replaces with one
-/// carrying different lints.
+/// the baseline and whether this run writes it, and this binary, which a
+/// reinstall or a rebuild replaces with one carrying different lints.
+///
+/// Without the baseline among them, a run that writes it over a build an
+/// earlier run left recorded nothing, and a baseline that changed was not
+/// read: cargo replayed the warnings weighed against the old one.
 fn track_state(sess: &Session) {
     let mut env_depinfo = sess.env_depinfo.borrow_mut();
-    for var in [CONFIG_ENV, RUSTFLAGS_ENV, FACTS_ENV] {
+    for var in [CONFIG_ENV, RUSTFLAGS_ENV, FACTS_ENV, BASELINE_WRITE_ENV] {
         env_depinfo.insert((
             Symbol::intern(var),
             env::var(var).ok().map(|value| Symbol::intern(&value)),
         ));
     }
-    if let Ok(exe) = env::current_exe()
-        && let Some(exe) = exe.to_str()
-    {
-        sess.file_depinfo.borrow_mut().insert(Symbol::intern(exe));
+    let mut file_depinfo = sess.file_depinfo.borrow_mut();
+    for file in [env::current_exe().ok(), mordant::baseline_path()] {
+        if let Some(file) = file.as_deref().and_then(Path::to_str) {
+            file_depinfo.insert(Symbol::intern(file));
+        }
     }
 }
 

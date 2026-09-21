@@ -76,6 +76,46 @@ fn dylint_toml_is_read_and_a_change_to_it_rechecks() {
     assert!(removed.contains("#[warn(discarded_error)]"), "{removed}");
 }
 
+/// The baseline is an input of every compilation too. A run that writes it
+/// reruns the lints on a crate cargo would otherwise have left alone, and so
+/// does a change to the file.
+#[test]
+fn a_baseline_write_and_a_change_to_the_baseline_recheck() {
+    let root = workspace(
+        "baseline_inputs",
+        &[
+            ("src/main.rs", MAIN),
+            (
+                "dylint.toml",
+                "[mordant]\nbaseline = \"mordant-baseline.toml\"\n",
+            ),
+        ],
+    );
+    let unheld = stderr(&cargo_mordant(&root));
+    assert!(unheld.contains("#[warn(discarded_error)]"), "{unheld}");
+
+    stderr(&cargo_mordant_with(
+        &root,
+        &[],
+        &[("MORDANT_BASELINE_WRITE", "1")],
+    ));
+    let baseline =
+        fs::read_to_string(root.join("mordant-baseline.toml")).expect("baseline written");
+    assert!(
+        baseline.contains("\"discarded_error:src/main.rs\" = 1"),
+        "{baseline}"
+    );
+    let held = stderr(&cargo_mordant(&root));
+    assert!(!held.contains("discarded_error"), "{held}");
+
+    fs::write(root.join("mordant-baseline.toml"), "").expect("empty the baseline");
+    let over = stderr(&cargo_mordant(&root));
+    assert!(
+        over.contains("`discarded_error` over the mordant baseline (0 recorded for src/main.rs)"),
+        "{over}"
+    );
+}
+
 /// `mordant-action` reads lint names off this, one indented
 /// `name  level  description` line per lint under a `mordant` heading.
 #[test]
