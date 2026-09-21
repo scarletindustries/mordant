@@ -431,7 +431,13 @@ fn report(cx: &LateContext<'_>, span: Span, def: &Def) {
 /// Prints the findings of every library this crate reports for, other
 /// than itself, from the files those libraries and their users left.
 fn report_libraries(cx: &LateContext<'_>, ws: &Workspace, own: &str) {
-    let libraries: Vec<&String> = ws.reports.iter().filter(|l| l.as_str() != own).collect();
+    // A reporting library has judged itself already. A binary is never one
+    // of the libraries, even when it shares its package's library's name.
+    let libraries: Vec<&String> = ws
+        .reports
+        .iter()
+        .filter(|l| ws.kind == workspace::Kind::Bin || l.as_str() != own)
+        .collect();
     if libraries.is_empty() {
         return;
     }

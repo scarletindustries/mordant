@@ -1,5 +1,5 @@
 //! `cargo mordant` end to end: the binaries `cargo test` builds, run the way
-//! a user runs them, over a one-crate workspace each test writes afresh.
+//! a user runs them, over a one-package workspace each test writes afresh.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,7 +10,8 @@ const CARGO_MORDANT: &str = env!("CARGO_BIN_EXE_cargo-mordant");
 const MAIN: &str = "fn fallible() -> Result<u32, u32> {\n    Err(1)\n}\n\n\
                     fn main() {\n    fallible().ok();\n}\n";
 
-fn workspace(name: &str) -> PathBuf {
+/// A package `demo` holding `files`, its own workspace.
+fn workspace(name: &str, files: &[(&str, &str)]) -> PathBuf {
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("src")).expect("create the workspace");
@@ -19,7 +20,9 @@ fn workspace(name: &str) -> PathBuf {
         "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n",
     )
     .expect("write Cargo.toml");
-    fs::write(root.join("src/main.rs"), MAIN).expect("write main.rs");
+    for (path, text) in files {
+        fs::write(root.join(path), text).expect("write a source file");
+    }
     root
 }
 
@@ -47,7 +50,7 @@ fn stderr(out: &Output) -> String {
 /// crate cargo would otherwise have left alone.
 #[test]
 fn dylint_toml_is_read_and_a_change_to_it_rechecks() {
-    let root = workspace("config");
+    let root = workspace("config", &[("src/main.rs", MAIN)]);
     let first = stderr(&cargo_mordant(&root));
     assert!(first.contains("#[warn(discarded_error)]"), "{first}");
 
@@ -95,4 +98,24 @@ fn list_prints_each_lint_with_its_level() {
         .collect();
     assert!(names.contains(&"discarded_error"), "{names:?}");
     assert!(names.contains(&"unused_pub"), "{names:?}");
+}
+
+/// `cargo new` names a package's library and binary alike. The binary is
+/// compiled after the library and uses it, so it is the one that reports
+/// the library's items, and what it calls is used.
+#[test]
+fn unused_pub_counts_uses_from_a_binary_named_like_its_library() {
+    let root = workspace(
+        "same_name",
+        &[
+            (
+                "src/lib.rs",
+                "pub fn called() {}\n\npub fn never_called() {}\n",
+            ),
+            ("src/main.rs", "fn main() {\n    demo::called();\n}\n"),
+        ],
+    );
+    let out = stderr(&cargo_mordant(&root));
+    assert!(out.contains("`demo::never_called` is public"), "{out}");
+    assert!(!out.contains("`demo::called` is public"), "{out}");
 }

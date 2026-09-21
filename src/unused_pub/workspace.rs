@@ -60,8 +60,10 @@ fn crate_name(target: &str) -> String {
     target.replace('-', "_")
 }
 
-/// What cargo is compiling this crate as.
-#[derive(Clone, Copy, PartialEq)]
+/// What cargo is compiling this crate as. A package's library and its
+/// binary are often both named after it, so a crate is told apart by its
+/// name and this together.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Kind {
     Lib,
     Bin,
@@ -102,7 +104,7 @@ pub fn locate(local_crate: &str, kind: Kind) -> Option<Workspace> {
         .join("mordant")
         .join("unused_pub");
     let graph = Graph::new(&meta.packages);
-    let reports = if graph.reporting_crate(me) == Some(local_crate.to_string()) {
+    let reports = if graph.reporting_crate(me) == Some((kind, local_crate.to_string())) {
         graph.owned_by(&package)
     } else {
         BTreeSet::new()
@@ -205,15 +207,14 @@ impl<'a> Graph<'a> {
     /// binary by name if it has any, since a binary is compiled after the
     /// package's own library and may use it, else the library. `None` for
     /// a package that is not a root.
-    fn reporting_crate(&self, package: &Package) -> Option<String> {
+    fn reporting_crate(&self, package: &Package) -> Option<(Kind, String)> {
         if !self.roots().contains(&package.name.as_str()) {
             return None;
         }
-        package
-            .bin_crates()
-            .into_iter()
-            .max()
-            .or_else(|| package.lib_crate())
+        match package.bin_crates().into_iter().max() {
+            Some(bin) => Some((Kind::Bin, bin)),
+            None => package.lib_crate().map(|lib| (Kind::Lib, lib)),
+        }
     }
 
     /// Library crate names of the members whose report belongs to `root`.
@@ -277,8 +278,14 @@ mod tests {
             BTreeSet::from(["app".to_string(), "core".into(), "parse".into()])
         );
         assert!(g.owned_by("shim").is_empty());
-        assert_eq!(g.reporting_crate(&packages[2]), Some("app".into()));
-        assert_eq!(g.reporting_crate(&packages[3]), Some("shim".into()));
+        assert_eq!(
+            g.reporting_crate(&packages[2]),
+            Some((Kind::Lib, "app".into()))
+        );
+        assert_eq!(
+            g.reporting_crate(&packages[3]),
+            Some((Kind::Bin, "shim".into()))
+        );
         assert_eq!(g.reporting_crate(&packages[0]), None);
     }
 
@@ -291,7 +298,23 @@ mod tests {
         );
         let packages = vec![p];
         let g = Graph::new(&packages);
-        assert_eq!(g.reporting_crate(&packages[0]), Some("b_two".into()));
+        assert_eq!(
+            g.reporting_crate(&packages[0]),
+            Some((Kind::Bin, "b_two".into()))
+        );
+    }
+
+    /// `cargo new --lib` plus a `main.rs`: the library and the binary are
+    /// both the crate `tool`, and the binary, not the library, reports.
+    #[test]
+    fn a_library_and_binary_sharing_a_name_report_from_the_binary() {
+        let packages = vec![pkg("tool", &[("tool", "lib"), ("tool", "bin")], &[])];
+        let g = Graph::new(&packages);
+        assert_eq!(
+            g.reporting_crate(&packages[0]),
+            Some((Kind::Bin, "tool".into()))
+        );
+        assert_eq!(g.owned_by("tool"), BTreeSet::from(["tool".to_string()]));
     }
 
     #[test]
