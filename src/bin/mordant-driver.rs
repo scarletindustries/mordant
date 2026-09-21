@@ -65,6 +65,12 @@ fn main() -> ExitCode {
             rustc_driver::run_compiler(&args, &mut PlainCallbacks);
         } else {
             args.push(LINTING_CFG.to_string());
+            // A test build is compiled only for `unused_pub` to see what the
+            // tests use. Its warnings are the crate's own test job's to
+            // report, from the crate's own toolchain, not this nightly's.
+            if args.iter().any(|a| a == "--test") {
+                args.extend(["--cap-lints".to_string(), "allow".to_string()]);
+            }
             if let Ok(flags) = env::var(RUSTFLAGS_ENV) {
                 args.extend(flags.split_whitespace().map(String::from));
             }

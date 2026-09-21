@@ -88,7 +88,9 @@ pub struct UnusedPub {
     keys: HashMap<DefId, Option<String>>,
 }
 
-rustc_lint::impl_lint_pass!(UnusedPub => [UNUSED_PUB]);
+// Declares no lint, so rustc runs it where `unused_pub` is allowed too:
+// every compilation's uses count, whatever its levels.
+rustc_lint::impl_lint_pass!(UnusedPub => []);
 
 impl<'tcx> LateLintPass<'tcx> for UnusedPub {
     fn check_crate(&mut self, cx: &LateContext<'tcx>) {

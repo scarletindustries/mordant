@@ -237,3 +237,82 @@ fn unused_pub_names_the_units_whose_records_are_missing() {
     assert!(out.contains("did not judge the workspace"), "{out}");
     assert!(!out.contains("is public, but"), "{out}");
 }
+
+/// Test code is where the crate is exercised, not what the lints are about:
+/// a test build runs `unused_pub` alone, so a finding in a `#[cfg(test)]`
+/// module or an integration test is not reported, while the same finding
+/// in the crate's own code is, once.
+#[test]
+fn only_unused_pub_runs_on_test_code() {
+    let dropped = "std::fs::read(\"x\").ok();";
+    let root = workspace(
+        "test_code",
+        &[
+            (
+                "src/lib.rs",
+                &format!(
+                    "pub fn run() {{\n    {dropped}\n}}\n\n\
+                     #[cfg(test)]\nmod tests {{\n    #[test]\n    fn t() {{\n        \
+                     {dropped}\n        super::run();\n    }}\n}}\n"
+                ),
+            ),
+            (
+                "tests/it.rs",
+                &format!("#[test]\nfn t() {{\n    {dropped}\n    demo::run();\n}}\n"),
+            ),
+        ],
+    );
+    let out = stderr(&cargo_mordant_with(&root, &["--all-targets"], &[]));
+    assert_eq!(out.matches("`.ok();` converts").count(), 1, "{out}");
+    assert!(out.contains("--> src/lib.rs:2:5"), "{out}");
+}
+
+/// Nor are rustc's own warnings in test code, which the nightly mordant
+/// builds with can raise where the workspace's toolchain does not: under
+/// `-D warnings` they would fail a run over code no mordant lint looked at.
+#[test]
+fn rustc_warnings_in_test_builds_do_not_fail_the_run() {
+    let root = workspace(
+        "test_warnings",
+        &[
+            ("src/lib.rs", "pub fn run() {}\n"),
+            (
+                "tests/it.rs",
+                "#[test]\nfn t() {\n    let unused = 1;\n    demo::run();\n}\n",
+            ),
+        ],
+    );
+    let out = cargo_mordant_with(
+        &root,
+        &["--all-targets"],
+        &[("MORDANT_RUSTFLAGS", "-D warnings")],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(!stderr.contains("unused variable"), "{stderr}");
+}
+
+/// Allowing `unused_pub` in a crate hides that crate's items, not its uses:
+/// what it calls elsewhere in the workspace is still used.
+#[test]
+fn a_crate_allowing_unused_pub_still_records_its_uses() {
+    let root = workspace(
+        "allowed",
+        &[
+            (
+                "src/lib.rs",
+                "pub fn called() {}\n\npub fn never_called() {}\n",
+            ),
+            (
+                "src/main.rs",
+                "#![allow(unknown_lints, unused_pub)]\n\npub fn hidden() {}\n\n\
+                 fn main() {\n    demo::called();\n}\n",
+            ),
+        ],
+    );
+    let out = stderr(&cargo_mordant(&root));
+    assert!(out.contains("`demo::never_called` is public"), "{out}");
+    assert!(!out.contains("`demo::called` is public"), "{out}");
+    assert!(!out.contains("hidden"), "{out}");
+    assert!(!out.contains("did not judge"), "{out}");
+}

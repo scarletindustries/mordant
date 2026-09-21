@@ -225,7 +225,7 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
     };
     let config: &'static MordantConfig = Box::leak(Box::new(config));
     baseline::setup(&config.baseline);
-    let unknown = register(config, s);
+    let unknown = register(config, s, sess.is_test_crate());
     if !unknown.is_empty() {
         sess.dcx().warn(format!(
             "mordant: `disabled` in dylint.toml names no lint of this pack: {}",
@@ -238,7 +238,7 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
 /// lint stays registered.
 pub fn lints() -> Vec<&'static rustc_lint::Lint> {
     let mut store = rustc_lint::LintStore::new();
-    register(Box::leak(Box::default()), &mut store);
+    register(Box::leak(Box::default()), &mut store, false);
     store.get_lints().to_vec()
 }
 
@@ -255,7 +255,15 @@ fn parse_config(text: &str) -> Result<MordantConfig, toml::de::Error> {
 /// Everything `register_lints` does to the store, apart from the session so
 /// a test can run it against a bare `LintStore`. Returns the `disabled`
 /// entries that named nothing.
-fn register(config: &'static MordantConfig, s: &mut rustc_lint::LintStore) -> Vec<String> {
+///
+/// A test build (`--test`) runs `unused_pub` alone, to record what the tests
+/// use. The lints are about the code the tests exercise, and the crate's
+/// own build already checks all of it; test code only consumes it.
+fn register(
+    config: &'static MordantConfig,
+    s: &mut rustc_lint::LintStore,
+    test_build: bool,
+) -> Vec<String> {
     use {
         always_unwrapped_option::AlwaysUnwrappedOption,
         arg_named_like_other_param::ArgNamedLikeOtherParam, bare_bool_args::BareBoolArgs,
@@ -283,6 +291,7 @@ fn register(config: &'static MordantConfig, s: &mut rustc_lint::LintStore) -> Ve
         store: s,
         disabled: &disabled,
         known: Vec::new(),
+        test_build,
     };
     r.add(true, move || StringlyError { config });
     r.add(true, move || KeyNotIdentity::new(config));
@@ -338,8 +347,12 @@ fn register(config: &'static MordantConfig, s: &mut rustc_lint::LintStore) -> Ve
     r.add(config.generic_body_not_generic_enabled, move || {
         GenericBodyNotGeneric::new(config)
     });
+    r.add_recorder(
+        true,
+        vec![unused_pub::UNUSED_PUB],
+        unused_pub::UnusedPub::default,
+    );
     // Last, so its check_crate_post flushes after every lint has recorded.
-    r.add(true, unused_pub::UnusedPub::default);
     r.add(true, || BaselineWriter);
     r.groups(names::GROUPS);
     unknown_names(&disabled, &r.known)
@@ -354,6 +367,8 @@ struct Registrar<'a> {
     /// Every lint name registered so far, to tell which `disabled` entries
     /// name nothing.
     known: Vec<String>,
+    /// Only a pass added with `add_recorder` runs.
+    test_build: bool,
 }
 
 impl Registrar<'_> {
@@ -363,6 +378,27 @@ impl Registrar<'_> {
         make: impl Fn() -> T + sync::DynSend + sync::DynSync + 'static,
     ) {
         let lints = make().get_lints();
+        self.add_pass(enabled && !self.test_build, lints, make);
+    }
+
+    /// `add` for `unused_pub`, whose pass records what every compilation
+    /// uses: it runs in a test build too, and it declares none of `lints`
+    /// to rustc, which skips a pass wherever all its lints are allowed.
+    fn add_recorder<T: for<'tcx> rustc_lint::LateLintPass<'tcx> + 'static>(
+        &mut self,
+        enabled: bool,
+        lints: Vec<&'static rustc_lint::Lint>,
+        make: impl Fn() -> T + sync::DynSend + sync::DynSync + 'static,
+    ) {
+        self.add_pass(enabled, lints, make);
+    }
+
+    fn add_pass<T: for<'tcx> rustc_lint::LateLintPass<'tcx> + 'static>(
+        &mut self,
+        enabled: bool,
+        lints: Vec<&'static rustc_lint::Lint>,
+        make: impl Fn() -> T + sync::DynSend + sync::DynSync + 'static,
+    ) {
         self.store.register_lints(&lints);
         let names: Vec<String> = lints.iter().map(|l| l.name_lower()).collect();
         let run = enabled && !all_disabled(&names, self.disabled);
@@ -534,7 +570,7 @@ fn disabled_names_that_match_no_lint_are_reported() {
 #[cfg(test)]
 fn registered_store(config: MordantConfig) -> (rustc_lint::LintStore, Vec<String>) {
     let mut store = rustc_lint::LintStore::new();
-    let unknown = register(Box::leak(Box::new(config)), &mut store);
+    let unknown = register(Box::leak(Box::new(config)), &mut store, false);
     (store, unknown)
 }
 
