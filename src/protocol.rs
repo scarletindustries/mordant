@@ -21,9 +21,3 @@ pub const LIST_ARG: &str = "--mordant-list";
 /// `unused_pub` to judge once the whole run is done. Unset, each crate is
 /// judged alone, against its own uses.
 pub const FACTS_ENV: &str = "MORDANT_UNUSED_PUB_FACTS";
-
-/// Set only for `cargo mordant`'s last compilation, of an empty crate: a
-/// file naming every unit of the run, one per line as `<0|1>\t<crate root>`
-/// (whether it is a test build, and its source), whose records
-/// `unused_pub` then judges together.
-pub const UNITS_ENV: &str = "MORDANT_UNUSED_PUB_UNITS";

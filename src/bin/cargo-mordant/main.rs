@@ -6,8 +6,9 @@
 //! builds alone.
 //!
 //! `unused_pub` needs every crate of the run before it can say an item is
-//! unused, so its findings come last: cargo reports the units it built, and
-//! one more compilation, of an empty crate, judges their records together.
+//! unused, so its findings come last: the compilations record what they
+//! define and use, cargo reports the units it built, and [`unused_pub`]
+//! judges their records together and prints what it finds.
 //!
 //! This binary does not link the compiler, so it starts, and can say what is
 //! missing, where the toolchain it was built with is gone.
@@ -16,16 +17,21 @@ use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fmt::Display;
 use std::fs;
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, ExitStatus, Stdio};
 
-#[path = "../protocol.rs"]
-mod protocol;
+use serde_json::Value as Json;
 
-/// The empty crate the last compilation builds. Its findings are the
-/// workspace's, and the baseline keeps them under this name.
-const REPORT_CRATE: &str = "mordant_workspace";
+mod unused_pub;
+
+#[path = "../../baseline_file.rs"]
+mod baseline_file;
+#[path = "../../protocol.rs"]
+mod protocol;
+#[path = "../../unused_pub/records.rs"]
+#[allow(dead_code, reason = "the library writes what this binary only reads")]
+mod records;
 
 const USAGE: &str = "\
 Run mordant's lints over a cargo workspace.
@@ -53,36 +59,6 @@ struct Metadata {
     workspace_root: PathBuf,
     target_directory: PathBuf,
     workspace_members: Vec<String>,
-    packages: Vec<Package>,
-}
-
-#[derive(serde::Deserialize)]
-struct Package {
-    id: String,
-    manifest_path: PathBuf,
-    targets: Vec<serde_json::Value>,
-}
-
-/// One line of cargo's JSON output. Only a `compiler-artifact` is read: one
-/// arrives for every unit the run builds, a fresh one included.
-#[derive(serde::Deserialize)]
-struct CargoMessage {
-    reason: String,
-    #[serde(default)]
-    package_id: String,
-    target: Option<ArtifactTarget>,
-    profile: Option<ArtifactProfile>,
-}
-
-#[derive(serde::Deserialize)]
-struct ArtifactTarget {
-    kind: Vec<String>,
-    src_path: PathBuf,
-}
-
-#[derive(serde::Deserialize)]
-struct ArtifactProfile {
-    test: bool,
 }
 
 /// What `--message-format` asked for.
@@ -90,7 +66,7 @@ enum Output {
     Human,
     Short,
     /// JSON on stdout, with the value asked for: cargo's messages pass
-    /// through, and the last compilation's join them as `compiler-message`s.
+    /// through, and `unused_pub`'s findings join them as `compiler-message`s.
     Json(String),
 }
 
@@ -149,6 +125,7 @@ fn main() -> ExitCode {
     let Some(meta) = metadata(&cargo, option_value(&args, "--manifest-path")) else {
         return fail("could not read the workspace from `cargo metadata`");
     };
+    // The text to hand the compilations, unless they inherit it.
     let config = if env::var_os(protocol::CONFIG_ENV).is_some() {
         None
     } else {
@@ -159,8 +136,12 @@ fn main() -> ExitCode {
             Err(err) => return fail(format_args!("could not read {}: {err}", path.display())),
         }
     };
+    let baseline = env::var(protocol::CONFIG_ENV)
+        .ok()
+        .or_else(|| config.clone())
+        .and_then(|text| baseline_name(&text));
     let output = Output::take(&mut args);
-    let color = option_value(&args, "--color").map(OsStr::to_os_string);
+    let styled = styled(option_value(&args, "--color"));
     let facts = meta.target_directory.join("mordant").join("unused_pub");
 
     let mut command = Command::new(&cargo);
@@ -185,52 +166,76 @@ fn main() -> ExitCode {
         Err(err) => return fail(format_args!("could not run cargo: {err}")),
     };
     let mut units = Vec::new();
+    // Held back, so the findings printed after the build come before it.
+    let mut finished = None;
     if let Some(stdout) = child.stdout.take() {
         let mut out = io::stdout().lock();
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            let message: Option<Json> = serde_json::from_str(&line).ok();
+            if let Some(message) = &message {
+                if message["reason"] == "build-finished" {
+                    finished = Some(message.clone());
+                    continue;
+                }
+                units.extend(unit_of(message, &meta.workspace_members));
+            }
             if matches!(output, Output::Json(_)) {
                 let _ = writeln!(out, "{line}");
             }
-            units.extend(unit_of(&line, &meta.workspace_members));
         }
     }
     match child.wait() {
         Ok(status) if status.success() => {}
-        status => return exit_code(status, "cargo"),
+        status => {
+            print_finished(&output, finished);
+            return exit_code(status, "cargo");
+        }
     }
+    let errors = unused_pub::report(
+        &meta.workspace_root,
+        &facts,
+        &units,
+        &output,
+        styled,
+        baseline.as_deref(),
+    );
+    if let Some(finished) = &mut finished {
+        finished["success"] = Json::Bool(!errors);
+    }
+    print_finished(&output, finished);
+    // What cargo exits with when a crate fails to compile.
+    if errors {
+        ExitCode::from(101)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
 
-    let mut last = match report_command(&driver, &meta, &facts, &units, &output) {
-        Ok(command) => command,
-        Err(err) => {
-            return fail(format_args!(
-                "could not write to {}: {err}",
-                facts.display()
-            ));
-        }
-    };
-    if let Some(color) = color {
-        last.arg("--color").arg(color);
+/// Cargo's closing `build-finished` message, in JSON output.
+fn print_finished(output: &Output, finished: Option<Json>) {
+    if let (Output::Json(_), Some(finished)) = (output, finished) {
+        let _ = writeln!(io::stdout().lock(), "{finished}");
     }
-    if let Some(text) = &config {
-        last.env(protocol::CONFIG_ENV, text);
+}
+
+/// The baseline file the configuration names, if it names one.
+fn baseline_name(config: &str) -> Option<String> {
+    let table: toml::Table = toml::from_str(config).ok()?;
+    let name = table.get("mordant")?.get("baseline")?.as_str()?;
+    Some(name.to_string())
+}
+
+/// Whether findings are printed in colour: as `--color` says, or as cargo's
+/// `CARGO_TERM_COLOR` does, or when stderr is a terminal.
+fn styled(color: Option<&OsStr>) -> bool {
+    let setting = color
+        .map(OsStr::to_os_string)
+        .or_else(|| env::var_os("CARGO_TERM_COLOR"));
+    match setting.as_ref().and_then(|s| s.to_str()) {
+        Some("always") => true,
+        Some("never") => false,
+        _ => io::stderr().is_terminal(),
     }
-    if !matches!(output, Output::Json(_)) {
-        return exit_code(last.status(), "mordant-driver");
-    }
-    last.stderr(Stdio::piped());
-    let mut child = match last.spawn() {
-        Ok(child) => child,
-        Err(err) => return fail(format_args!("could not run mordant-driver: {err}")),
-    };
-    if let Some(stderr) = child.stderr.take() {
-        let mut out = io::stdout().lock();
-        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-            if let Some(message) = compiler_message(&line, &meta) {
-                let _ = writeln!(out, "{message}");
-            }
-        }
-    }
-    exit_code(child.wait(), "mordant-driver")
 }
 
 impl Output {
@@ -270,108 +275,30 @@ impl Output {
             Output::Json(value) => value,
         }
     }
-
-    /// The same choice, in rustc's spelling, for the last compilation.
-    fn for_rustc(&self) -> Vec<&'static str> {
-        match self {
-            Output::Human => Vec::new(),
-            Output::Short => vec!["--error-format=short"],
-            Output::Json(value) if value.contains("rendered-ansi") => {
-                vec!["--error-format=json", "--json=diagnostic-rendered-ansi"]
-            }
-            Output::Json(value) if value.contains("diagnostic-short") => {
-                vec!["--error-format=json", "--json=diagnostic-short"]
-            }
-            Output::Json(_) => vec!["--error-format=json"],
-        }
-    }
 }
 
-/// A unit of the run, as `(test build, crate root)`, if `line` is cargo's
-/// artifact message for a workspace member other than a build script.
-fn unit_of(line: &str, members: &[String]) -> Option<(bool, PathBuf)> {
-    let message: CargoMessage = serde_json::from_str(line).ok()?;
-    let (target, profile) = (message.target?, message.profile?);
-    (message.reason == "compiler-artifact"
-        && members.contains(&message.package_id)
-        && !target.kind.iter().any(|k| k == "custom-build"))
-    .then_some((profile.test, target.src_path))
-}
-
-/// The last compilation: an empty crate, under the environment that makes
-/// `unused_pub` judge the run's units from their records in `facts`.
-fn report_command(
-    driver: &Path,
-    meta: &Metadata,
-    facts: &Path,
-    units: &[(bool, PathBuf)],
-    output: &Output,
-) -> io::Result<Command> {
-    fs::create_dir_all(facts)?;
-    let listed: String = units
-        .iter()
-        .map(|(test, src)| format!("{}\t{}\n", u8::from(*test), src.display()))
-        .collect();
-    let units_file = facts.join("units");
-    fs::write(&units_file, listed)?;
-    let src = facts.join(format!("{}.rs", REPORT_CRATE));
-    fs::write(&src, "")?;
-    let mut command = Command::new(driver);
-    command
-        .arg(&src)
-        .args(["--crate-name", REPORT_CRATE, "--crate-type", "lib"])
-        .args(["--emit=metadata", "-o"])
-        .arg(facts.join(format!("lib{}.rmeta", REPORT_CRATE)))
-        .args(output.for_rustc())
-        .current_dir(&meta.workspace_root)
-        .env(protocol::FACTS_ENV, facts)
-        .env(protocol::UNITS_ENV, &units_file)
-        // Where the baseline is looked for, as a member's build would.
-        .env("CARGO_MANIFEST_DIR", &meta.workspace_root)
-        .env_remove("CARGO_BIN_NAME");
-    Ok(command)
-}
-
-/// A diagnostic of the last compilation, as cargo would have printed it:
-/// wrapped in a `compiler-message` of the package whose file it points at.
-/// rustc's own tally of the warnings it emitted is cargo's to make.
-fn compiler_message(line: &str, meta: &Metadata) -> Option<String> {
-    let diagnostic: serde_json::Value = serde_json::from_str(line).ok()?;
-    if diagnostic["$message_type"] != "diagnostic" {
+/// A unit of the run, if `message` is cargo's artifact message for a
+/// workspace member other than a build script. One arrives for every unit
+/// the run builds, a fresh one included.
+fn unit_of(message: &Json, members: &[String]) -> Option<unused_pub::RunUnit> {
+    if message["reason"] != "compiler-artifact" {
         return None;
     }
-    let spans = diagnostic["spans"]
-        .as_array()
-        .map(Vec::as_slice)
-        .unwrap_or(&[]);
-    let text = diagnostic["message"].as_str().unwrap_or("");
-    if spans.is_empty() && (text.ends_with(" emitted") || text.starts_with("aborting due to")) {
+    let package_id = message["package_id"].as_str()?;
+    let target = &message["target"];
+    let kinds = target["kind"].as_array()?;
+    if !members.iter().any(|m| m == package_id) || kinds.iter().any(|k| k == "custom-build") {
         return None;
     }
-    let file = spans
-        .iter()
-        .find(|s| s["is_primary"] == true)
-        .and_then(|s| s["file_name"].as_str())
-        .map(|f| meta.workspace_root.join(f));
-    let package = meta
-        .packages
-        .iter()
-        .filter(|p| {
-            let dir = p.manifest_path.parent().unwrap_or(&p.manifest_path);
-            file.as_ref().is_some_and(|f| f.starts_with(dir))
-        })
-        .max_by_key(|p| p.manifest_path.as_os_str().len())
-        .or_else(|| meta.packages.first())?;
-    Some(
-        serde_json::json!({
-            "reason": "compiler-message",
-            "package_id": package.id,
-            "manifest_path": package.manifest_path,
-            "target": package.targets.first(),
-            "message": diagnostic,
-        })
-        .to_string(),
-    )
+    Some(unused_pub::RunUnit {
+        unit: records::Unit {
+            src: PathBuf::from(target["src_path"].as_str()?),
+            test: message["profile"]["test"].as_bool()?,
+        },
+        package_id: package_id.to_string(),
+        manifest_path: message["manifest_path"].as_str()?.to_string(),
+        target: target.clone(),
+    })
 }
 
 /// The exit status of the program this run hands over to, as its own.

@@ -29,7 +29,6 @@
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
-use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -39,6 +38,8 @@ use rustc_errors::Diag;
 use rustc_hir::HirId;
 use rustc_lint::{LateContext, LateLintPass, Lint, LintContext};
 use rustc_span::{FileName, Span};
+
+use crate::baseline_file;
 
 /// (lint, file relative to the workspace root): the unit the baseline counts.
 type Key = (String, String);
@@ -77,91 +78,32 @@ fn state() -> Option<&'static Baseline> {
     STATE.get().and_then(Option::as_ref)
 }
 
-fn write_mode() -> bool {
-    std::env::var_os("MORDANT_BASELINE_WRITE").is_some()
-}
-
-type Doc = BTreeMap<String, BTreeMap<String, u64>>;
-
-fn read_doc(bytes: &str) -> Doc {
-    toml::from_str(bytes).unwrap_or_default()
-}
-
 /// Called once from `register_lints`.
 pub fn setup(file_name: &Option<String>) {
     let _ = STATE.set(file_name.as_ref().and_then(|f| init(f)));
 }
 
 fn init(file_name: &str) -> Option<Baseline> {
-    let record = write_mode();
-    let mut dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR")?);
-    loop {
-        let cand = dir.join(file_name);
-        // In write mode the file may not exist yet; anchor at the workspace
-        // root, which is where dylint.toml (the config that named us) lives.
-        if cand.exists() || (record && dir.join("dylint.toml").exists()) {
-            let mode = if record {
-                Mode::Record {
-                    path: cand,
-                    recorded: Mutex::new(Vec::new()),
-                }
-            } else {
-                Mode::Ratchet {
-                    recorded: read_recorded(&cand),
-                    seen: Mutex::new(HashMap::new()),
-                    over: AtomicUsize::new(0),
-                    status_file: status_file(&dir, cargo_target_dir().as_deref()),
-                }
-            };
-            return Some(Baseline { root: dir, mode });
+    let record = baseline_file::write_mode();
+    let manifest_dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR")?);
+    let (root, path) = baseline_file::find(&manifest_dir, file_name, record)?;
+    let mode = if record {
+        Mode::Record {
+            path,
+            recorded: Mutex::new(Vec::new()),
         }
-        if !dir.pop() {
-            return None;
+    } else {
+        Mode::Ratchet {
+            recorded: baseline_file::recorded(&path),
+            seen: Mutex::new(HashMap::new()),
+            over: AtomicUsize::new(0),
+            status_file: baseline_file::status_file(
+                &root,
+                baseline_file::cargo_target_dir().as_deref(),
+            ),
         }
-    }
-}
-
-/// `CARGO_TARGET_DIR` when it names a directory; cargo treats an empty
-/// value as unset, so that is `None` here too.
-fn cargo_target_dir() -> Option<PathBuf> {
-    std::env::var_os("CARGO_TARGET_DIR")
-        .filter(|d| !d.is_empty())
-        .map(PathBuf::from)
-}
-
-/// `${CARGO_TARGET_DIR or <root>/target}`, a relative `CARGO_TARGET_DIR`
-/// taken from the workspace root as cargo does.
-fn resolve_target_dir(root: &Path, target_dir: Option<&Path>) -> PathBuf {
-    match target_dir {
-        Some(dir) => root.join(dir),
-        None => root.join("target"),
-    }
-}
-
-/// `<target>/mordant/over-baseline.txt`.
-fn status_file(root: &Path, target_dir: Option<&Path>) -> PathBuf {
-    resolve_target_dir(root, target_dir)
-        .join("mordant")
-        .join("over-baseline.txt")
-}
-
-/// Sums every crate section of the file, since a (lint, file) key can appear
-/// under more than one crate (a file shared by a lib and a bin target).
-fn read_recorded(path: &Path) -> HashMap<Key, usize> {
-    let doc = std::fs::read_to_string(path)
-        .map(|s| read_doc(&s))
-        .unwrap_or_default();
-    let mut counts: HashMap<Key, usize> = HashMap::new();
-    for section in doc.values() {
-        for (key, n) in section {
-            if let Some((lint, file)) = key.split_once(':') {
-                *counts
-                    .entry((lint.to_string(), file.to_string()))
-                    .or_default() += *n as usize;
-            }
-        }
-    }
-    counts
+    };
+    Some(Baseline { root, mode })
 }
 
 fn rel_file(cx: &LateContext<'_>, b: &Baseline, span: Span) -> Option<String> {
@@ -335,7 +277,7 @@ pub fn emit_hir_then(
 
 /// The baseline section name for this compilation: the crate, with the bin
 /// target appended, since one crate name can cover a lib and several bins.
-fn section_name(cx: &LateContext<'_>) -> String {
+pub fn section_name(cx: &LateContext<'_>) -> String {
     let name = cx
         .tcx
         .crate_name(rustc_hir::def_id::LOCAL_CRATE)
@@ -370,10 +312,7 @@ impl<'tcx> LateLintPass<'tcx> for BaselineWriter {
     }
 }
 
-/// One line for the reader and one for CI. The status file is appended to,
-/// never truncated: every crate is its own rustc process, so no process knows
-/// it is the first. CI removes the file before the run and tests it is empty
-/// or absent after.
+/// One line for the reader and one for CI.
 fn summarize(cx: &LateContext<'_>, over: usize, status_file: &Path) {
     if over == 0 {
         return;
@@ -382,61 +321,40 @@ fn summarize(cx: &LateContext<'_>, over: usize, status_file: &Path) {
     cx.tcx.dcx().warn(format!(
         "mordant: {over} finding(s) over the baseline in {name}"
     ));
-    if let Some(dir) = status_file.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(status_file)
-    else {
-        return;
-    };
-    let _ = f.lock();
-    let _ = f.write_all(format!("{name} {over}\n").as_bytes());
-    let _ = f.unlock();
+    baseline_file::append_status(status_file, &name, over);
 }
 
 fn write_section(cx: &LateContext<'_>, path: &Path, recorded: &Mutex<Vec<Key>>) {
     let recorded: Vec<Key> = std::mem::take(&mut *recorded.lock().unwrap());
     let mut section: BTreeMap<String, u64> = BTreeMap::new();
     for (lint, file) in recorded {
-        *section.entry(format!("{lint}:{file}")).or_default() += 1;
+        *section
+            .entry(baseline_file::entry(&lint, &file))
+            .or_default() += 1;
     }
     let name = section_name(cx);
-    let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        // Not `truncate`: the file is read first, then rewritten in place
-        // under the lock via `set_len(0)`.
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(path)
-    else {
-        return;
-    };
-    // Parallel rustc processes write concurrently; the lock serializes the
-    // read-modify-write.
-    let _ = f.lock();
-    let mut existing = String::new();
-    let _ = f.read_to_string(&mut existing);
-    let mut doc = read_doc(&existing);
-    if section.is_empty() {
-        doc.remove(&name);
-    } else {
-        doc.insert(name, section);
-    }
-    if let Ok(out) = toml::to_string_pretty(&doc) {
-        let _ = f.set_len(0);
-        let _ = f.rewind();
-        let _ = f.write_all(out.as_bytes());
-    }
-    let _ = f.unlock();
+    baseline_file::update(path, |doc| {
+        // `unused_pub`'s entries are `cargo mordant`'s to write, once the
+        // run is built; this compilation never reports that lint.
+        let theirs: BTreeMap<String, u64> = doc
+            .get(&name)
+            .into_iter()
+            .flatten()
+            .filter(|(key, _)| key.starts_with("unused_pub:"))
+            .map(|(key, n)| (key.clone(), *n))
+            .collect();
+        section.extend(theirs);
+        if section.is_empty() {
+            doc.remove(&name);
+        } else {
+            doc.insert(name, section);
+        }
+    });
 }
 
 #[cfg(test)]
 mod tests {
-    use super::status_file;
+    use crate::baseline_file::status_file;
     use std::path::{Path, PathBuf};
 
     #[test]

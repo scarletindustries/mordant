@@ -1,6 +1,11 @@
 //! Finds `pub` items that no crate in the workspace uses.
 
 mod files;
+#[allow(
+    dead_code,
+    reason = "cargo-mordant reads what this library only writes"
+)]
+mod records;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
@@ -11,14 +16,15 @@ use rustc_hir::{
     Expr, ExprKind, HirId, ImplItem, ImplItemKind, Item, ItemKind, Node, Pat, PatExpr, PatExprKind,
     PatKind, Path, QPath, TraitItem, TraitItemKind,
 };
-use rustc_lint::{LateContext, LateLintPass, LintContext};
+use rustc_lint::{LateContext, LateLintPass, Level, LintContext};
+use rustc_middle::lint::LintLevelSource;
 use rustc_middle::middle::codegen_fn_attrs::CodegenFnAttrFlags;
 use rustc_middle::ty::print::with_no_trimmed_paths;
 use rustc_span::Span;
 use rustc_structures::CrateType;
 
-use crate::protocol::{FACTS_ENV, UNITS_ENV};
-use files::{Def, Unit};
+use crate::protocol::FACTS_ENV;
+use records::{Def, Note, Unit};
 
 rustc_lint::declare_lint! {
     /// Finds a `pub` item that nothing in the workspace uses: no crate
@@ -60,11 +66,9 @@ enum Mode {
     /// name: the crate's items are judged against its own uses.
     #[default]
     Alone,
-    /// Under `cargo mordant`: write this unit's records into `dir`.
+    /// Under `cargo mordant`: write this unit's records into `dir`, which
+    /// `cargo mordant` judges once the run is built.
     Record { dir: PathBuf, unit: Unit },
-    /// `cargo mordant`'s last compilation: judge every unit of the run from
-    /// the records in `dir`.
-    Report { dir: PathBuf, units: Vec<Unit> },
 }
 
 #[derive(Default)]
@@ -98,7 +102,7 @@ impl<'tcx> LateLintPass<'tcx> for UnusedPub {
         self.is_proc_macro = cx.tcx.crate_types().contains(&CrateType::ProcMacro);
         self.mode = mode(cx);
         if let Mode::Record { dir, .. } = &self.mode {
-            self.known = files::all_def_keys(dir);
+            self.known = records::all_def_keys(dir);
             self.known_crates = self
                 .known
                 .iter()
@@ -220,12 +224,12 @@ impl<'tcx> LateLintPass<'tcx> for UnusedPub {
                         .filter(|id| cx.effective_visibilities.is_reachable(**id))
                         .map(|id| files::key(cx.tcx, id.to_def_id())),
                 );
-                files::write_refs(&unit.refs(dir), &refs);
+                records::write_refs(&unit.refs(dir), &refs);
                 if !self.is_test && !self.is_proc_macro {
-                    files::write_defs(&unit.defs(dir), defs.iter().map(|(.., d)| d));
+                    let section = crate::baseline::section_name(cx);
+                    records::write_defs(&unit.defs(dir), &section, defs.iter().map(|(.., d)| d));
                 }
             }
-            Mode::Report { dir, units } => report_run(cx, dir, units),
         }
     }
 }
@@ -236,12 +240,6 @@ fn mode(cx: &LateContext<'_>) -> Mode {
     let Some(dir) = std::env::var_os(FACTS_ENV).map(PathBuf::from) else {
         return Mode::Alone;
     };
-    if let Some(units) = std::env::var_os(UNITS_ENV) {
-        return Mode::Report {
-            dir,
-            units: files::read_units(std::path::Path::new(&units)),
-        };
-    }
     let name = cx.tcx.crate_name(rustc_hir::def_id::LOCAL_CRATE);
     let src = cx
         .tcx
@@ -287,6 +285,8 @@ impl UnusedPub {
         let Some((file, lo, hi)) = files::locate(cx, name) else {
             return;
         };
+        let level = spec.level().as_str().to_string();
+        let notes = level_source(cx, spec.level(), spec.src);
         let did = def_id.to_def_id();
         let crate_name = cx.tcx.crate_name(rustc_hir::def_id::LOCAL_CRATE);
         let mut path = with_no_trimmed_paths!(cx.tcx.def_path_str(did));
@@ -301,6 +301,8 @@ impl UnusedPub {
             descr: cx.tcx.def_descr(did).to_string(),
             path,
             parent: parent_key(cx, did).unwrap_or_default(),
+            level,
+            notes,
         };
         self.defs.push((def_id, name, def));
     }
@@ -339,6 +341,60 @@ fn owning_item(cx: &LateContext<'_>, def_id: DefId) -> DefId {
         DefKind::Ctor(..) => owning_item(cx, cx.tcx.parent(def_id)),
         DefKind::Variant => cx.tcx.parent(def_id),
         _ => def_id,
+    }
+}
+
+/// Where `unused_pub`'s level at an item comes from, in the words rustc puts
+/// under a lint (`explain_lint_level_source`), for `cargo mordant` to print
+/// under the finding.
+fn level_source(cx: &LateContext<'_>, level: Level, src: LintLevelSource) -> Vec<Note> {
+    let name = UNUSED_PUB.name_lower();
+    let note = |message: String| Note {
+        help: false,
+        message,
+        at: None,
+    };
+    match src {
+        LintLevelSource::Default => {
+            vec![note(format!(
+                "`#[{}({name})]` on by default",
+                level.as_str()
+            ))]
+        }
+        LintLevelSource::CommandLine(flag_value, set) => {
+            let flag = set.to_cmd_flag();
+            let hyphenated = name.replace('_', "-");
+            if flag_value.as_str() == name {
+                return vec![note(format!(
+                    "requested on the command line with `{flag} {hyphenated}`"
+                ))];
+            }
+            let group = flag_value.as_str().replace('_', "-");
+            vec![
+                note(format!("`{flag} {hyphenated}` implied by `{flag} {group}`")),
+                Note {
+                    help: true,
+                    message: format!("to override `{flag} {group}` add `#[allow({name})]`"),
+                    at: None,
+                },
+            ]
+        }
+        LintLevelSource::Node {
+            name: attr, span, ..
+        } => {
+            let mut notes = vec![Note {
+                help: false,
+                message: "the lint level is defined here".to_string(),
+                at: files::locate(cx, span),
+            }];
+            if attr.as_str() != name {
+                let level = level.as_str();
+                notes.push(note(format!(
+                    "`#[{level}({name})]` implied by `#[{level}({attr})]`"
+                )));
+            }
+            notes
+        }
     }
 }
 
@@ -442,56 +498,4 @@ fn report(cx: &LateContext<'_>, span: Span, def: &Def) {
         "remove it; if code under a `cfg`, target or feature not compiled here uses it, \
          gate the item the same way",
     );
-}
-
-/// `cargo mordant`'s last step: every item a unit of the run defines,
-/// against every use any unit of the run recorded.
-fn report_run(cx: &LateContext<'_>, dir: &std::path::Path, units: &[Unit]) {
-    let mut refs = HashSet::new();
-    let mut defs = Vec::new();
-    let mut silent = Vec::new();
-    for unit in units {
-        // A test target with `harness = false` is built without `--test`.
-        let recorded = files::read_refs(&unit.refs(dir)).or_else(|| {
-            let plain = Unit {
-                src: unit.src.clone(),
-                test: false,
-            };
-            unit.test.then(|| files::read_refs(&plain.refs(dir)))?
-        });
-        match recorded {
-            Some(unit_refs) => refs.extend(unit_refs),
-            None => silent.push(format!("`{}`", unit.src.display())),
-        }
-        defs.extend(files::read_defs(&unit.defs(dir)));
-    }
-    // A unit cargo did not recompile in this run is judged from the record
-    // it left earlier. One that left none (the directory was removed) would
-    // make everything it uses look unused, so nothing is judged until it
-    // is recompiled.
-    if !silent.is_empty() {
-        cx.sess().dcx().warn(format!(
-            "mordant: `unused_pub` did not judge the workspace: {} left no record of what \
-             it uses; remove `{}`, which holds those records and the build `cargo mordant` \
-             reuses, then run again",
-            crate::baseline::join(&silent, "and"),
-            dir.parent().unwrap_or(dir).display(),
-        ));
-        return;
-    }
-    let root = std::env::current_dir().unwrap_or_default();
-    defs.retain(|d| !refs.contains(&d.key));
-    defs.sort_by(|a, b| a.file.cmp(&b.file).then(a.lo.cmp(&b.lo)));
-    defs.dedup_by(|a, b| a.key == b.key);
-    let keys: HashSet<&str> = defs.iter().map(|d| d.key.as_str()).collect();
-    for def in defs.iter().filter(|d| !keys.contains(d.parent.as_str())) {
-        match files::span_in(cx, &root, &def.file, def.lo, def.hi) {
-            Some(span) => report(cx, span, def),
-            None => cx.sess().dcx().warn(format!(
-                "mordant: {} `{}` is public, but nothing in the workspace uses it \
-                 ({} could not be read)",
-                def.descr, def.path, def.file
-            )),
-        }
-    }
 }

@@ -23,6 +23,7 @@ mod always_unwrapped_option;
 mod arg_named_like_other_param;
 mod bare_bool_args;
 mod baseline;
+mod baseline_file;
 mod bool_beside_option;
 mod bool_cluster;
 mod cast_bypasses_from;

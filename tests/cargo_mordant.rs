@@ -316,3 +316,74 @@ fn a_crate_allowing_unused_pub_still_records_its_uses() {
     assert!(!out.contains("hidden"), "{out}");
     assert!(!out.contains("did not judge"), "{out}");
 }
+
+/// With a baseline, `MORDANT_BASELINE_WRITE=1` records the unused items
+/// under the section of the crate that defines them, a later run is held to
+/// that count, and one past it is reported as the baseline's warning and
+/// listed in `over-baseline.txt`.
+#[test]
+fn unused_pub_is_held_to_the_baseline() {
+    let root = workspace(
+        "baseline",
+        &[
+            ("src/lib.rs", "pub fn old() {}\n"),
+            (
+                "dylint.toml",
+                "[mordant]\nbaseline = \"mordant-baseline.toml\"\n",
+            ),
+        ],
+    );
+    let write = cargo_mordant_with(&root, &[], &[("MORDANT_BASELINE_WRITE", "1")]);
+    let written = stderr(&write);
+    assert!(!written.contains("is public"), "{written}");
+    let baseline =
+        fs::read_to_string(root.join("mordant-baseline.toml")).expect("baseline written");
+    assert!(baseline.contains("[demo]"), "{baseline}");
+    assert!(
+        baseline.contains("\"unused_pub:src/lib.rs\" = 1"),
+        "{baseline}"
+    );
+
+    let held = stderr(&cargo_mordant(&root));
+    assert!(!held.contains("is public"), "{held}");
+
+    fs::write(
+        root.join("src/lib.rs"),
+        "pub fn old() {}\n\npub fn new() {}\n",
+    )
+    .expect("add an item");
+    let over = stderr(&cargo_mordant(&root));
+    assert!(
+        over.contains("`unused_pub` over the mordant baseline (1 recorded for src/lib.rs)"),
+        "{over}"
+    );
+    assert!(
+        over.contains("1 finding(s) over the baseline in demo"),
+        "{over}"
+    );
+    let status = fs::read_to_string(root.join("target/mordant/over-baseline.txt")).expect("status");
+    assert_eq!(status, "demo 1\n");
+}
+
+/// A level set in the source is the item's, and the finding says where.
+#[test]
+fn unused_pub_reports_a_level_set_in_the_source() {
+    let root = workspace(
+        "attribute",
+        &[(
+            "src/lib.rs",
+            "#![cfg_attr(dylint_lib = \"mordant\", deny(unused_pub))]\n\npub fn unused() {}\n",
+        )],
+    );
+    let out = cargo_mordant(&root);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("error: function `demo::unused` is public"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("note: the lint level is defined here"),
+        "{stderr}"
+    );
+}

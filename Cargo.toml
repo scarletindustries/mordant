@@ -16,6 +16,7 @@ publish = false
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(dylint_lib, values("mordant"))'] }
 
 [dependencies]
+annotate-snippets = "0.12"
 clippy_utils = { git = "https://github.com/rust-lang/rust-clippy", rev = "34ace9862f3584a9493049347c3158607f7586e8" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
