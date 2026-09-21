@@ -178,6 +178,28 @@ fn unused_pub_counts_what_tests_use_when_they_are_built() {
     }
 }
 
+/// A `cfg(test)` impl block gives the impl blocks after it one number in the
+/// test build and another in the crate's own build. A unit test's use still
+/// counts for the method it calls, and not for the method of the same name
+/// in the next impl block.
+#[test]
+fn unused_pub_matches_a_unit_tests_use_past_a_cfg_test_impl() {
+    let root = workspace(
+        "cfg_test_impl",
+        &[(
+            "src/lib.rs",
+            "pub struct A;\n\n#[cfg(test)]\nimpl A {\n    fn only_in_tests(&self) {}\n}\n\n\
+             impl A {\n    pub fn get(&self) -> B {\n        B\n    }\n}\n\n\
+             pub struct B;\n\nimpl B {\n    pub fn get(&self) {}\n}\n\n\
+             #[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        \
+             super::A.only_in_tests();\n        let _ = super::A.get();\n    }\n}\n",
+        )],
+    );
+    let out = stderr(&cargo_mordant_with(&root, &["--all-targets"], &[]));
+    assert!(out.contains("`demo::B::get` is public"), "{out}");
+    assert!(!out.contains("`demo::A::get` is public"), "{out}");
+}
+
 /// Asked for JSON, cargo's messages come through and the findings arrive as
 /// cargo would have printed them, for the package whose file they are in.
 #[test]

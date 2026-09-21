@@ -12,16 +12,21 @@ use rustc_span::{FileName, Span};
 /// library and binary are often both the crate `tool`, and nothing outside
 /// the binary can name its items.
 pub fn key(tcx: TyCtxt<'_>, def_id: DefId) -> String {
+    format!(
+        "{}{}",
+        crate_key(tcx, def_id),
+        tcx.def_path(def_id).to_string_no_crate_verbose()
+    )
+}
+
+/// What the key of every item of `def_id`'s crate starts with.
+pub fn crate_key(tcx: TyCtxt<'_>, def_id: DefId) -> String {
     let bin = if def_id.is_local() && std::env::var_os("CARGO_BIN_NAME").is_some() {
         "[bin]"
     } else {
         ""
     };
-    format!(
-        "{}{bin}{}",
-        tcx.crate_name(def_id.krate),
-        tcx.def_path(def_id).to_string_no_crate_verbose()
-    )
+    format!("{}{bin}", tcx.crate_name(def_id.krate))
 }
 
 /// Where `span` starts and ends in its file, if that is a real file.

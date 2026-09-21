@@ -112,7 +112,7 @@ fn judge<'a>(facts: &Path, units: &'a [RunUnit]) -> Records<'a> {
     if !missing.is_empty() {
         return Records::Missing(missing);
     }
-    found.retain(|f| !refs.contains(&f.def.key));
+    found.retain(|f| !refs.contains(&f.def.key) && !refs.contains(&f.def.position_key()));
     found.sort_by(|a, b| a.def.file.cmp(&b.def.file).then(a.def.lo.cmp(&b.def.lo)));
     found.dedup_by(|a, b| a.def.key == b.def.key);
     // An item of a type or trait that is itself unused goes with it.

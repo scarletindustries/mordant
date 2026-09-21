@@ -5,8 +5,10 @@
 //! item it defines, written by a library's or a binary's own build and not
 //! by its test build, after a first line naming the baseline section its
 //! findings belong to. Items are keyed by crate name plus definition path,
-//! which reads the same from every crate. A file is written whole under a
-//! temporary name and renamed, so a reader never sees half of one.
+//! which reads the same from every crate that depends on the one defining
+//! them. A crate's use of its own items is keyed by [`position_key`]
+//! instead. A file is written whole under a temporary name and renamed, so a
+//! reader never sees half of one.
 //!
 //! Shared by the library and `cargo-mordant`, which includes this file by
 //! path, so nothing here may depend on the compiler.
@@ -39,6 +41,25 @@ pub struct Def {
     /// What rustc would say under the finding about where that level comes
     /// from.
     pub notes: Vec<Note>,
+}
+
+impl Def {
+    /// What a use of this item from its own crate is recorded as.
+    pub fn position_key(&self) -> String {
+        let krate = self.key.split("::").next().unwrap_or(&self.key);
+        position_key(krate, &self.file, self.lo)
+    }
+}
+
+/// How a crate records a use of one of its own items: the crate, as it
+/// starts the item's key, and where the item's name is. The definition path
+/// will not do. A crate is compiled once on its own and once with `--test`,
+/// and the two number its `impl` blocks apart when one sits under
+/// `cfg(test)`: `{impl#1}::get` in the test build is `{impl#0}::get` in the
+/// build that records the item, and can be another type's `get` there. The
+/// name is at the same place in the same file in both.
+pub fn position_key(krate: &str, file: &str, lo: u32) -> String {
+    format!("{krate}@{file}:{lo}")
 }
 
 /// One line under a finding: a note, or a help, optionally pointing at the

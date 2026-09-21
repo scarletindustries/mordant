@@ -216,13 +216,13 @@ impl<'tcx> LateLintPass<'tcx> for UnusedPub {
             }
             Mode::Record { dir, unit } => {
                 let mut refs = std::mem::take(&mut self.foreign_refs);
-                // By key, so a test build's use of the crate's own items
-                // counts for the build that records them.
+                // Written down, so a test build's use of the crate's own
+                // items counts for the build that records them.
                 refs.extend(
                     self.local_refs
                         .iter()
                         .filter(|id| cx.effective_visibilities.is_reachable(**id))
-                        .map(|id| files::key(cx.tcx, id.to_def_id())),
+                        .filter_map(|id| own_ref(cx, *id)),
                 );
                 records::write_refs(&unit.refs(dir), &refs);
                 if !self.is_test && !self.is_proc_macro {
@@ -332,6 +332,19 @@ impl UnusedPub {
             self.foreign_refs.insert(key.clone());
         }
     }
+}
+
+/// A use of one of this crate's own items, as [`records::position_key`]
+/// spells it. `None` for an item whose name is not in a file, which
+/// `record_def` does not record either.
+fn own_ref(cx: &LateContext<'_>, def_id: LocalDefId) -> Option<String> {
+    let name = cx.tcx.def_ident_span(def_id)?;
+    let (file, lo, _) = files::locate(cx, name)?;
+    Some(records::position_key(
+        &files::crate_key(cx.tcx, def_id.to_def_id()),
+        &file,
+        lo,
+    ))
 }
 
 /// The item a use counts for: a constructor or variant counts as its
