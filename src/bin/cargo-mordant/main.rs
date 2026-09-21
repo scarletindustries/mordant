@@ -51,7 +51,7 @@ Every other option goes to `cargo check` as written: `--workspace`,
 counts a use from every target the run builds, so pass `--all-targets` for
 what tests, benches and examples use to count.
 
-The configuration is the `[mordant]` table of `dylint.toml` in the workspace
+The configuration is the `[mordant]` table of `mordant.toml` in the workspace
 root, or the text of MORDANT_TOML when that is set. MORDANT_RUSTFLAGS adds
 rustc flags for the linted crates only, as in MORDANT_RUSTFLAGS=\"-D warnings\".";
 
@@ -242,7 +242,7 @@ fn main() -> ExitCode {
     let config = if env::var_os(protocol::CONFIG_ENV).is_some() {
         None
     } else {
-        let path = meta.workspace_root.join("dylint.toml");
+        let path = meta.workspace_root.join("mordant.toml");
         match fs::read_to_string(&path) {
             Ok(text) => Some(text),
             Err(err) if err.kind() == io::ErrorKind::NotFound => None,

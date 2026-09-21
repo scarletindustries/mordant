@@ -13,7 +13,7 @@ rustc_lint::declare_lint! {
     /// other, or one thing can land under several: a type or method the
     /// project lists as not an identity, a float's `to_bits()`, a pointer
     /// cast to an integer. Which types and expression forms count is declared
-    /// per project in `dylint.toml`. With no configuration the lint is
+    /// per project in `mordant.toml`. With no configuration the lint is
     /// silent.
     pub KEY_NOT_IDENTITY,
     Warn,

@@ -1,5 +1,5 @@
 //! The ui suites. Every `.rs` in a suite's directory is compiled by
-//! `mordant-driver` with the suite's `dylint.toml`, and what the compiler
+//! `mordant-driver` with the suite's `mordant.toml`, and what the compiler
 //! prints must match the `.stderr` file beside it.
 
 use std::sync::{Mutex, PoisonError};
@@ -14,12 +14,12 @@ mod protocol;
 /// configuration to the compiler, so they run one at a time.
 static ENV: Mutex<()> = Mutex::new(());
 
-fn run(src_base: &str, dylint_toml: &str) {
+fn run(src_base: &str, config: &str) {
     let _env = ENV.lock().unwrap_or_else(PoisonError::into_inner);
     // SAFETY: every test in this binary that touches the environment holds
     // `ENV` while it does, and compiletest reads it only to spawn compilers
     // within this call.
-    unsafe { std::env::set_var(protocol::CONFIG_ENV, dylint_toml) };
+    unsafe { std::env::set_var(protocol::CONFIG_ENV, config) };
     compiletest_rs::run_tests(&compiletest_rs::Config {
         mode: compiletest_rs::common::Mode::Ui,
         rustc_path: env!("CARGO_BIN_EXE_mordant-driver").into(),

@@ -31,12 +31,12 @@ pub fn entry(lint: &str, file: &str) -> String {
 
 /// The baseline named `file_name`, as `(the directory it is in, its path)`:
 /// the first one found from `dir` upward. In write mode it may not exist
-/// yet, and then belongs beside the `dylint.toml` that named it.
+/// yet, and then belongs beside the `mordant.toml` that named it.
 pub fn find(dir: &Path, file_name: &str, record: bool) -> Option<(PathBuf, PathBuf)> {
     let mut dir = dir.to_path_buf();
     loop {
         let cand = dir.join(file_name);
-        if cand.exists() || (record && dir.join("dylint.toml").exists()) {
+        if cand.exists() || (record && dir.join("mordant.toml").exists()) {
             return Some((dir, cand));
         }
         if !dir.pop() {

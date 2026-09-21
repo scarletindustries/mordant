@@ -47,7 +47,7 @@ rustc_lint::declare_lint! {
     /// them and points at one call site. A part in a loop is not reported.
     ///
     /// Runs only with `generic-body-not-generic-enabled = true` in
-    /// `dylint.toml`. `generic-body-not-generic-min-statements` (default 24) is
+    /// `mordant.toml`. `generic-body-not-generic-min-statements` (default 24) is
     /// the smallest part reported, in hand-written statements. Code from a
     /// macro adds to the printed size only. The crate must use the function
     /// with `generic-body-not-generic-min-instantiations` (default 2) argument

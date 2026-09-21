@@ -42,7 +42,7 @@ rustc_lint::declare_lint! {
     "a banned definition is reachable from a declared root"
 }
 
-/// One rule from `dylint.toml`:
+/// One rule from `mordant.toml`:
 ///
 /// ```toml
 /// [[mordant.forbidden-reach]]

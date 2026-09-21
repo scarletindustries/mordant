@@ -1,5 +1,5 @@
 // Bad cases mirror real Scarlet compiler bugs: f64 to_bits as a dedup key,
-// pointer bits as identity, and a span type as a map key. The test dylint.toml
+// pointer bits as identity, and a span type as a map key. The test mordant.toml
 // denies `Span` and enables both expression forms; a default (unconfigured)
 // run stays silent on all of this.
 

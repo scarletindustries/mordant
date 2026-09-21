@@ -103,7 +103,7 @@ fn print_lints() {
 
 /// Cargo asks the wrapper for `-vV` and `--print` output to learn about the
 /// compiler; those compile nothing, so no lint needs registering, and a bad
-/// `dylint.toml` must not end up in the answers cargo caches. The exception,
+/// `mordant.toml` must not end up in the answers cargo caches. The exception,
 /// as in clippy, is `--print crate-root-lint-levels`, whose answer depends
 /// on which lints are registered.
 fn is_info_query(args: &[String]) -> bool {

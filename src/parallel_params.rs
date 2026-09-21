@@ -39,7 +39,7 @@ rustc_lint::declare_lint! {
     /// handing it on, and whenever the callee renames or retypes what it
     /// receives — that call is a translation, not a hand-off.
     ///
-    /// Runs only with `parallel-params-enabled = true` in `dylint.toml`: a
+    /// Runs only with `parallel-params-enabled = true` in `mordant.toml`: a
     /// buffer and a cursor into it, or a level and the flags in force at it,
     /// travel together by design, and nothing in the signatures tells those
     /// from an undeclared struct.

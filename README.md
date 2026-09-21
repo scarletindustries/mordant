@@ -32,7 +32,7 @@ cargo mordant --workspace --fix
 
 ## Configure
 
-Settings go in a `[mordant]` table in `dylint.toml` at the workspace root:
+Settings go in a `[mordant]` table in `mordant.toml` at the workspace root:
 
 ```toml
 [mordant]

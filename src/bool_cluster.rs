@@ -14,7 +14,7 @@ rustc_lint::declare_lint! {
     /// from outside Rust (a hardware register, a wire format), so all `2^n`
     /// states may genuinely be reachable.
     ///
-    /// Runs only with `bool-cluster-enabled = true` in `dylint.toml`. Most
+    /// Runs only with `bool-cluster-enabled = true` in `mordant.toml`. Most
     /// structs it names are option bags whose states are all legal, so it is
     /// a survey to run once over a codebase, not a gate to keep on.
     pub BOOL_CLUSTER,

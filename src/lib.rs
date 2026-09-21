@@ -75,12 +75,12 @@ mod unused_pub;
 mod variant_flow;
 mod wildcard_over_own_enum;
 
-/// Read from `dylint.toml` under `[mordant]` in the linted workspace root.
+/// Read from `mordant.toml` under `[mordant]` in the linted workspace root.
 ///
 /// `bool_cluster` is allowed on this one struct, and it is the lawful-lattice
 /// case the lint's own help describes rather than an exemption from it. The
 /// bools are opt-ins belonging to *different* lints: every combination is
-/// reachable from a `dylint.toml` and each means what it says, so there is no
+/// reachable from `mordant.toml` and each means what it says, so there is no
 /// invariant between them for a type to carry. The field set is also this
 /// pack's public interface — every field is a TOML key, and Scarlet's `xtask`
 /// gate reads these field names out of the pinned source to decide which keys
@@ -88,7 +88,7 @@ mod wildcard_over_own_enum;
 /// keys to satisfy a lint about internal invariants.
 ///
 /// `register_lints` uses `Default` when the linted workspace has no
-/// `dylint.toml` or the file has no `[mordant]` table; the container-level
+/// `mordant.toml` or the file has no `[mordant]` table; the container-level
 /// `serde(default)` fills any omitted key from it too.
 #[derive(Default, serde::Deserialize)]
 #[cfg_attr(test, derive(Debug, PartialEq))]
@@ -220,7 +220,7 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
     let config = match std::env::var(protocol::CONFIG_ENV) {
         Ok(text) => parse_config(&text).unwrap_or_else(|err| {
             sess.dcx()
-                .fatal(format!("mordant: could not read dylint.toml: {err}"))
+                .fatal(format!("mordant: could not read mordant.toml: {err}"))
         }),
         Err(_) => MordantConfig::default(),
     };
@@ -229,7 +229,7 @@ pub fn register_lints(sess: &rustc_session::Session, s: &mut rustc_lint::LintSto
     let unknown = register(config, s, sess.is_test_crate());
     if !unknown.is_empty() {
         sess.dcx().warn(format!(
-            "mordant: `disabled` in dylint.toml names no lint of this pack: {}",
+            "mordant: `disabled` in mordant.toml names no lint of this pack: {}",
             unknown.join(", ")
         ));
     }
@@ -259,8 +259,7 @@ pub fn lints() -> Vec<&'static rustc_lint::Lint> {
     store.get_lints().to_vec()
 }
 
-/// The `[mordant]` table of a `dylint.toml`. Other tables belong to other
-/// tools and are not read.
+/// The `[mordant]` table of `mordant.toml`. Any other table is not read.
 fn parse_config(text: &str) -> Result<MordantConfig, toml::de::Error> {
     let mut table: toml::Table = toml::from_str(text)?;
     match table.remove(env!("CARGO_PKG_NAME")) {
@@ -443,7 +442,7 @@ impl Registrar<'_> {
     }
 }
 
-/// `disabled` as written in `dylint.toml`, with `group:<name>` expanded to
+/// `disabled` as written in `mordant.toml`, with `group:<name>` expanded to
 /// every lint in that family. An entry that names nothing is kept as written
 /// for `unknown_names` to report.
 fn resolve_disabled(written: &[String]) -> Vec<String> {
@@ -472,7 +471,7 @@ fn unknown_names(disabled: &[String], known: &[String]) -> Vec<String> {
 }
 
 /// `register_lints` uses `Default` when the linted workspace has no
-/// `dylint.toml`. A threshold that lost its `= N` would default to 0, which
+/// `mordant.toml`. A threshold that lost its `= N` would default to 0, which
 /// turns `wildcard_over_own_enum` off (`n > 0` for every enum) and makes
 /// `options_as_enum` consider every struct.
 #[test]
@@ -539,8 +538,8 @@ fn config_disabled_parses_and_defaults_empty() {
     assert_eq!(parsed.disabled, ["runtime_typestate", "lock_order"]);
 }
 
-/// `dylint.toml` holds one table per tool; only `[mordant]` is ours, and a
-/// file without it configures nothing.
+/// Only the `[mordant]` table of `mordant.toml` is read, and a file without
+/// it configures nothing.
 #[test]
 fn parse_config_reads_only_the_mordant_table() {
     let parsed =

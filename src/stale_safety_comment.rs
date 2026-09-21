@@ -9,7 +9,7 @@ rustc_lint::declare_lint! {
     /// when nothing with that name exists in the file, this crate, or any
     /// crate it links. The justification describes code that is gone.
     ///
-    /// Runs only with `stale-safety-comment-enabled = true` in `dylint.toml`.
+    /// Runs only with `stale-safety-comment-enabled = true` in `mordant.toml`.
     /// The crate cannot see names defined in C++, in scripts, or in crates
     /// that depend on it, and once a codebase's genuinely stale comments have
     /// been fixed those are most of what remains, so it is a survey to run

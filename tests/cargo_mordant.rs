@@ -57,21 +57,21 @@ fn stderr(out: &Output) -> String {
 /// The configuration reaches the lints, and a change to it reruns them on a
 /// crate cargo would otherwise have left alone.
 #[test]
-fn dylint_toml_is_read_and_a_change_to_it_rechecks() {
+fn mordant_toml_is_read_and_a_change_to_it_rechecks() {
     let root = workspace("config", &[("src/main.rs", MAIN)]);
     let first = stderr(&cargo_mordant(&root));
     assert!(first.contains("#[warn(discarded_error)]"), "{first}");
 
     fs::write(
-        root.join("dylint.toml"),
+        root.join("mordant.toml"),
         "[mordant]\ndisabled = [\"discarded_error\"]\n",
     )
-    .expect("write dylint.toml");
+    .expect("write mordant.toml");
     let disabled = stderr(&cargo_mordant(&root));
     assert!(disabled.contains("Checking demo"), "{disabled}");
     assert!(!disabled.contains("discarded_error"), "{disabled}");
 
-    fs::remove_file(root.join("dylint.toml")).expect("remove dylint.toml");
+    fs::remove_file(root.join("mordant.toml")).expect("remove mordant.toml");
     let removed = stderr(&cargo_mordant(&root));
     assert!(removed.contains("#[warn(discarded_error)]"), "{removed}");
 }
@@ -86,7 +86,7 @@ fn a_baseline_write_and_a_change_to_the_baseline_recheck() {
         &[
             ("src/main.rs", MAIN),
             (
-                "dylint.toml",
+                "mordant.toml",
                 "[mordant]\nbaseline = \"mordant-baseline.toml\"\n",
             ),
         ],
@@ -455,7 +455,7 @@ fn unused_pub_disabled() {
         "unused_pub_disabled",
         &[
             ("src/lib.rs", "pub fn unused() {}\n"),
-            ("dylint.toml", "[mordant]\ndisabled = [\"unused_pub\"]\n"),
+            ("mordant.toml", "[mordant]\ndisabled = [\"unused_pub\"]\n"),
         ],
     );
     let out = cargo_mordant_with(&root, &[], &[("MORDANT_RUSTFLAGS", "-D warnings")]);
@@ -475,7 +475,7 @@ fn unused_pub_disabled_after_enabled() {
         "unused_pub_disabled_after_enabled",
         &[
             ("src/lib.rs", "pub fn unused() {}\n"),
-            ("dylint.toml", "[mordant]\n"),
+            ("mordant.toml", "[mordant]\n"),
         ],
     );
     let out = cargo_mordant_with(&root, &[], &[("MORDANT_RUSTFLAGS", "-D warnings")]);
@@ -483,7 +483,7 @@ fn unused_pub_disabled_after_enabled() {
     assert!(!out.status.success(), "{stderr}");
     assert!(stderr.contains("is public"), "{stderr}");
     fs::write(
-        root.join("dylint.toml"),
+        root.join("mordant.toml"),
         "[mordant]\ndisabled = [\"unused_pub\"]\n",
     )
     .expect("write the config");
@@ -593,7 +593,7 @@ fn unused_pub_is_held_to_the_baseline() {
         &[
             ("src/lib.rs", "pub fn old() {}\n"),
             (
-                "dylint.toml",
+                "mordant.toml",
                 "[mordant]\nbaseline = \"mordant-baseline.toml\"\n",
             ),
         ],

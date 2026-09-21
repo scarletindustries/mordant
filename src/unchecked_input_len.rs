@@ -85,7 +85,7 @@ rustc_lint::declare_lint! {
     /// its pointer, and on safe indexing and slicing, which panic rather than
     /// corrupt.
     ///
-    /// Opt-in: runs when `dylint.toml` sets `unchecked-input-len-enabled`.
+    /// Opt-in: runs when `mordant.toml` sets `unchecked-input-len-enabled`.
     /// The residual noise on bun (TRIAGE.md) is a value the caller vouches
     /// for that the function also uses as the limit of something else, which
     /// nothing inside the function separates from a real miss.

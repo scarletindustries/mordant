@@ -1,4 +1,4 @@
-// The test dylint.toml bans Vec::push from anything matching `hot_path`.
+// The test mordant.toml bans Vec::push from anything matching `hot_path`.
 
 // Flagged, with the witness path hot_path -> helper -> Vec::push.
 fn hot_path(n: u32) -> u32 {

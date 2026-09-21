@@ -1,4 +1,4 @@
-// The test dylint.toml bans `Vec::push` and `Option::expect` from `two_bans`, and `Vec::push`
+// The test mordant.toml bans `Vec::push` and `Option::expect` from `two_bans`, and `Vec::push`
 // alone from `one_ban_twice`. Together these pin the counting rule: a finding is one
 // (root, banned definition), not one root and not one call site.
 
