@@ -200,22 +200,46 @@ pub(crate) fn report(
         return false;
     }
     let recorded = baseline_file::recorded(&path);
-    let mut seen: HashMap<&str, usize> = HashMap::new();
-    let mut over: HashMap<&str, usize> = HashMap::new();
-    for finding in &unused {
-        let file = finding.def.file.as_str();
-        let limit = recorded
+    let allowed = |file: &str| {
+        recorded
             .get(&(LINT.to_string(), file.to_string()))
             .copied()
-            .unwrap_or(0);
-        let n = seen.entry(file).or_default();
-        *n += 1;
-        if *n <= limit {
+            .unwrap_or(0)
+    };
+    let mut found: HashMap<&str, usize> = HashMap::new();
+    for finding in &unused {
+        *found.entry(finding.def.file.as_str()).or_default() += 1;
+    }
+    // A file over its count shows every finding, as `baseline::print_over`
+    // does: the count does not say which of them is the new one.
+    let mut seen: HashMap<&str, usize> = HashMap::new();
+    let mut over: HashMap<&str, usize> = HashMap::new();
+    let mut files: Vec<&str> = Vec::new();
+    for finding in &unused {
+        let file = finding.def.file.as_str();
+        let limit = allowed(file);
+        if found[file] <= limit {
             continue;
         }
-        *over.entry(finding.section.as_str()).or_default() += 1;
+        let n = seen.entry(file).or_default();
+        *n += 1;
+        // The ones past the count are the crate's to answer for in
+        // `over-baseline.txt`; a file two targets of a package share has
+        // findings under two sections.
+        if *n > limit {
+            *over.entry(finding.section.as_str()).or_default() += 1;
+        }
+        if *n == 1 {
+            files.push(file);
+        }
         let note = format!("`{LINT}` over the mordant baseline ({limit} recorded for {file})");
         printer.finding(finding, Severity::Warning, Some(note));
+    }
+    for file in files {
+        printer.plain(
+            Severity::Warning,
+            baseline_file::over_message(LINT, file, found[file], allowed(file)),
+        );
     }
     let status =
         baseline_file::status_file(&baseline_root, baseline_file::cargo_target_dir().as_deref());

@@ -116,6 +116,64 @@ fn a_baseline_write_and_a_change_to_the_baseline_recheck() {
     );
 }
 
+const TWO_DISCARDS: &str = "fn fallible() -> Result<u32, u32> {\n    Err(1)\n}\n\n\
+                            fn new() {\n    fallible().ok();\n}\n\n\
+                            fn old() {\n    fallible().ok();\n}\n\n\
+                            fn main() {\n    new();\n    old();\n}\n";
+
+/// The baseline holds a count for a lint and a file, not which findings. A
+/// file that goes over shows every finding of that lint, and says how many
+/// the baseline allows: hiding the first ones in the file would hide a new
+/// finding written above the old ones, and show an old one in its place.
+#[test]
+fn a_file_over_the_baseline_shows_every_finding_of_the_lint() {
+    let root = workspace(
+        "baseline_shows_all",
+        &[
+            (
+                "src/main.rs",
+                &TWO_DISCARDS
+                    .replace("fn new() {\n    fallible().ok();\n}\n\n", "")
+                    .replace("    new();\n", ""),
+            ),
+            (
+                "mordant.toml",
+                "[mordant]\nbaseline = \"mordant-baseline.toml\"\n",
+            ),
+        ],
+    );
+    stderr(&cargo_mordant_with(
+        &root,
+        &[],
+        &[("MORDANT_BASELINE_WRITE", "1")],
+    ));
+    let held = stderr(&cargo_mordant(&root));
+    assert!(!held.contains("discarded_error"), "{held}");
+
+    fs::write(root.join("src/main.rs"), TWO_DISCARDS).expect("add a finding above the old one");
+    let over = stderr(&cargo_mordant(&root));
+    // The new one, in `new`, and the old one, in `old`.
+    for shown in ["--> src/main.rs:6:5", "--> src/main.rs:10:5"] {
+        assert!(over.contains(shown), "{shown}: {over}");
+    }
+    assert_eq!(
+        over.matches("`discarded_error` over the mordant baseline (1 recorded for src/main.rs)")
+            .count(),
+        2,
+        "{over}"
+    );
+    assert!(
+        over.contains("2 `discarded_error` findings in src/main.rs, and the baseline allows 1"),
+        "{over}"
+    );
+    assert!(
+        over.contains("1 finding(s) over the baseline in demo"),
+        "{over}"
+    );
+    let status = fs::read_to_string(root.join("target/mordant/over-baseline.txt")).expect("status");
+    assert_eq!(status, "demo (bin demo) 1\n");
+}
+
 /// `mordant-action` reads lint names off this, one indented
 /// `name  level  description` line per lint under a `mordant` heading.
 #[test]
@@ -618,7 +676,8 @@ fn a_crate_allowing_unused_pub_still_records_its_uses() {
 /// With a baseline, `MORDANT_BASELINE_WRITE=1` records the unused items
 /// under the section of the crate that defines them, a later run is held to
 /// that count, and one past it is reported as the baseline's warning and
-/// listed in `over-baseline.txt`.
+/// listed in `over-baseline.txt`. Every finding of the file is shown then,
+/// since any of them can be the new one.
 #[test]
 fn unused_pub_is_held_to_the_baseline() {
     let root = workspace(
@@ -645,14 +704,23 @@ fn unused_pub_is_held_to_the_baseline() {
     let held = stderr(&cargo_mordant(&root));
     assert!(!held.contains("is public"), "{held}");
 
+    // Above the recorded one: the baseline holds a count and not which
+    // findings, so it cannot take the first one in the file for the old one.
     fs::write(
         root.join("src/lib.rs"),
-        "pub fn old() {}\n\npub fn new() {}\n",
+        "pub fn new() {}\n\npub fn old() {}\n",
     )
     .expect("add an item");
     let over = stderr(&cargo_mordant(&root));
     assert!(
         over.contains("`unused_pub` over the mordant baseline (1 recorded for src/lib.rs)"),
+        "{over}"
+    );
+    for shown in ["`demo::new` is public", "`demo::old` is public"] {
+        assert!(over.contains(shown), "{shown}: {over}");
+    }
+    assert!(
+        over.contains("2 `unused_pub` findings in src/lib.rs, and the baseline allows 1"),
         "{over}"
     );
     assert!(

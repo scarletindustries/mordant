@@ -112,6 +112,16 @@ pub fn status_file(root: &Path, target_dir: Option<&Path>) -> PathBuf {
     .join("over-baseline.txt")
 }
 
+/// What a run says once for a lint and a file that are over the baseline,
+/// under the findings it shows for them.
+pub fn over_message(lint: &str, file: &str, found: usize, allowed: usize) -> String {
+    format!(
+        "mordant: {found} `{lint}` findings in {file}, and the baseline allows {allowed}. The \
+         baseline holds a count, not which findings, so all {found} are shown: any of them can \
+         be the new one"
+    )
+}
+
 /// Records that `name` went `over` its baseline. Appended to, never
 /// truncated: every crate is its own rustc process, so no process knows it
 /// is the first. CI removes the file before the run and tests it is empty

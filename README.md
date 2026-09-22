@@ -48,7 +48,7 @@ never = ["std::vec::Vec::push"]
 
 ## Baseline
 
-A baseline records the findings you already have, so a run reports only new ones:
+A baseline records how many findings each lint has in each file, so a run says nothing about a file until it has more than that:
 
 ```toml
 [mordant]
@@ -58,6 +58,8 @@ baseline = "mordant-baseline.toml"
 ```sh
 MORDANT_BASELINE_WRITE=1 cargo mordant --workspace
 ```
+
+The baseline holds a count, not which findings. So a file that goes over shows every finding of that lint, with the count the baseline allows: the new one is among them.
 
 Regenerate and commit it after fixing a finding. A crate that goes over the baseline is listed in `target/mordant/over-baseline.txt`, so a CI job can fail on that file:
 

@@ -1,6 +1,11 @@
 //! Ratchet mode. A baseline file records the accepted finding count per
-//! (lint, file); runs suppress up to that many findings and surface only the
-//! overflow, so mordant can gate CI on a brownfield codebase from day one.
+//! (lint, file); a run says nothing about a file that stays within its
+//! count, so mordant can gate CI on a brownfield codebase from day one.
+//!
+//! A file that goes over shows every finding of that lint, not only the
+//! overflow. The count does not say which findings it stands for, so there is
+//! no telling the new one from the old ones: hiding the first ones in the file
+//! hid a new finding written above them and showed an old one in its place.
 //!
 //! Regeneration: `MORDANT_BASELINE_WRITE=1 cargo mordant` emits nothing
 //! and rewrites each compiled crate's section instead. Sections are keyed by
@@ -13,9 +18,9 @@
 //! the desired ratchet behavior.
 //!
 //! Severity: with a baseline configured, the baseline decides what fails the
-//! run, not the lint level. A finding over the recorded count is printed as a
-//! plain warning through the session's diagnostic context rather than as a
-//! lint, so `-D warnings`, `[lints] warnings = "deny"` and `--cap-lints`
+//! run, not the lint level. A finding of a file that is over its count is
+//! printed as a plain warning through the session's diagnostic context rather
+//! than as a lint, so `-D warnings`, `[lints] warnings = "deny"` and `--cap-lints`
 //! cannot turn it into an error that stops the crate and hides every finding
 //! after it. `#[allow]` and `#[expect]` are still read, at the same node the
 //! lint path reads them. Each crate that goes over prints one summary line and
@@ -30,11 +35,10 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use clippy_utils::diagnostics::{span_lint_and_help, span_lint_and_then, span_lint_hir_and_then};
-use rustc_errors::Diag;
+use rustc_errors::{Diag, DiagInner};
 use rustc_hir::HirId;
 use rustc_lint::{LateContext, LateLintPass, Lint, LintContext};
 use rustc_span::{FileName, Span};
@@ -48,14 +52,14 @@ type Key = (String, String);
 /// `setup`, since the environment variable that selects it cannot change
 /// while rustc is running.
 enum Mode {
-    /// Stay silent up to the recorded count for each key and report the
-    /// overflow as warnings.
+    /// Stay silent about a key that stays within its recorded count, and
+    /// print every finding of one that goes over, as warnings.
     Ratchet {
         recorded: HashMap<Key, usize>,
-        /// Findings weighed so far this run, per key.
-        seen: Mutex<HashMap<Key, usize>>,
-        /// Over-baseline findings reported (not allowed away) in this crate.
-        over: AtomicUsize,
+        /// Every finding of the crate so far, built and not printed. Whether
+        /// a key is over is known once the crate is done, and then all of its
+        /// findings are printed or none: `BaselineWriter` decides.
+        held: Mutex<Vec<(Key, DiagInner)>>,
         /// Where a crate that went over appends its name and count.
         status_file: PathBuf,
     },
@@ -101,8 +105,7 @@ fn init(file_name: &str) -> Option<Baseline> {
     } else {
         Mode::Ratchet {
             recorded: baseline_file::recorded(&path),
-            seen: Mutex::new(HashMap::new()),
-            over: AtomicUsize::new(0),
+            held: Mutex::new(Vec::new()),
             status_file: baseline_file::status_file(
                 &root,
                 baseline_file::cargo_target_dir().as_deref(),
@@ -125,38 +128,39 @@ fn rel_file(cx: &LateContext<'_>, b: &Baseline, span: Span) -> Option<String> {
 enum Verdict {
     /// No baseline governs it: an ordinary lint at its ordinary level.
     Lint,
-    /// Allowed or expected at its node, recorded in write mode, or within
-    /// the recorded count: nothing is printed.
+    /// Allowed or expected at its node, or recorded in write mode: nothing
+    /// is printed.
     Silent,
-    /// Over the recorded count: printed as a warning no lint level can raise.
-    Over(Over),
+    /// Held to the baseline: built now, and printed when the crate is done
+    /// if its key turns out to be over, as a warning no lint level can raise.
+    Held(Held),
 }
 
-struct Over {
-    lint: &'static Lint,
+struct Held {
+    key: Key,
     recorded: usize,
-    file: String,
-    count: &'static AtomicUsize,
+    held: &'static Mutex<Vec<(Key, DiagInner)>>,
 }
 
-impl Over {
-    fn report(
+impl Held {
+    fn keep(
         self,
         cx: &LateContext<'_>,
         span: Span,
         msg: String,
         decorate: impl FnOnce(&mut Diag<'_, ()>),
     ) {
-        self.count.fetch_add(1, Ordering::Relaxed);
         let mut diag = cx.tcx.dcx().struct_span_warn(span, msg);
         decorate(&mut diag);
         diag.note(format!(
             "`{}` over the mordant baseline ({} recorded for {})",
-            self.lint.name_lower(),
-            self.recorded,
-            self.file,
+            self.key.0, self.recorded, self.key.1,
         ));
-        diag.emit();
+        // A `Diag` borrows the session and has to be emitted or cancelled;
+        // what it holds is owned and can wait.
+        let inner = DiagInner::clone(&diag);
+        diag.cancel();
+        self.held.lock().unwrap().push((self.key, inner));
     }
 }
 
@@ -187,29 +191,11 @@ fn weigh(cx: &LateContext<'_>, lint: &'static Lint, span: Span, hir_id: HirId) -
             recorded.lock().unwrap().push(key);
             Verdict::Silent
         }
-        Mode::Ratchet {
-            recorded,
-            seen,
-            over,
-            ..
-        } => {
-            let limit = recorded.get(&key).copied().unwrap_or(0);
-            let within = {
-                let mut seen = seen.lock().unwrap();
-                let n = seen.entry(key.clone()).or_default();
-                *n += 1;
-                *n <= limit
-            };
-            if within {
-                return Verdict::Silent;
-            }
-            Verdict::Over(Over {
-                lint,
-                recorded: limit,
-                file: key.1,
-                count: over,
-            })
-        }
+        Mode::Ratchet { recorded, held, .. } => Verdict::Held(Held {
+            recorded: recorded.get(&key).copied().unwrap_or(0),
+            key,
+            held,
+        }),
     }
 }
 
@@ -234,7 +220,7 @@ pub fn emit(
     match weigh(cx, lint, span, cx.last_node_with_lint_attrs) {
         Verdict::Silent => {}
         Verdict::Lint => span_lint_and_help(cx, lint, span, msg.into(), None, help),
-        Verdict::Over(over) => over.report(cx, span, msg.into(), |diag| {
+        Verdict::Held(held) => held.keep(cx, span, msg.into(), |diag| {
             diag.help(help);
         }),
     }
@@ -259,7 +245,7 @@ pub fn emit_with_note(
     match weigh(cx, lint, span, cx.last_node_with_lint_attrs) {
         Verdict::Silent => {}
         Verdict::Lint => span_lint_and_then(cx, lint, span, msg.into(), decorate),
-        Verdict::Over(over) => over.report(cx, span, msg.into(), decorate),
+        Verdict::Held(held) => held.keep(cx, span, msg.into(), decorate),
     }
 }
 
@@ -277,7 +263,7 @@ pub fn emit_hir_then(
     match weigh(cx, lint, span, hir_id) {
         Verdict::Silent => {}
         Verdict::Lint => span_lint_hir_and_then(cx, lint, hir_id, span, msg.into(), decorate),
-        Verdict::Over(over) => over.report(cx, span, msg.into(), decorate),
+        Verdict::Held(held) => held.keep(cx, span, msg.into(), decorate),
     }
 }
 
@@ -305,17 +291,59 @@ impl<'tcx> LateLintPass<'tcx> for BaselineWriter {
         match state() {
             None => {}
             Some(Baseline {
-                mode: Mode::Ratchet {
-                    over, status_file, ..
-                },
+                mode:
+                    Mode::Ratchet {
+                        recorded,
+                        held,
+                        status_file,
+                    },
                 ..
-            }) => summarize(cx, over.load(Ordering::Relaxed), status_file),
+            }) => {
+                let held = std::mem::take(&mut *held.lock().unwrap());
+                summarize(cx, print_over(cx, recorded, held), status_file);
+            }
             Some(Baseline {
                 mode: Mode::Record { path, recorded },
                 ..
             }) => write_section(cx, path, recorded),
         }
     }
+}
+
+/// Prints every finding of each key that has more of them than the baseline
+/// records, a file's findings from its top down, then one line per such key
+/// with the two counts. How many findings are over, all keys together.
+fn print_over(
+    cx: &LateContext<'_>,
+    recorded: &HashMap<Key, usize>,
+    mut held: Vec<(Key, DiagInner)>,
+) -> usize {
+    // By position: a lint that reports when the crate is done finds things
+    // in an order of its own.
+    held.sort_by_key(|(_, diag)| diag.sort_span.lo());
+    let mut found: Vec<(Key, usize)> = Vec::new();
+    for (key, _) in &held {
+        match found.iter_mut().find(|(k, _)| k == key) {
+            Some((_, n)) => *n += 1,
+            None => found.push((key.clone(), 1)),
+        }
+    }
+    let allowed = |key: &Key| recorded.get(key).copied().unwrap_or(0);
+    found.retain(|(key, n)| *n > allowed(key));
+    for (key, diag) in held {
+        if found.iter().any(|(k, _)| *k == key) {
+            cx.tcx.dcx().emit_diagnostic(diag);
+        }
+    }
+    for (key, n) in &found {
+        cx.tcx.dcx().warn(baseline_file::over_message(
+            &key.0,
+            &key.1,
+            *n,
+            allowed(key),
+        ));
+    }
+    found.iter().map(|(key, n)| n - allowed(key)).sum()
 }
 
 /// One line for the reader and one for CI.
