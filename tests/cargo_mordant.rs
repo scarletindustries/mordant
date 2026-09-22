@@ -317,6 +317,39 @@ fn unused_pub_checks_all_builds() {
     assert!(!stderr.contains("`demo::by_windows` is public"), "{stderr}");
 }
 
+/// A `cfg(windows)` impl block gives the impl blocks after it one number on
+/// Windows and another elsewhere, so one item has two keys in a run over both
+/// targets. A use under either target still counts for it, and an unused
+/// item is one finding.
+#[test]
+fn unused_pub_knows_one_item_under_the_keys_of_two_targets() {
+    let root = members(
+        "two_target_keys",
+        "pub struct A;\n\n#[cfg(windows)]\nimpl A {\n    pub fn only_there(&self) {}\n}\n\n\
+         impl A {\n    pub fn by_windows(&self) {}\n\n    pub fn by_nothing(&self) {}\n}\n",
+        "fn main() {\n    let a = a::A;\n    #[cfg(windows)]\n    {\n        \
+         a.only_there();\n        a.by_windows();\n    }\n    let _ = a;\n}\n",
+    );
+    let out = stderr(&cargo_mordant_with(
+        &root,
+        &[
+            "--workspace",
+            "--target",
+            "x86_64-unknown-linux-gnu",
+            "--target",
+            "x86_64-pc-windows-msvc",
+        ],
+        &[],
+    ));
+    assert_eq!(
+        out.matches("`a::A::by_nothing` is public").count(),
+        1,
+        "{out}"
+    );
+    assert!(!out.contains("`a::A::by_windows` is public"), "{out}");
+    assert!(!out.contains("`a::A::only_there` is public"), "{out}");
+}
+
 /// A workspace of three members: the library `a`; the binary `b`, which
 /// depends on it; and `c`, which depends on it too and whose only target
 /// wants a feature that is off, so `--workspace` selects it and builds

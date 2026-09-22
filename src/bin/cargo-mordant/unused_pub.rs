@@ -117,12 +117,28 @@ fn judge<'a>(facts: &Path, units: &'a [RunUnit], judged: &HashSet<&str>) -> Reco
     if !missing.is_empty() {
         return Records::Missing(missing);
     }
-    found.retain(|f| !refs.contains(&f.def.key) && !refs.contains(&f.def.position_key()));
-    found.sort_by(|a, b| a.def.file.cmp(&b.def.file).then(a.def.lo.cmp(&b.def.lo)));
-    found.dedup_by(|a, b| a.def.key == b.def.key);
-    // An item of a type or trait that is itself unused goes with it.
+    // A run over several targets records one item once per target, and not
+    // always under one key: the definition path numbers the `impl` blocks of
+    // a module, and a `cfg(windows)` block above an item gives it
+    // `{impl#10}` on Windows and `{impl#9}` elsewhere. Its position, the
+    // crate plus where its name is, is the same in every unit. So an item is
+    // used when a use of any of its keys was recorded, and it is one finding.
+    let used: HashSet<String> = found
+        .iter()
+        .filter(|f| refs.contains(&f.def.key) || refs.contains(&f.def.position_key()))
+        .map(|f| f.def.position_key())
+        .collect();
+    found.retain(|f| !used.contains(&f.def.position_key()));
+    // An item of a type or trait that is itself unused goes with it. Keys,
+    // since `parent` is the key the item's own unit gave the type or trait.
     let keys: HashSet<String> = found.iter().map(|f| f.def.key.clone()).collect();
     found.retain(|f| !keys.contains(&f.def.parent));
+    // By key last, so which unit's record is kept does not depend on the
+    // order cargo finished the units in.
+    found.sort_by(|a, b| {
+        (&a.def.file, a.def.lo, &a.def.key).cmp(&(&b.def.file, b.def.lo, &b.def.key))
+    });
+    found.dedup_by(|a, b| a.def.position_key() == b.def.position_key());
     Records::Judged {
         unused: found,
         sections,
