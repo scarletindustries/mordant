@@ -93,7 +93,7 @@ mod wildcard_over_own_enum;
 #[derive(Default, serde::Deserialize)]
 #[cfg_attr(test, derive(Debug, PartialEq))]
 #[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
-#[cfg_attr(dylint_lib = "mordant", allow(bool_cluster))]
+#[cfg_attr(mordant, allow(bool_cluster))]
 pub struct MordantConfig {
     /// Lints, by name, that stay registered (so an `allow` of one still
     /// resolves) but never run. `group:<name>` stands for every lint in that

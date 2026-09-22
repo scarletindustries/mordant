@@ -637,7 +637,7 @@ fn unused_pub_reports_a_level_set_in_the_source() {
         "attribute",
         &[(
             "src/lib.rs",
-            "#![cfg_attr(dylint_lib = \"mordant\", deny(unused_pub))]\n\npub fn unused() {}\n",
+            "#![cfg_attr(mordant, deny(unused_pub))]\n\npub fn unused() {}\n",
         )],
     );
     let out = cargo_mordant(&root);

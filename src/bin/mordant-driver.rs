@@ -38,9 +38,9 @@ const RUSTFLAGS_ENV: &str = "MORDANT_RUSTFLAGS";
 
 const BUG_REPORT_URL: &str = "https://github.com/scarletindustries/mordant/issues/new";
 
-/// `dylint_lib = "mordant"` is the cfg dylint's driver set, and consumers
-/// already gate `#[cfg_attr(dylint_lib = "mordant", allow(..))]` on it.
-const LINTING_CFG: &str = r#"--cfg=dylint_lib="mordant""#;
+/// Set while mordant lints, so code can allow one of its lints with
+/// `#[cfg_attr(mordant, allow(..))]` without plain rustc calling it unknown.
+const LINTING_CFG: &str = "--cfg=mordant";
 
 fn main() -> ExitCode {
     let early_dcx = EarlyDiagCtxt::new(ErrorOutputType::default());

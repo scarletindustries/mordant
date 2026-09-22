@@ -9,11 +9,11 @@ repository = "https://github.com/scarletindustries/mordant"
 publish = false
 
 [lints.rust]
-# `mordant-driver` sets `--cfg dylint_lib="mordant"` while it lints, as dylint's
-# driver did; a plain `cargo build` / `cargo clippy` does not. That is what lets
-# this pack `allow` one of its own lints in its own source without
-# `unknown_lints` firing when the pack is compiled off-driver.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(dylint_lib, values("mordant"))'] }
+# `mordant-driver` sets `--cfg mordant` while it lints, and a plain `cargo build`
+# or `cargo clippy` does not. That is what lets this pack `allow` one of its own
+# lints in its own source without `unknown_lints` firing when the pack is
+# compiled off-driver.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(mordant)'] }
 
 [dependencies]
 annotate-snippets = "0.12"
