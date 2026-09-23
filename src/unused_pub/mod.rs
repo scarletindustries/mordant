@@ -5,7 +5,7 @@ mod files;
     dead_code,
     reason = "cargo-mordant reads what this library only writes"
 )]
-mod records;
+pub(crate) mod records;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
@@ -238,27 +238,34 @@ impl<'tcx> LateLintPass<'tcx> for UnusedPub {
 
 /// How this compilation takes part: `cargo mordant` sets the environment
 /// for the run's compilations and, differently, for its last one.
+///
+/// A build script is judged alone, since no other crate can use its items.
 fn mode(cx: &LateContext<'_>) -> Mode {
-    let Some(dir) = std::env::var_os(FACTS_ENV).map(PathBuf::from) else {
-        return Mode::Alone;
-    };
     let name = cx.tcx.crate_name(rustc_hir::def_id::LOCAL_CRATE);
+    match this_unit(cx) {
+        Some((dir, unit)) if name.as_str() != "build_script_build" => Mode::Record { dir, unit },
+        _ => Mode::Alone,
+    }
+}
+
+/// The directory this compilation writes its records into and the unit it
+/// names them for, when it runs under `cargo mordant`. A build script is a
+/// unit too: it writes its `.over` file, though not `.refs` or `.defs`.
+pub(crate) fn this_unit(cx: &LateContext<'_>) -> Option<(PathBuf, Unit)> {
+    let dir = std::env::var_os(FACTS_ENV).map(PathBuf::from)?;
     let src = cx
         .tcx
         .sess
         .local_crate_source_file()
-        .and_then(|f| f.local_path().map(std::path::Path::to_path_buf));
-    match src {
-        Some(src) if name.as_str() != "build_script_build" => Mode::Record {
-            dir,
-            unit: Unit {
-                src,
-                test: cx.tcx.sess.is_test_crate(),
-                extra_filename: cx.tcx.sess.opts.cg.extra_filename.clone(),
-            },
+        .and_then(|f| f.local_path().map(std::path::Path::to_path_buf))?;
+    Some((
+        dir,
+        Unit {
+            src,
+            test: cx.tcx.sess.is_test_crate(),
+            extra_filename: cx.tcx.sess.opts.cg.extra_filename.clone(),
         },
-        _ => Mode::Alone,
-    }
+    ))
 }
 
 impl UnusedPub {

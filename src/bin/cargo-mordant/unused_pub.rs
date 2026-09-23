@@ -13,6 +13,7 @@ use serde_json::{Value as Json, json};
 
 use crate::Output;
 use crate::baseline_file;
+use crate::over_baseline;
 use crate::records::{self, Def, Note, Unit};
 
 const LINT: &str = "unused_pub";
@@ -147,7 +148,8 @@ fn judge<'a>(facts: &Path, units: &'a [RunUnit], judged: &HashSet<&str>) -> Reco
 
 /// Judges and prints the run's `unused_pub` findings. `baseline` is the file
 /// name the configuration gives, if it gives one. Whether any finding was an
-/// error.
+/// error, and a line for `over-baseline.txt` for each section whose
+/// `unused_pub` findings are over its baseline count.
 pub(crate) fn report(
     root: &Path,
     facts: &Path,
@@ -156,7 +158,7 @@ pub(crate) fn report(
     output: &Output,
     styled: bool,
     baseline: Option<&str>,
-) -> bool {
+) -> (bool, Vec<over_baseline::OverBaselineLine>) {
     let mut printer = Printer::new(root, output, styled, units.first());
     let (unused, sections) = match judge(facts, units, judged) {
         Records::Missing(units) => {
@@ -181,23 +183,21 @@ pub(crate) fn report(
                     facts.parent().unwrap_or(facts).display(),
                 ),
             );
-            return true;
+            return (true, Vec::new());
         }
         Records::Judged { unused, sections } => (unused, sections),
     };
     let record = baseline_file::write_mode();
-    let Some((baseline_root, path)) =
-        baseline.and_then(|name| baseline_file::find(root, name, record))
-    else {
+    let Some((_, path)) = baseline.and_then(|name| baseline_file::find(root, name, record)) else {
         for finding in &unused {
             let severity = Severity::of(&finding.def.level);
             printer.finding(finding, severity, None);
         }
-        return printer.tally();
+        return (printer.tally(), Vec::new());
     };
     if record {
         write(&path, &sections, &unused);
-        return false;
+        return (false, Vec::new());
     }
     let recorded = baseline_file::recorded(&path);
     let allowed = |file: &str| {
@@ -241,16 +241,26 @@ pub(crate) fn report(
             baseline_file::over_message(LINT, file, found[file], allowed(file)),
         );
     }
-    let status =
-        baseline_file::status_file(&baseline_root, baseline_file::cargo_target_dir().as_deref());
+    let mut lines = Vec::new();
     for (section, n) in over {
-        printer.plain(
-            Severity::Warning,
-            format!("mordant: {n} finding(s) over the baseline in {section}"),
-        );
-        baseline_file::append_status(&status, section, n);
+        let line = over_baseline::OverBaselineLine::new(section, n);
+        printer.plain(Severity::Warning, line.summary());
+        lines.push(line);
     }
-    printer.tally()
+    (printer.tally(), lines)
+}
+
+/// Prints one error that is about no one item, as `report` prints its error
+/// for missing records: on stderr in human and short output, and as a
+/// `compiler-message` on stdout, attributed to `unit`, in JSON output.
+pub(crate) fn print_error(
+    root: &Path,
+    output: &Output,
+    styled: bool,
+    unit: Option<&RunUnit>,
+    message: String,
+) {
+    Printer::new(root, output, styled, unit).plain(Severity::Error, message);
 }
 
 /// Rewrites `unused_pub`'s entries in the sections this run judged, and
@@ -273,7 +283,7 @@ fn write(path: &Path, sections: &BTreeSet<String>, unused: &[Finding<'_>]) {
 }
 
 /// `a`, `a and b`, `a, b and c`.
-fn join(items: &[String]) -> String {
+pub(crate) fn join(items: &[String]) -> String {
     match items {
         [] => String::new(),
         [one] => one.clone(),

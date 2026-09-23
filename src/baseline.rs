@@ -60,8 +60,6 @@ enum Mode {
         /// a key is over is known once the crate is done, and then all of its
         /// findings are printed or none: `BaselineWriter` decides.
         held: Mutex<Vec<(Key, DiagInner)>>,
-        /// Where a crate that went over appends its name and count.
-        status_file: PathBuf,
     },
     /// Emit nothing; collect every finding and rewrite this crate's section of
     /// the file at `path` from `BaselineWriter::check_crate_post`.
@@ -106,10 +104,6 @@ fn init(file_name: &str) -> Option<Baseline> {
         Mode::Ratchet {
             recorded: baseline_file::recorded(&path),
             held: Mutex::new(Vec::new()),
-            status_file: baseline_file::status_file(
-                &root,
-                baseline_file::cargo_target_dir().as_deref(),
-            ),
         }
     };
     Some(Baseline { root, mode })
@@ -280,33 +274,37 @@ pub fn section_name(cx: &LateContext<'_>) -> String {
     }
 }
 
-// Registered last: flushes write-mode recordings for this crate into the
-// baseline file, replacing only this crate's section, or in ratchet mode
-// prints the crate's over-baseline summary. It declares no lint of its own;
-// rustc always runs a lintless pass, so nothing can `allow` it away.
+// Registered last, and in a test build too: flushes write-mode recordings
+// for this crate into the baseline file, replacing only this crate's
+// section, or in ratchet mode prints the crate's over-baseline summary. When
+// the compilation runs under `cargo mordant`, which sets
+// `MORDANT_UNUSED_PUB_FACTS`, it also writes the unit's `.over` file, in
+// every mode. It declares no lint of its own; rustc always runs a lintless
+// pass, so nothing can `allow` it away.
 rustc_lint::declare_lint_pass!(BaselineWriter => []);
 
 impl<'tcx> LateLintPass<'tcx> for BaselineWriter {
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
-        match state() {
-            None => {}
+        let over = match state() {
             Some(Baseline {
-                mode:
-                    Mode::Ratchet {
-                        recorded,
-                        held,
-                        status_file,
-                    },
+                mode: Mode::Ratchet { recorded, held },
                 ..
             }) => {
                 let held = std::mem::take(&mut *held.lock().unwrap());
-                summarize(cx, print_over(cx, recorded, held), status_file);
+                print_over(cx, recorded, held)
             }
+            // A test build runs no lint that records, so it leaves the
+            // section to the crate's own build.
             Some(Baseline {
                 mode: Mode::Record { path, recorded },
                 ..
-            }) => write_section(cx, path, recorded),
-        }
+            }) if !cx.tcx.sess.is_test_crate() => {
+                write_section(cx, path, recorded);
+                0
+            }
+            _ => 0,
+        };
+        summarize(cx, over);
     }
 }
 
@@ -346,16 +344,23 @@ fn print_over(
     found.iter().map(|(key, n)| n - allowed(key)).sum()
 }
 
-/// One line for the reader and one for CI.
-fn summarize(cx: &LateContext<'_>, over: usize, status_file: &Path) {
+/// One line for the reader when `over` is not 0, and under `cargo mordant`
+/// this unit's `.over` file, which `cargo mordant` reads whether cargo
+/// compiled the unit again or not. It is empty when `over` is 0.
+fn summarize(cx: &LateContext<'_>, over: usize) {
+    let name = section_name(cx);
+    if let Some((dir, unit)) = crate::unused_pub::this_unit(cx) {
+        crate::unused_pub::records::write_over(
+            &unit.over(&dir),
+            (over > 0).then_some((name.as_str(), over)),
+        );
+    }
     if over == 0 {
         return;
     }
-    let name = section_name(cx);
     cx.tcx.dcx().warn(format!(
         "mordant: {over} finding(s) over the baseline in {name}"
     ));
-    baseline_file::append_status(status_file, &name, over);
 }
 
 fn write_section(cx: &LateContext<'_>, path: &Path, recorded: &Mutex<Vec<Key>>) {
@@ -384,30 +389,4 @@ fn write_section(cx: &LateContext<'_>, path: &Path, recorded: &Mutex<Vec<Key>>) 
             doc.insert(name, section);
         }
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::baseline_file::status_file;
-    use std::path::{Path, PathBuf};
-
-    #[test]
-    fn status_file_defaults_to_target_under_the_workspace_root() {
-        assert_eq!(
-            status_file(Path::new("/ws"), None),
-            PathBuf::from("/ws/target/mordant/over-baseline.txt"),
-        );
-    }
-
-    #[test]
-    fn status_file_follows_cargo_target_dir() {
-        assert_eq!(
-            status_file(Path::new("/ws"), Some(Path::new("/elsewhere/tgt"))),
-            PathBuf::from("/elsewhere/tgt/mordant/over-baseline.txt"),
-        );
-        assert_eq!(
-            status_file(Path::new("/ws"), Some(Path::new("build/cargo"))),
-            PathBuf::from("/ws/build/cargo/mordant/over-baseline.txt"),
-        );
-    }
 }

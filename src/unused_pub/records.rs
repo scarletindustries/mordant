@@ -7,8 +7,13 @@
 //! findings belong to. Items are keyed by crate name plus definition path,
 //! which reads the same from every crate that depends on the one defining
 //! them. A crate's use of its own items is keyed by [`position_key`]
-//! instead. A file is written whole under a temporary name and renamed, so a
-//! reader never sees half of one.
+//! instead. A build script writes neither file. Beside that directory, in
+//! `<target>/mordant/over_baseline_counts/`, every compilation, a build
+//! script's included, writes `<unit>.over`. It is one `<section>\t<count>`
+//! line when the compilation has findings over its baseline count, and
+//! empty otherwise: no baseline found, write mode, or nothing over. A file
+//! is written whole under a temporary name and renamed, so a reader never
+//! sees half of one.
 //!
 //! Shared by the library and `cargo-mordant`, which includes this file by
 //! path, so nothing here may depend on the compiler.
@@ -107,6 +112,13 @@ impl Unit {
     pub fn refs(&self, dir: &Path) -> PathBuf {
         dir.join(format!("{}.refs", self.stem()))
     }
+
+    /// `dir` is the directory of the `.refs` and `.defs` files; the `.over`
+    /// file is in `over_baseline_counts` beside it.
+    pub fn over(&self, dir: &Path) -> PathBuf {
+        dir.with_file_name("over_baseline_counts")
+            .join(format!("{}.over", self.stem()))
+    }
 }
 
 pub fn write_defs<'a>(path: &Path, section: &str, defs: impl Iterator<Item = &'a Def>) {
@@ -153,6 +165,40 @@ pub fn write_refs(path: &Path, refs: &BTreeSet<String>) {
         out.push('\n');
     }
     write_whole(path, &out);
+}
+
+/// Writes `section` and its number of findings over the baseline count to the
+/// `.over` file at `path`, or an empty file when there are none.
+pub fn write_over(path: &Path, over: Option<(&str, usize)>) {
+    let out = match over {
+        Some((section, n)) => format!("{section}\t{n}\n"),
+        None => String::new(),
+    };
+    write_whole(path, &out);
+}
+
+/// What a `.over` file says.
+pub enum Over {
+    /// The file is empty: the compilation had no findings over its baseline
+    /// count.
+    Nothing,
+    /// The file is one `<section>\t<count>` line: the compilation had `count`
+    /// findings over the baseline count in `section`.
+    Count { section: String, count: usize },
+}
+
+/// What the `.over` file at `path` says, or `None` if it is missing or holds
+/// anything but what `write_over` writes.
+pub fn read_over(path: &Path) -> Option<Over> {
+    let text = std::fs::read_to_string(path).ok()?;
+    if text.is_empty() {
+        return Some(Over::Nothing);
+    }
+    let (section, count) = text.strip_suffix('\n')?.split_once('\t')?;
+    Some(Over::Count {
+        section: section.to_string(),
+        count: count.parse().ok()?,
+    })
 }
 
 /// The keys a `.refs` file lists; `None` if it is missing.

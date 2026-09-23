@@ -24,6 +24,7 @@ use std::process::{Command, ExitCode, ExitStatus, Stdio};
 
 use serde_json::Value as Json;
 
+mod over_baseline;
 mod unused_pub;
 
 #[path = "../../baseline_file.rs"]
@@ -280,6 +281,7 @@ fn main() -> ExitCode {
         Err(err) => return fail(format_args!("could not run cargo: {err}")),
     };
     let mut units = Vec::new();
+    let mut build_scripts = Vec::new();
     // Held back, so the findings printed after the build come before it.
     let mut finished = None;
     if let Some(stdout) = child.stdout.take() {
@@ -292,6 +294,7 @@ fn main() -> ExitCode {
                     continue;
                 }
                 units.extend(unit_of(message, &meta.workspace_members));
+                build_scripts.extend(build_script_of(message, &meta.workspace_members));
             }
             if matches!(output, Output::Json(_)) {
                 let _ = writeln!(out, "{line}");
@@ -305,8 +308,8 @@ fn main() -> ExitCode {
             return exit_code(status, "cargo");
         }
     }
-    let errors = if mordant_config.unused_pub_off() {
-        false
+    let (errors, mut over_baseline_lines) = if mordant_config.unused_pub_off() {
+        (false, Vec::new())
     } else {
         unused_pub::report(
             &meta.workspace_root,
@@ -318,8 +321,49 @@ fn main() -> ExitCode {
             mordant_config.baseline.as_deref(),
         )
     };
+    match over_baseline::read_counts(&facts, &units, &build_scripts) {
+        Ok(lines) => over_baseline_lines.extend(lines),
+        Err(missing) => {
+            let root = &meta.workspace_root;
+            let named: Vec<String> = missing
+                .iter()
+                .map(|src| format!("`{}`", src.strip_prefix(root).unwrap_or(src).display()))
+                .collect();
+            unused_pub::print_error(
+                root,
+                &output,
+                styled,
+                units.first(),
+                format!(
+                    "mordant: `over-baseline.txt` was not written: {} left no count of findings \
+                     over the baseline; remove `{}`, which holds those counts and the build \
+                     `cargo mordant` reuses, then run again",
+                    unused_pub::join(&named),
+                    facts.parent().unwrap_or(&facts).display(),
+                ),
+            );
+            if let Some(finished) = &mut finished {
+                finished["success"] = Json::Bool(false);
+            }
+            print_finished(&output, finished);
+            // What cargo exits with when a crate fails to compile, as for
+            // `unused_pub`'s errors below.
+            return ExitCode::from(101);
+        }
+    }
     if let Some(finished) = &mut finished {
         finished["success"] = Json::Bool(!errors);
+    }
+    // When judging the run failed, `over-baseline.txt` stays as it was.
+    if !errors
+        && let Err(err) = over_baseline::write_over_baseline(
+            &meta.target_directory,
+            "over-baseline.txt",
+            over_baseline_lines,
+        )
+    {
+        print_finished(&output, finished);
+        return fail(format_args!("could not write {err}"));
     }
     print_finished(&output, finished);
     // What cargo exits with when a crate fails to compile.
@@ -399,8 +443,9 @@ impl Output {
 }
 
 /// A unit of the run, if `message` is cargo's artifact message for a
-/// workspace member other than a build script. One arrives for every unit
-/// the run builds, a fresh one included.
+/// workspace member other than a build script. One arrives for every unit the
+/// run builds, a fresh one included. [`build_script_of`] reads a build
+/// script's message.
 fn unit_of(message: &Json, members: &[String]) -> Option<unused_pub::RunUnit> {
     if message["reason"] != "compiler-artifact" {
         return None;
@@ -421,6 +466,52 @@ fn unit_of(message: &Json, members: &[String]) -> Option<unused_pub::RunUnit> {
         manifest_path: message["manifest_path"].as_str()?.to_string(),
         target: target.clone(),
     })
+}
+
+/// A workspace member's build script, if `message` is cargo's artifact
+/// message for one. Cargo sends it on a run that does not compile the build
+/// script again too. `cargo mordant` reads only the build script's `.over`
+/// file: no other crate can use a build script's items, so `unused_pub` does
+/// not judge them.
+fn build_script_of(message: &Json, members: &[String]) -> Option<records::Unit> {
+    if message["reason"] != "compiler-artifact" {
+        return None;
+    }
+    let package_id = message["package_id"].as_str()?;
+    let target = &message["target"];
+    let kinds = target["kind"].as_array()?;
+    if !members.iter().any(|m| m == package_id) || !kinds.iter().any(|k| k == "custom-build") {
+        return None;
+    }
+    Some(records::Unit {
+        src: PathBuf::from(target["src_path"].as_str()?),
+        test: false,
+        extra_filename: build_script_extra_filename(message)?,
+    })
+}
+
+/// Cargo's `-C extra-filename` for a build script, read off the one path in
+/// its artifact message's `filenames`. Cargo lays out its build directory in
+/// one of two ways:
+///
+/// - `<build dir>/<package>-<hash>/build-script-build`: a copy of rustc's
+///   `build_script_build-<hash>`, which rustc wrote under
+///   `-C extra-filename=-<hash>`.
+/// - `<build dir>/<package>/<hash>/out/build_script_build`: rustc's own
+///   file, named by the crate name and its extra-filename, which cargo
+///   leaves empty.
+///
+/// Either may end in `.exe`.
+fn build_script_extra_filename(message: &Json) -> Option<String> {
+    let file = Path::new(message["filenames"].as_array()?.first()?.as_str()?);
+    let name = file.file_name()?.to_str()?;
+    let name = name.strip_suffix(".exe").unwrap_or(name);
+    if name == "build-script-build" {
+        let dir = file.parent()?.file_name()?.to_str()?;
+        let (_, hash) = dir.rsplit_once('-')?;
+        return Some(format!("-{hash}"));
+    }
+    name.strip_prefix("build_script_build").map(str::to_string)
 }
 
 /// Cargo's `-C extra-filename` for this artifact, read off the name of any

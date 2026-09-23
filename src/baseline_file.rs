@@ -92,26 +92,6 @@ pub fn update(path: &Path, edit: impl FnOnce(&mut Doc)) {
     let _ = f.unlock();
 }
 
-/// `CARGO_TARGET_DIR` when it names a directory; cargo treats an empty
-/// value as unset, so that is `None` here too.
-pub fn cargo_target_dir() -> Option<PathBuf> {
-    std::env::var_os("CARGO_TARGET_DIR")
-        .filter(|d| !d.is_empty())
-        .map(PathBuf::from)
-}
-
-/// `<target>/mordant/over-baseline.txt`, where the target is
-/// `${CARGO_TARGET_DIR or <root>/target}`, a relative `CARGO_TARGET_DIR`
-/// taken from the workspace root as cargo does.
-pub fn status_file(root: &Path, target_dir: Option<&Path>) -> PathBuf {
-    match target_dir {
-        Some(dir) => root.join(dir),
-        None => root.join("target"),
-    }
-    .join("mordant")
-    .join("over-baseline.txt")
-}
-
 /// What a run says once for a lint and a file that are over the baseline,
 /// under the findings it shows for them.
 pub fn over_message(lint: &str, file: &str, found: usize, allowed: usize) -> String {
@@ -120,24 +100,4 @@ pub fn over_message(lint: &str, file: &str, found: usize, allowed: usize) -> Str
          baseline holds a count, not which findings, so all {found} are shown: any of them can \
          be the new one"
     )
-}
-
-/// Records that `name` went `over` its baseline. Appended to, never
-/// truncated: every crate is its own rustc process, so no process knows it
-/// is the first. CI removes the file before the run and tests it is empty
-/// or absent after.
-pub fn append_status(path: &Path, name: &str, over: usize) {
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    else {
-        return;
-    };
-    let _ = f.lock();
-    let _ = f.write_all(format!("{name} {over}\n").as_bytes());
-    let _ = f.unlock();
 }

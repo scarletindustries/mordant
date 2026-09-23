@@ -369,7 +369,8 @@ fn register(
         unused_pub::UnusedPub::default,
     );
     // Last, so its check_crate_post flushes after every lint has recorded.
-    r.add(true, || BaselineWriter);
+    // In a test build too, where it writes only the `.over` file.
+    r.add_pass(true, Vec::new(), || BaselineWriter);
     r.groups(names::GROUPS);
     unknown_names(&disabled, &r.known)
 }
