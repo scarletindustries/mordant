@@ -2,6 +2,10 @@
 //! the run is judged. It holds one `<section> <count>` line for each
 //! compilation whose findings went over the baseline count, and one for each
 //! section whose `unused_pub` findings did, so a section can have two lines.
+//!
+//! The `.over` files are read after cargo has finished, so a second
+//! `cargo mordant` run sharing the target directory can rewrite one of them
+//! in between, and this run then reports that run's count for the unit.
 
 use std::collections::HashSet;
 use std::io::Read;
@@ -21,7 +25,7 @@ use crate::unused_pub::RunUnit;
 /// when a test unit has no `.over` file, this reads the one written under
 /// the same unit with `test` false. Cargo can build one target more than
 /// once in a run, so each `.over` file adds its line once.
-pub fn read_counts(
+pub(crate) fn read_counts(
     facts: &Path,
     units: &[RunUnit],
     build_scripts: &[Unit],
@@ -102,7 +106,7 @@ impl OverBaselineLines {
 /// One `<section> <count>` line of `over-baseline.txt`: a section and how
 /// many of its findings are over its baseline count.
 #[derive(Eq, Ord, PartialEq, PartialOrd)]
-pub struct OverBaselineLine {
+pub(crate) struct OverBaselineLine {
     section: String,
     count: usize,
 }
@@ -111,14 +115,14 @@ impl OverBaselineLine {
     /// The text of the summary warning for this line's section, which the
     /// caller prints:
     /// `mordant: <count> finding(s) over the baseline in <section>`.
-    pub fn summary(&self) -> String {
+    pub(crate) fn summary(&self) -> String {
         format!(
             "mordant: {} finding(s) over the baseline in {}",
             self.count, self.section
         )
     }
 
-    pub fn new(section: &str, count: usize) -> Self {
+    pub(crate) fn new(section: &str, count: usize) -> Self {
         Self {
             section: section.to_string(),
             count,
@@ -133,7 +137,7 @@ impl OverBaselineLine {
 /// stays as it was. When `lines` is empty it deletes the file. When the file
 /// already holds the same bytes it leaves the file, and its modification
 /// time, unchanged.
-pub fn write_over_baseline(
+pub(crate) fn write_over_baseline(
     target_dir: &Path,
     file_name: &str,
     lines: impl IntoIterator<Item = OverBaselineLine>,

@@ -354,7 +354,7 @@ fn main() -> ExitCode {
     if let Some(finished) = &mut finished {
         finished["success"] = Json::Bool(!errors);
     }
-    // When judging the run failed, `over-baseline.txt` stays as it was.
+    // When `unused_pub` printed an error, `over-baseline.txt` stays as it was.
     if !errors
         && let Err(err) = over_baseline::write_over_baseline(
             &meta.target_directory,
@@ -362,6 +362,9 @@ fn main() -> ExitCode {
             over_baseline_lines,
         )
     {
+        if let Some(finished) = &mut finished {
+            finished["success"] = Json::Bool(false);
+        }
         print_finished(&output, finished);
         return fail(format_args!("could not write {err}"));
     }

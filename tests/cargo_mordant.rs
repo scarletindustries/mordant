@@ -76,7 +76,8 @@ fn baseline_workspace(name: &str, files: &[(&str, &str)]) -> PathBuf {
     workspace(name, &files)
 }
 
-/// A package whose `discarded_error` finding is past a baseline count of zero.
+/// A package with `main` as `src/main.rs`, whose `discarded_error` findings are
+/// over a baseline count of zero.
 fn over_baseline_workspace(name: &str, main: &str) -> PathBuf {
     baseline_workspace(name, &[("src/main.rs", main)])
 }
@@ -248,7 +249,7 @@ fn over_baseline_is_rewritten_when_the_crate_is_not_compiled_again() {
     assert_eq!(
         fs::read_to_string(&over_baseline).unwrap_or_default(),
         replayed,
-        "the compiler warning says this crate is past its baseline count, but over-baseline.txt was not written:\n{second}"
+        "the compiler warning says this crate is over its baseline count, but over-baseline.txt was not written:\n{second}"
     );
 }
 
@@ -296,7 +297,7 @@ fn assert_warnings_before_finished(run: &str, stderr: &str) {
 }
 
 /// Fixing all findings and running `cargo mordant` again deletes
-/// `over-baseline.txt`. The `<crate> <count>` line from the earlier run does
+/// `over-baseline.txt`. The `<section> <count>` line from the earlier run does
 /// not stay behind.
 #[test]
 fn over_baseline_is_removed_when_the_finding_is_fixed() {
@@ -317,7 +318,7 @@ fn over_baseline_is_removed_when_the_finding_is_fixed() {
     );
     assert!(
         over_baseline_from_warnings(&fixed).is_empty(),
-        "the fixed crate is still past its baseline count:\n{fixed}"
+        "the fixed crate is still over its baseline count:\n{fixed}"
     );
     let left = fs::read_to_string(&over_baseline).ok();
     assert!(
@@ -327,7 +328,7 @@ fn over_baseline_is_removed_when_the_finding_is_fixed() {
 }
 
 /// Fixing one finding and running `cargo mordant` again replaces
-/// `over-baseline.txt` with the crate's new `<crate> <count>` line, whose
+/// `over-baseline.txt` with the crate's new `<section> <count>` line, whose
 /// count is now 1.
 #[test]
 fn over_baseline_is_replaced_when_one_finding_is_fixed() {
@@ -356,7 +357,7 @@ fn over_baseline_is_replaced_when_one_finding_is_fixed() {
 }
 
 /// Compiling the crate again replaces `over-baseline.txt` with this run's
-/// `<crate> <count>` line. It does not append a second copy of that line.
+/// `<section> <count>` line. It does not append a second copy of that line.
 #[test]
 fn over_baseline_is_replaced_when_the_crate_is_compiled_again() {
     let root = over_baseline_workspace("over_baseline_replaced", MAIN);
@@ -364,7 +365,7 @@ fn over_baseline_is_replaced_when_the_crate_is_compiled_again() {
     let expected = over_baseline_from_warnings(&first);
     assert!(
         !expected.is_empty(),
-        "no crate was reported past its baseline count, so this run does not show what over-baseline.txt holds:\n{first}"
+        "no crate was reported over its baseline count, so this run does not show what over-baseline.txt holds:\n{first}"
     );
     let over_baseline = root.join("target/mordant/over-baseline.txt");
     assert_eq!(
@@ -392,7 +393,7 @@ fn over_baseline_is_replaced_when_the_crate_is_compiled_again() {
     );
 }
 
-/// A build script past its baseline count gets a `build_script_build <count>`
+/// A build script over its baseline count gets a `build_script_build <count>`
 /// line in `target/mordant/over-baseline.txt`, like any other crate. That
 /// happens on the run that compiles the build script, and again on a run that
 /// does not compile it after `over-baseline.txt` was deleted.
@@ -405,14 +406,14 @@ fn over_baseline_holds_a_build_script_past_its_baseline_count() {
     let first = stderr(&cargo_mordant(&root));
     assert!(
         first.contains("1 finding(s) over the baseline in build_script_build"),
-        "the build script was not reported past its baseline count:\n{first}"
+        "the build script was not reported over its baseline count:\n{first}"
     );
     let expected = over_baseline_from_warnings(&first);
     let over_baseline = root.join("target/mordant/over-baseline.txt");
     assert_eq!(
         fs::read_to_string(&over_baseline).unwrap_or_default(),
         expected,
-        "the build script is past its baseline count, but over-baseline.txt does not say so:\n{first}"
+        "the build script is over its baseline count, but over-baseline.txt does not say so:\n{first}"
     );
 
     fs::remove_file(&over_baseline).expect("delete over-baseline.txt");
@@ -429,7 +430,7 @@ fn over_baseline_holds_a_build_script_past_its_baseline_count() {
 }
 
 /// A baseline file in a member's directory, and not at the workspace root,
-/// still puts that member's `<crate> <count>` line in
+/// still puts that member's `<section> <count>` line in
 /// `target/mordant/over-baseline.txt` under the workspace root. The
 /// compilation of `demo` finds `demo/mordant-baseline.toml` by searching
 /// upward from `demo/`, and `cargo mordant` has to write the count that
@@ -461,18 +462,18 @@ fn over_baseline_holds_a_member_whose_baseline_file_is_below_the_workspace_root(
     let out = stderr(&cargo_mordant(&root));
     assert!(
         out.contains("1 finding(s) over the baseline in demo"),
-        "the compilation of demo did not find demo/mordant-baseline.toml and report demo past its baseline count:\n{out}"
+        "the compilation of demo did not find demo/mordant-baseline.toml and report demo over its baseline count:\n{out}"
     );
     let expected = over_baseline_from_warnings(&out);
     assert!(
         !expected.is_empty(),
-        "no crate was reported past its baseline count, so this run does not show what over-baseline.txt holds:\n{out}"
+        "no crate was reported over its baseline count, so this run does not show what over-baseline.txt holds:\n{out}"
     );
     let over_baseline = root.join("target/mordant/over-baseline.txt");
     assert_eq!(
         fs::read_to_string(&over_baseline).unwrap_or_default(),
         expected,
-        "demo is past its baseline count, but over-baseline.txt does not say so:\n{out}"
+        "demo is over its baseline count, but over-baseline.txt does not say so:\n{out}"
     );
 }
 
@@ -513,12 +514,15 @@ fn test_builds_write_their_over_files_and_leave_the_baseline_section_alone() {
     let ratchet_stderr = stderr(&ratchet);
     assert!(
         ratchet_stderr.contains("1 finding(s) over the baseline in demo"),
-        "the library was not reported past its baseline count:\n{ratchet_stderr}"
+        "the library was not reported over its baseline count:\n{ratchet_stderr}"
     );
+    // Exactly the library's line: a test build that also reported a count
+    // would print its own summary warning, so comparing with the warnings
+    // would not catch it.
     assert_eq!(
         fs::read_to_string(&over_baseline).unwrap_or_default(),
-        over_baseline_from_warnings(&ratchet_stderr),
-        "the library is past its baseline count, but over-baseline.txt does not say so:\n{ratchet_stderr}"
+        "demo 1\n",
+        "over-baseline.txt should hold only the library's line, not one from a test build:\n{ratchet_stderr}"
     );
     let over_files = fs::read_dir(root.join("target/mordant/over_baseline_counts"))
         .expect("read target/mordant/over_baseline_counts")
@@ -1216,6 +1220,43 @@ fn over_baseline_not_written_is_a_compiler_message_in_json() {
     assert!(
         error < finished,
         "on stdout, the compiler-message saying over-baseline.txt was not written comes after build-finished:\n{stdout}"
+    );
+}
+
+/// With `--message-format json`, when `cargo mordant` cannot write
+/// `over-baseline.txt`, it prints `error: mordant: could not write ...` on
+/// stderr and exits with code 1, and cargo's closing `build-finished` line
+/// on stdout says `"success": false`. A directory made at
+/// `target/mordant/over-baseline.txt` before the run stops the write: the
+/// temporary file cannot be renamed onto it, and it cannot be deleted as a
+/// file when there are no lines to write.
+#[test]
+fn over_baseline_that_cannot_be_written_is_a_failed_build_in_json() {
+    let root = over_baseline_workspace("over_baseline_cannot_be_written_json", MAIN);
+    fs::create_dir_all(root.join("target/mordant/over-baseline.txt"))
+        .expect("make a directory where over-baseline.txt goes");
+
+    let out = cargo_mordant_with(&root, &["--message-format=json"], &[]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "the run succeeded although over-baseline.txt could not be written, stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("error: mordant: could not write"),
+        "stderr does not say over-baseline.txt could not be written:\n{stderr}"
+    );
+    let finished = stdout
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<serde_json::Value>(line).expect("every stdout line is JSON")
+        })
+        .find(|m| m["reason"] == "build-finished")
+        .unwrap_or_else(|| panic!("stdout has no build-finished line:\n{stdout}"));
+    assert_eq!(
+        finished["success"], false,
+        "the build-finished line on stdout does not say the run failed:\n{stdout}"
     );
 }
 

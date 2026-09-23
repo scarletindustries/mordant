@@ -23,10 +23,12 @@
 //! than as a lint, so `-D warnings`, `[lints] warnings = "deny"` and `--cap-lints`
 //! cannot turn it into an error that stops the crate and hides every finding
 //! after it. `#[allow]` and `#[expect]` are still read, at the same node the
-//! lint path reads them. Each crate that goes over prints one summary line and
-//! appends itself to `target/mordant/over-baseline.txt`, which is the file CI
-//! tests. Without a baseline nothing here applies and findings are ordinary
-//! lints at their ordinary levels.
+//! lint path reads them. Each crate that goes over prints one summary line.
+//! Under `cargo mordant`, each compilation also writes its count to a `.over`
+//! file in `target/mordant/over_baseline_counts`, and after the build
+//! `cargo mordant` writes `target/mordant/over-baseline.txt`, the file CI
+//! tests, from those counts. Without a baseline nothing here applies and
+//! findings are ordinary lints at their ordinary levels.
 //!
 //! Every diagnostic a mordant lint produces goes through one of the three
 //! entry points here (`emit`, `emit_with_note`, `emit_hir_then`), so each
