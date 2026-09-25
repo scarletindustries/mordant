@@ -29,6 +29,15 @@ pub fn entry(lint: &str, file: &str) -> String {
     format!("{lint}:{file}")
 }
 
+/// `file` as a baseline names it: without `dir`, the directory the baseline
+/// file is in, when the path starts with it.
+pub fn relative(dir: &Path, file: &Path) -> String {
+    file.strip_prefix(dir)
+        .unwrap_or(file)
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// The baseline named `file_name`, as `(the directory it is in, its path)`:
 /// the first one found from `dir` upward. In write mode it may not exist
 /// yet, and then belongs beside the `mordant.toml` that named it.

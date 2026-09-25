@@ -25,6 +25,7 @@ use std::process::{Command, ExitCode, ExitStatus, Stdio};
 use serde_json::Value as Json;
 
 mod over_baseline;
+mod printer;
 mod unused_pub;
 
 #[path = "../../baseline_file.rs"]
@@ -329,7 +330,7 @@ fn main() -> ExitCode {
                 .iter()
                 .map(|src| format!("`{}`", src.strip_prefix(root).unwrap_or(src).display()))
                 .collect();
-            unused_pub::print_error(
+            printer::print_error(
                 root,
                 &output,
                 styled,
@@ -338,7 +339,7 @@ fn main() -> ExitCode {
                     "mordant: `over-baseline.txt` was not written: {} left no count of findings \
                      over the baseline; remove `{}`, which holds those counts and the build \
                      `cargo mordant` reuses, then run again",
-                    unused_pub::join(&named),
+                    printer::join(&named),
                     facts.parent().unwrap_or(&facts).display(),
                 ),
             );
@@ -355,7 +356,7 @@ fn main() -> ExitCode {
     // own line above is a warning, so that cargo goes on to build the rest.
     let over = !over_baseline_lines.is_empty();
     if over && !errors {
-        unused_pub::print_error(
+        printer::print_error(
             &meta.workspace_root,
             &output,
             styled,
