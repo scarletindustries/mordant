@@ -2,6 +2,8 @@
 //! the run is judged. It holds one `<section> <count>` line for each
 //! compilation whose findings went over the baseline count, and one for each
 //! section whose `unused_pub` findings did, so a section can have two lines.
+//! A run that writes any line also exits with status 101, so the file says
+//! which crates went over and the exit status says whether any did.
 //!
 //! The `.over` files are read after cargo has finished, so a second
 //! `cargo mordant` run sharing the target directory can rewrite one of them
@@ -128,6 +130,25 @@ impl OverBaselineLine {
             count,
         }
     }
+}
+
+/// The text of the closing error for a run where `lines` is not empty: the
+/// count of findings over the baseline, all lines together, and each section
+/// once, as `mordant: <count> finding(s) over the baseline in <sections>`.
+pub(crate) fn run_summary(lines: &[OverBaselineLine]) -> String {
+    let count: usize = lines.iter().map(|line| line.count).sum();
+    let mut sections: Vec<String> = Vec::new();
+    for line in lines {
+        let named = format!("`{}`", line.section);
+        if !sections.contains(&named) {
+            sections.push(named);
+        }
+    }
+    sections.sort();
+    format!(
+        "mordant: {count} finding(s) over the baseline in {}",
+        crate::unused_pub::join(&sections)
+    )
 }
 
 /// Writes `lines`, sorted, to `<target_dir>/mordant/<file_name>`, through a

@@ -61,12 +61,10 @@ MORDANT_BASELINE_WRITE=1 cargo mordant --workspace
 
 The baseline holds a count, not which findings. So a file that goes over shows every finding of that lint, with the count the baseline allows: the new one is among them.
 
-Regenerate and commit it after fixing a finding. A crate that goes over the baseline is listed in `target/mordant/over-baseline.txt`, so a CI job can fail on that file. `cargo mordant` rewrites `over-baseline.txt` on every run that succeeds, including one where cargo compiles nothing again, and leaves it as it was when the run fails. It lists only the crates that run checked, so a job that runs `cargo mordant` more than once, for example once per `-p` or `--target`, must test `over-baseline.txt` after each run, or run once with `--workspace --all-targets`. Remove `over-baseline.txt` before the run and test it after:
+Regenerate and commit it after fixing a finding. When any crate goes over the baseline, `cargo mordant` prints one closing error and exits with status 101, so a CI job fails on the run itself. It also lists those crates in `target/mordant/over-baseline.txt`, rewritten on every run that gets that far, including one where cargo compiles nothing again, and deleted when no crate is over:
 
 ```sh
-rm -f target/mordant/over-baseline.txt
 cargo mordant --workspace --keep-going
-test ! -s target/mordant/over-baseline.txt
 ```
 
 ## Lints

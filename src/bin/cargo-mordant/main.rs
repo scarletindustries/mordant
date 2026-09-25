@@ -351,8 +351,20 @@ fn main() -> ExitCode {
             return ExitCode::from(101);
         }
     }
+    // One closing line for the whole run, and the run fails: each crate's
+    // own line above is a warning, so that cargo goes on to build the rest.
+    let over = !over_baseline_lines.is_empty();
+    if over && !errors {
+        unused_pub::print_error(
+            &meta.workspace_root,
+            &output,
+            styled,
+            units.first(),
+            over_baseline::run_summary(&over_baseline_lines),
+        );
+    }
     if let Some(finished) = &mut finished {
-        finished["success"] = Json::Bool(!errors);
+        finished["success"] = Json::Bool(!errors && !over);
     }
     // When `unused_pub` printed an error, `over-baseline.txt` stays as it was.
     if !errors
@@ -370,7 +382,7 @@ fn main() -> ExitCode {
     }
     print_finished(&output, finished);
     // What cargo exits with when a crate fails to compile.
-    if errors {
+    if errors || over {
         ExitCode::from(101)
     } else {
         ExitCode::SUCCESS

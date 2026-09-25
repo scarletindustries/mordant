@@ -25,9 +25,10 @@
 //! after it. `#[allow]` and `#[expect]` are still read, at the same node the
 //! lint path reads them. Each crate that goes over prints one summary line.
 //! Under `cargo mordant`, each compilation also writes its count to a `.over`
-//! file in `target/mordant/over_baseline_counts`, and after the build
-//! `cargo mordant` writes `target/mordant/over-baseline.txt`, the file CI
-//! tests, from those counts. Without a baseline nothing here applies and
+//! file in `target/mordant/over_baseline_counts`. After the build
+//! `cargo mordant` reads those counts, and when any crate is over it prints
+//! one closing error, lists the crates in `target/mordant/over-baseline.txt`
+//! and exits with status 101. Without a baseline nothing here applies and
 //! findings are ordinary lints at their ordinary levels.
 //!
 //! Every diagnostic a mordant lint produces goes through one of the three
