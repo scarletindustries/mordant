@@ -147,7 +147,7 @@ pub(crate) fn run_summary(lines: &[OverBaselineLine]) -> String {
     sections.sort();
     format!(
         "mordant: {count} finding(s) over the baseline in {}",
-        crate::unused_pub::join(&sections)
+        crate::printer::join(&sections)
     )
 }
 

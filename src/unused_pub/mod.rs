@@ -243,7 +243,9 @@ impl<'tcx> LateLintPass<'tcx> for UnusedPub {
 fn mode(cx: &LateContext<'_>) -> Mode {
     let name = cx.tcx.crate_name(rustc_hir::def_id::LOCAL_CRATE);
     match this_unit(cx) {
-        Some((dir, unit)) if name.as_str() != "build_script_build" => Mode::Record { dir, unit },
+        Some((dir, unit)) if name.as_str() != crate::baseline::BUILD_SCRIPT_CRATE => {
+            Mode::Record { dir, unit }
+        }
         _ => Mode::Alone,
     }
 }

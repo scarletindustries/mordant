@@ -10,7 +10,8 @@
 //! Regeneration: `MORDANT_BASELINE_WRITE=1 cargo mordant` emits nothing
 //! and rewrites each compiled crate's section instead. Sections are keyed by
 //! crate so parallel rustc processes never clobber another crate's entries;
-//! the file itself is serialized with an exclusive file lock.
+//! the file itself is serialized with an exclusive file lock. A build script's
+//! section is `<package> (build script)`.
 //!
 //! Counts, not spans: line numbers drift with every edit, so a per-file count
 //! is the only key that survives normal development. Moving a finding between
@@ -116,9 +117,7 @@ fn rel_file(cx: &LateContext<'_>, b: &Baseline, span: Span) -> Option<String> {
     let FileName::Real(real) = cx.tcx.sess.source_map().span_to_filename(span) else {
         return None;
     };
-    let path = real.local_path()?.to_path_buf();
-    let rel = path.strip_prefix(&b.root).unwrap_or(&path);
-    Some(rel.to_string_lossy().into_owned())
+    Some(baseline_file::relative(&b.root, real.local_path()?))
 }
 
 /// What the baseline decided about one finding.
@@ -264,13 +263,22 @@ pub fn emit_hir_then(
     }
 }
 
+/// The crate name cargo gives every build script.
+pub const BUILD_SCRIPT_CRATE: &str = "build_script_build";
+
 /// The baseline section name for this compilation: the crate, with the bin
 /// target appended, since one crate name can cover a lib and several bins.
+/// A build script is named by its package, since every build script is the
+/// same crate name.
 pub fn section_name(cx: &LateContext<'_>) -> String {
     let name = cx
         .tcx
         .crate_name(rustc_hir::def_id::LOCAL_CRATE)
         .to_string();
+    if name == BUILD_SCRIPT_CRATE {
+        let package = std::env::var("CARGO_PKG_NAME").unwrap_or(name);
+        return format!("{package} (build script)");
+    }
     match std::env::var_os("CARGO_BIN_NAME") {
         Some(bin) => format!("{name} (bin {})", bin.to_string_lossy()),
         None => name,

@@ -117,6 +117,25 @@ fn over_baseline_from_warnings(stderr: &str) -> String {
         .collect()
 }
 
+/// A workspace holding `files`, each at its own path from the root, with the
+/// directories made as needed.
+fn layout(name: &str, files: &[(&str, &str)]) -> PathBuf {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _ = fs::remove_dir_all(&root);
+    for (path, text) in files {
+        let path = root.join(path);
+        fs::create_dir_all(path.parent().expect("a file in the workspace"))
+            .expect("create the directory");
+        fs::write(path, text).expect("write a workspace file");
+    }
+    root
+}
+
+/// The manifest of a package with this name, and no dependencies.
+fn manifest(name: &str) -> String {
+    format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n")
+}
+
 /// The configuration reaches the lints, and a change to it reruns them on a
 /// crate cargo would otherwise have left alone.
 #[test]
@@ -412,7 +431,7 @@ fn over_baseline_is_replaced_when_the_crate_is_compiled_again() {
     );
 }
 
-/// A build script over its baseline count gets a `build_script_build <count>`
+/// A build script over its baseline count gets a `demo (build script) <count>`
 /// line in `target/mordant/over-baseline.txt`, like any other crate. That
 /// happens on the run that compiles the build script, and again on a run that
 /// does not compile it after `over-baseline.txt` was deleted.
@@ -424,7 +443,7 @@ fn over_baseline_holds_a_build_script_past_its_baseline_count() {
     );
     let first = stderr_over(&cargo_mordant(&root));
     assert!(
-        first.contains("1 finding(s) over the baseline in build_script_build"),
+        first.contains("1 finding(s) over the baseline in demo (build script)"),
         "the build script was not reported over its baseline count:\n{first}"
     );
     let expected = over_baseline_from_warnings(&first);
@@ -493,6 +512,133 @@ fn over_baseline_holds_a_member_whose_baseline_file_is_below_the_workspace_root(
         fs::read_to_string(&over_baseline).unwrap_or_default(),
         expected,
         "demo is over its baseline count, but over-baseline.txt does not say so:\n{out}"
+    );
+}
+
+/// Cargo names the crate of every build script `build_script_build`, so the
+/// baseline names a build script's section for its package. Write mode then
+/// records the findings of every build script in the workspace, and gives the
+/// same file when it runs again. A run straight after it is over nothing.
+/// Without a baseline count, `over-baseline.txt` says which package's build
+/// script is over.
+#[test]
+fn every_build_script_has_a_baseline_section_of_its_own() {
+    let root = layout(
+        "baseline_build_scripts",
+        &[
+            (
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"a\", \"b\"]\nresolver = \"2\"\n",
+            ),
+            ("mordant.toml", MORDANT_TOML),
+            ("mordant-baseline.toml", ""),
+            ("a/Cargo.toml", &manifest("a")),
+            ("a/src/main.rs", "fn main() {}\n"),
+            ("a/build.rs", MAIN),
+            ("b/Cargo.toml", &manifest("b")),
+            ("b/src/main.rs", "fn main() {}\n"),
+            ("b/build.rs", MAIN),
+        ],
+    );
+    let over = stderr_over(&cargo_mordant(&root));
+    let over_baseline = root.join("target/mordant/over-baseline.txt");
+    assert_eq!(
+        fs::read_to_string(&over_baseline).unwrap_or_default(),
+        "a (build script) 1\nb (build script) 1\n",
+        "over-baseline.txt does not name the package of each build script:\n{over}"
+    );
+
+    stderr(&cargo_mordant_with(
+        &root,
+        &[],
+        &[("MORDANT_BASELINE_WRITE", "1")],
+    ));
+    let baseline_path = root.join("mordant-baseline.toml");
+    let written = fs::read_to_string(&baseline_path).expect("baseline written");
+    for entry in [
+        "[\"a (build script)\"]\n\"discarded_error:a/build.rs\" = 1",
+        "[\"b (build script)\"]\n\"discarded_error:b/build.rs\" = 1",
+    ] {
+        assert!(written.contains(entry), "{entry} is not in:\n{written}");
+    }
+
+    // Both build scripts compile again, and each writes its own section.
+    for build_script in ["a/build.rs", "b/build.rs"] {
+        fs::write(root.join(build_script), MAIN).expect("touch the build script");
+    }
+    stderr(&cargo_mordant_with(
+        &root,
+        &[],
+        &[("MORDANT_BASELINE_WRITE", "1")],
+    ));
+    assert_eq!(
+        fs::read_to_string(&baseline_path).expect("baseline written"),
+        written,
+        "a second write run changed the baseline"
+    );
+
+    let held = stderr(&cargo_mordant(&root));
+    assert!(!held.contains("over the baseline"), "{held}");
+    assert!(!over_baseline.exists(), "over-baseline.txt is left over");
+}
+
+/// A baseline file in a member's directory holds that member's `unused_pub`
+/// findings, as it holds the findings of its other lints: a run is held to
+/// its count, and write mode records the findings in that file, not in a new
+/// one at the workspace root.
+#[test]
+fn unused_pub_is_held_to_a_baseline_file_in_a_member_directory() {
+    let root = layout(
+        "unused_pub_member_baseline",
+        &[
+            (
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"demo\"]\nresolver = \"2\"\n",
+            ),
+            ("mordant.toml", MORDANT_TOML),
+            ("demo/Cargo.toml", &manifest("demo")),
+            (
+                "demo/src/lib.rs",
+                "fn fallible() -> Result<u32, u32> {\n    Err(1)\n}\n\n\
+                 pub fn unused() {\n    fallible().ok();\n}\n",
+            ),
+            ("demo/mordant-baseline.toml", ""),
+        ],
+    );
+    let over = stderr_over(&cargo_mordant(&root));
+    assert!(
+        over.contains("`unused_pub` over the mordant baseline (0 recorded for demo/src/lib.rs)"),
+        "the unused_pub finding in demo was not held to demo/mordant-baseline.toml:\n{over}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("target/mordant/over-baseline.txt")).unwrap_or_default(),
+        over_baseline_from_warnings(&over),
+        "over-baseline.txt does not say what the run printed:\n{over}"
+    );
+
+    stderr(&cargo_mordant_with(
+        &root,
+        &[],
+        &[("MORDANT_BASELINE_WRITE", "1")],
+    ));
+    assert!(
+        !root.join("mordant-baseline.toml").exists(),
+        "write mode made a baseline file at the workspace root"
+    );
+    let written =
+        fs::read_to_string(root.join("demo/mordant-baseline.toml")).expect("baseline written");
+    for entry in [
+        "\"discarded_error:demo/src/lib.rs\" = 1",
+        "\"unused_pub:demo/src/lib.rs\" = 1",
+    ] {
+        assert!(written.contains(entry), "{entry} is not in:\n{written}");
+    }
+
+    let held = stderr(&cargo_mordant(&root));
+    assert!(!held.contains("is public"), "{held}");
+    assert!(
+        !root.join("target/mordant/over-baseline.txt").exists(),
+        "over-baseline.txt is left over"
     );
 }
 
