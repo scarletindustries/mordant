@@ -10,7 +10,7 @@ use rustc_span::def_id::LocalDefId;
 use crate::MordantConfig;
 use crate::baseline::{emit, emit_with_note};
 use crate::call_graph::{CallGraph, Edge, EdgeKind};
-use crate::hir_shapes::def_path_names;
+use crate::hir_shapes::{def_path_names, path_matches};
 
 rustc_lint::declare_lint! {
     /// Flags a function that can reach something the `forbidden-reach`
@@ -67,27 +67,19 @@ impl ForbiddenReach {
             roots: Vec::new(),
         }
     }
-
-    /// Path-suffix match on `::`-separated segments, so "Vec::push" matches
-    /// `std::vec::Vec::push` but a bare substring never matches by accident.
-    fn matches_pattern(name: &str, pattern: &str) -> bool {
-        name == pattern || name.ends_with(&format!("::{pattern}"))
-    }
 }
 
 fn banned(cx: &LateContext<'_>, rule: &ReachRule, def: DefId) -> bool {
-    def_path_names(cx, def).iter().any(|n| {
-        rule.never
-            .iter()
-            .any(|p| ForbiddenReach::matches_pattern(n, p))
-    })
+    def_path_names(cx, def)
+        .iter()
+        .any(|n| rule.never.iter().any(|p| path_matches(n, p)))
 }
 
 /// The local body the walk goes on into after `edge`, if any. A panic is
 /// always a leaf.
 fn next_body(graph: &CallGraph, edge: &Edge) -> Option<LocalDefId> {
     match edge.kind {
-        EdgeKind::Call | EdgeKind::Drop | EdgeKind::Closure => {
+        EdgeKind::Call | EdgeKind::Drop | EdgeKind::MaybeDrop | EdgeKind::Closure => {
             edge.local_callee().filter(|&def| graph.has_body(def))
         }
         EdgeKind::Panic => None,
@@ -109,7 +101,7 @@ impl<'tcx> LateLintPass<'tcx> for ForbiddenReach {
         }
         let names = def_path_names(cx, def_id.to_def_id());
         for (i, rule) in self.rules.iter().enumerate() {
-            if names.iter().any(|n| Self::matches_pattern(n, &rule.from)) {
+            if names.iter().any(|n| path_matches(n, &rule.from)) {
                 self.roots.push((i, def_id, span));
             }
         }

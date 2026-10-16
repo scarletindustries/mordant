@@ -55,6 +55,10 @@ fn ui() {
             generic-body-not-generic-enabled = true
             thread-affine-types = ["JsHandle"]
             freed-while-borrowed-releases = ["Pool::release"]
+            lock-guard-types = ["Held"]
+            lock-methods = ["RawLock::lock"]
+            unlock-methods = ["RawLock::unlock"]
+            reentrant-lock-types = ["Shared"]
 
             [[mordant.forbidden-reach]]
             from = "hot_path"

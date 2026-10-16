@@ -145,6 +145,17 @@ pub struct MordantConfig {
     /// suppress up to the recorded count per (lint, file) and surface only new
     /// findings. Regenerate with `MORDANT_BASELINE_WRITE=1`.
     pub baseline: Option<String>,
+    /// Types whose values are lock guards, for `lock_order`, on top of the
+    /// std and `parking_lot` guards. A call returning one takes a lock.
+    pub lock_guard_types: Vec<String>,
+    /// Methods that take a lock with no guard (`threading::Mutex::lock`).
+    /// The lock is held until a matching `unlock-methods` call.
+    pub lock_methods: Vec<String>,
+    /// Methods that release a lock taken by a `lock-methods` call.
+    pub unlock_methods: Vec<String>,
+    /// Lock or guard types the same thread may take again, which
+    /// `lock_taken_twice` leaves alone.
+    pub reentrant_lock_types: Vec<String>,
     /// Reachability bans: from each matching root, no call path may reach a
     /// banned definition. Findings carry the witness path.
     pub forbidden_reach: Vec<forbidden_reach::ReachRule>,
@@ -352,7 +363,7 @@ fn register(
     );
     r.add(true, || UnitMismatch);
     r.add(true, StalePanicMessage::default);
-    r.add(true, LockOrder::default);
+    r.add(true, move || LockOrder::new(config));
     r.add(true, move || ForbiddenReach::new(config));
     r.add(true, RuntimeTypestate::default);
     r.add(true, AlwaysUnwrappedOption::default);

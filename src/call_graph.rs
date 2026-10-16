@@ -15,7 +15,7 @@ use std::sync::OnceLock;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet, FxIndexMap};
 use rustc_hir::ConstContext;
 use rustc_hir::def_id::{DefId, LocalDefId};
-use rustc_middle::mir::{AggregateKind, Body, Rvalue, StatementKind, TerminatorKind};
+use rustc_middle::mir::{AggregateKind, BasicBlock, Body, Rvalue, StatementKind, TerminatorKind};
 use rustc_middle::ty::{self, GenericArgsRef, Instance, Ty, TyCtxt, TypingEnv};
 use rustc_span::Span;
 
@@ -26,8 +26,11 @@ use crate::mir_flow::{assert_panic_lang_item, mir_for};
 pub(crate) enum EdgeKind {
     /// A `Call` or `TailCall` terminator.
     Call,
-    /// A `Drop` terminator, to a `Drop::drop` impl the dropped type runs.
+    /// A `Drop` terminator, to a `Drop::drop` impl the dropped value surely runs.
     Drop,
+    /// A `Drop` terminator, to a `Drop::drop` impl that runs only if the value
+    /// holds one: inside an `Option`, a `Vec`, an `Rc`, one enum variant.
+    MaybeDrop,
     /// An `Assert` terminator, to the panic fn it calls when it fails.
     Panic,
     /// A closure or coroutine built here. It runs whenever its holder says.
@@ -46,6 +49,8 @@ pub(crate) struct Edge {
     /// The callee is the one body this edge runs, not a trait item or shim.
     pub(crate) resolved: bool,
     pub(crate) kind: EdgeKind,
+    /// The block whose terminator makes the edge, or holds the statement.
+    pub(crate) block: BasicBlock,
     pub(crate) span: Span,
 }
 
@@ -99,7 +104,7 @@ impl CallGraph {
         self.out.contains_key(&def)
     }
 
-    /// The edges out of `caller`; empty for a body not in the graph.
+    /// The edges out of `caller`, or none for a body not in the graph.
     pub(crate) fn edges(&self, caller: LocalDefId) -> &[Edge] {
         self.out.get(&caller).map_or(&[], Vec::as_slice)
     }
@@ -161,17 +166,18 @@ impl CallGraph {
 fn body_edges<'tcx>(tcx: TyCtxt<'tcx>, owner: LocalDefId, body: &Body<'tcx>) -> Vec<Edge> {
     let env = TypingEnv::post_analysis(tcx, owner);
     let mut edges = Vec::new();
-    let mut push = |callee: DefId, named: DefId, resolved: bool, kind, span| {
+    let mut push = |callee: DefId, named: DefId, resolved: bool, kind, block, span| {
         edges.push(Edge {
             caller: owner,
             callee,
             named,
             resolved,
             kind,
+            block,
             span,
         });
     };
-    for data in body.basic_blocks.iter() {
+    for (block, data) in body.basic_blocks.iter_enumerated() {
         if data.is_cleanup {
             continue;
         }
@@ -187,6 +193,7 @@ fn body_edges<'tcx>(tcx: TyCtxt<'tcx>, owner: LocalDefId, body: &Body<'tcx>) -> 
                     def,
                     true,
                     EdgeKind::Closure,
+                    block,
                     statement.source_info.span,
                 );
             }
@@ -201,19 +208,24 @@ fn body_edges<'tcx>(tcx: TyCtxt<'tcx>, owner: LocalDefId, body: &Body<'tcx>) -> 
                     continue;
                 };
                 match resolve_item(tcx, env, def, args) {
-                    Some(item) => push(item, def, true, EdgeKind::Call, span),
-                    None => push(def, def, false, EdgeKind::Call, span),
+                    Some(item) => push(item, def, true, EdgeKind::Call, block, span),
+                    None => push(def, def, false, EdgeKind::Call, block, span),
                 }
             }
             TerminatorKind::Drop { place, .. } => {
                 let ty = place.ty(&body.local_decls, tcx).ty;
-                for drop in drop_fns(tcx, env, ty) {
-                    push(drop, drop, true, EdgeKind::Drop, span);
+                for (drop, sure) in drop_fns(tcx, env, ty) {
+                    let kind = if sure {
+                        EdgeKind::Drop
+                    } else {
+                        EdgeKind::MaybeDrop
+                    };
+                    push(drop, drop, true, kind, block, span);
                 }
             }
             TerminatorKind::Assert { msg, .. } => {
                 if let Some(def) = tcx.lang_items().get(assert_panic_lang_item(msg)) {
-                    push(def, def, true, EdgeKind::Panic, span);
+                    push(def, def, true, EdgeKind::Panic, block, span);
                 }
             }
             _ => {}
@@ -255,14 +267,20 @@ pub(crate) fn resolve_item<'tcx>(
 
 // ── drop glue ────────────────────────────────────────────────────────────────
 
-/// The `Drop::drop` fns that dropping a `ty` can run, outermost first. A
-/// local type adds its fields. A type from another crate adds its type
-/// arguments, since a container drops what it holds. `ManuallyDrop`,
-/// references and pointers stop the walk.
-pub(crate) fn drop_fns<'tcx>(tcx: TyCtxt<'tcx>, env: TypingEnv<'tcx>, ty: Ty<'tcx>) -> Vec<DefId> {
+/// The `Drop::drop` fns that dropping a `ty` can run, outermost first, each
+/// with whether it surely runs. A local type adds its fields. A type from
+/// another crate adds its type arguments, since a container drops what it
+/// holds, but maybe not: an `Option` can be `None`, an `Rc` can be shared.
+/// The fields of one enum variant maybe run too. `ManuallyDrop`, references
+/// and pointers stop the walk.
+pub(crate) fn drop_fns<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    env: TypingEnv<'tcx>,
+    ty: Ty<'tcx>,
+) -> Vec<(DefId, bool)> {
     let mut found = Vec::new();
     let mut seen: FxHashSet<Ty<'tcx>> = FxHashSet::default();
-    walk_drop(tcx, env, ty, 0, &mut seen, &mut found);
+    walk_drop(tcx, env, ty, true, 0, &mut seen, &mut found);
     found
 }
 
@@ -270,50 +288,53 @@ fn walk_drop<'tcx>(
     tcx: TyCtxt<'tcx>,
     env: TypingEnv<'tcx>,
     ty: Ty<'tcx>,
+    sure: bool,
     depth: usize,
     seen: &mut FxHashSet<Ty<'tcx>>,
-    found: &mut Vec<DefId>,
+    found: &mut Vec<(DefId, bool)>,
 ) {
     const MAX_DEPTH: usize = 8;
     if depth > MAX_DEPTH || !seen.insert(ty) || !ty.needs_drop(tcx, env) {
         return;
     }
-    let mut next = |t: Ty<'tcx>, found: &mut Vec<DefId>| {
-        walk_drop(tcx, env, t, depth + 1, seen, found);
+    let mut next = |t: Ty<'tcx>, sure: bool, found: &mut Vec<(DefId, bool)>| {
+        walk_drop(tcx, env, t, sure, depth + 1, seen, found);
     };
     match *ty.kind() {
         ty::Adt(adt, args) => {
             if adt.is_manually_drop() {
                 return;
             }
-            if let Some(dtor) = adt.destructor(tcx)
-                && !found.contains(&dtor.did)
-            {
-                found.push(dtor.did);
+            if let Some(dtor) = adt.destructor(tcx) {
+                match found.iter_mut().find(|(d, _)| *d == dtor.did) {
+                    Some((_, was)) => *was |= sure,
+                    None => found.push((dtor.did, sure)),
+                }
             }
             if adt.did().is_local() {
+                let sure = sure && adt.variants().len() == 1;
                 for field in adt.all_fields() {
                     let field_ty = field.ty(tcx, args).skip_norm_wip();
                     let field_ty = tcx
                         .try_normalize_erasing_regions(env, ty::Unnormalized::new_wip(field_ty))
                         .unwrap_or(field_ty);
-                    next(field_ty, found);
+                    next(field_ty, sure, found);
                 }
             } else {
                 for arg in args.types() {
-                    next(arg, found);
+                    next(arg, false, found);
                 }
             }
         }
         ty::Tuple(items) => {
             for item in items {
-                next(item, found);
+                next(item, sure, found);
             }
         }
-        ty::Array(elem, _) | ty::Slice(elem) => next(elem, found),
+        ty::Array(elem, _) | ty::Slice(elem) => next(elem, false, found),
         ty::Closure(_, args) => {
             for upvar in args.as_closure().upvar_tys() {
-                next(upvar, found);
+                next(upvar, sure, found);
             }
         }
         _ => {}

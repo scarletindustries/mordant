@@ -1,29 +1,152 @@
-warning: `b` is locked here while `a` is held. Another place locks `a` while `b` is held. Two threads, one on each path, can deadlock
+warning: `S.b` is locked here while `S.a` is held. Another place takes them in the other order. Two threads, one on each path, can each hold one lock and wait for the other forever
   --> $DIR/lock_order.rs:14:18
    |
 LL |         let gb = self.b.lock().unwrap();
    |                  ^^^^^^^^^^^^^
    |
-note: the opposite order is here
+note: `S.a` is locked here and still held where the warning points
+  --> $DIR/lock_order.rs:13:18
+   |
+LL |         let ga = self.a.lock().unwrap();
+   |                  ^^^^^^^^^^^^^
+note: `S.a` is locked here while `S.b`, locked on line 20, is held
   --> $DIR/lock_order.rs:21:18
    |
 LL |         let ga = self.a.lock().unwrap();
    |                  ^^^^^^^^^^^^^
-   = help: pick one order for `a` and `b` and use it in both places, or guard both with one lock
+   = help: pick one order for these locks and take them in that order everywhere
    = note: `#[warn(lock_order)]` on by default
 
-warning: `h` is locked here while `g` is held. Another place locks `g` while `h` is held. Two threads, one on each path, can deadlock
+warning: `Spin.h` is locked here while `Spin.g` is held. Another place takes them in the other order. Two threads, one on each path, can each hold one lock and wait for the other forever
   --> $DIR/lock_order.rs:114:18
    |
 LL |         let gh = self.h.lock().unwrap();
    |                  ^^^^^^^^^^^^^
    |
-note: the opposite order is here
+note: `Spin.g` is locked here and still held where the warning points
+  --> $DIR/lock_order.rs:113:18
+   |
+LL |         let gg = self.g.lock().unwrap();
+   |                  ^^^^^^^^^^^^^
+note: `Spin.g` is locked here while `Spin.h`, locked on line 122, is held
   --> $DIR/lock_order.rs:123:22
    |
 LL |             let gg = self.g.lock().unwrap();
    |                      ^^^^^^^^^^^^^
-   = help: pick one order for `g` and `h` and use it in both places, or guard both with one lock
+   = help: pick one order for these locks and take them in that order everywhere
 
-warning: 2 warnings emitted
+warning: `Calls.b` is locked here while `Calls.a` is held, through `Calls::read_b`. Another place takes them in the other order. Two threads, one on each path, can each hold one lock and wait for the other forever
+  --> $DIR/lock_order.rs:141:15
+   |
+LL |         *ga + self.read_b()
+   |               ^^^^^^^^^^^^^
+   |
+note: `Calls.a` is locked here and still held where the warning points
+  --> $DIR/lock_order.rs:140:18
+   |
+LL |         let ga = self.a.lock().unwrap();
+   |                  ^^^^^^^^^^^^^
+note: `Calls.a` is locked here while `Calls.b`, locked on line 149, is held
+  --> $DIR/lock_order.rs:150:18
+   |
+LL |         let ga = self.a.lock().unwrap();
+   |                  ^^^^^^^^^^^^^
+   = help: pick one order for these locks and take them in that order everywhere
+
+warning: `Ring.y` is locked here while `Ring.x` is held. `Ring.x`, `Ring.y` and `Ring.z` are locked in a cycle, each while the one before it is held. Threads on these paths can wait for each other forever
+  --> $DIR/lock_order.rs:165:18
+   |
+LL |         let gy = self.y.lock().unwrap();
+   |                  ^^^^^^^^^^^^^
+   |
+note: `Ring.x` is locked here and still held where the warning points
+  --> $DIR/lock_order.rs:164:18
+   |
+LL |         let gx = self.x.lock().unwrap();
+   |                  ^^^^^^^^^^^^^
+note: `Ring.z` is locked here while `Ring.y`, locked on line 170, is held
+  --> $DIR/lock_order.rs:171:18
+   |
+LL |         let gz = self.z.lock().unwrap();
+   |                  ^^^^^^^^^^^^^
+note: `Ring.x` is locked here while `Ring.z`, locked on line 176, is held
+  --> $DIR/lock_order.rs:177:18
+   |
+LL |         let gx = self.x.lock().unwrap();
+   |                  ^^^^^^^^^^^^^
+   = help: pick one order for these locks and take them in that order everywhere
+
+warning: `SECOND` is locked here while `FIRST` is held. Another place takes them in the other order. Two threads, one on each path, can each hold one lock and wait for the other forever
+  --> $DIR/lock_order.rs:188:14
+   |
+LL |     let g2 = SECOND.lock().unwrap();
+   |              ^^^^^^^^^^^^^
+   |
+note: `FIRST` is locked here and still held where the warning points
+  --> $DIR/lock_order.rs:187:14
+   |
+LL |     let g1 = FIRST.lock().unwrap();
+   |              ^^^^^^^^^^^^
+note: `FIRST` is locked here while `SECOND`, locked on line 193, is held
+  --> $DIR/lock_order.rs:194:14
+   |
+LL |     let g1 = FIRST.lock().unwrap();
+   |              ^^^^^^^^^^^^
+   = help: pick one order for these locks and take them in that order everywhere
+
+warning: `Raw.q` is locked here while `Raw.p` is held. Another place takes them in the other order. Two threads, one on each path, can each hold one lock and wait for the other forever
+  --> $DIR/lock_order.rs:216:9
+   |
+LL |         self.q.lock();
+   |         ^^^^^^^^^^^^^
+   |
+note: `Raw.p` is locked here and still held where the warning points
+  --> $DIR/lock_order.rs:215:9
+   |
+LL |         self.p.lock();
+   |         ^^^^^^^^^^^^^
+note: `Raw.p` is locked here while `Raw.q`, locked on line 222, is held
+  --> $DIR/lock_order.rs:223:9
+   |
+LL |         self.p.lock();
+   |         ^^^^^^^^^^^^^
+   = help: pick one order for these locks and take them in that order everywhere
+
+warning: `Cells.n` is locked here while `Cells.m` is held. Another place takes them in the other order. Two threads, one on each path, can each hold one lock and wait for the other forever
+  --> $DIR/lock_order.rs:257:19
+   |
+LL |         let _gn = self.hold_n();
+   |                   ^^^^^^^^^^^^^
+   |
+note: `Cells.m` is locked here and still held where the warning points
+  --> $DIR/lock_order.rs:256:19
+   |
+LL |         let _gm = self.m.hold();
+   |                   ^^^^^^^^^^^^^
+note: `Cells.m` is locked here while `Cells.n`, locked on line 265, is held
+  --> $DIR/lock_order.rs:266:19
+   |
+LL |         let _gm = self.m.hold();
+   |                   ^^^^^^^^^^^^^
+   = help: pick one order for these locks and take them in that order everywhere
+
+warning: `RawPair.t` is locked here while `RawPair.s` is held. Another place takes them in the other order. Two threads, one on each path, can each hold one lock and wait for the other forever
+  --> $DIR/lock_order.rs:317:9
+   |
+LL |         self.t.lock();
+   |         ^^^^^^^^^^^^^
+   |
+note: `RawPair.s` is locked here and still held where the warning points
+  --> $DIR/lock_order.rs:316:9
+   |
+LL |         self.s.lock();
+   |         ^^^^^^^^^^^^^
+note: `RawPair.s` is locked here while `RawPair.t`, locked on line 327, is held
+  --> $DIR/lock_order.rs:328:5
+   |
+LL |     pair.s.lock();
+   |     ^^^^^^^^^^^^^
+   = help: pick one order for these locks and take them in that order everywhere
+
+warning: 8 warnings emitted
 

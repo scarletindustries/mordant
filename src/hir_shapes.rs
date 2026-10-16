@@ -301,9 +301,20 @@ pub(crate) fn callee_of<'tcx>(cx: &LateContext<'tcx>, e: &Expr<'tcx>) -> Option<
 /// A definition's path with generic segments stripped, bare and prefixed
 /// with its crate name: the two spellings a config pattern may name it by.
 pub(crate) fn def_path_names(cx: &LateContext<'_>, def: DefId) -> [String; 2] {
-    let path = strip_generic_segments(&cx.tcx.def_path_str(def));
-    let with_crate = format!("{}::{}", cx.tcx.crate_name(def.krate), path);
+    def_path_names_in(cx.tcx, def)
+}
+
+/// `def_path_names` with only a `TyCtxt`.
+pub(crate) fn def_path_names_in(tcx: rustc_middle::ty::TyCtxt<'_>, def: DefId) -> [String; 2] {
+    let path = strip_generic_segments(&tcx.def_path_str(def));
+    let with_crate = format!("{}::{}", tcx.crate_name(def.krate), path);
     [path, with_crate]
+}
+
+/// Path-suffix match on `::`-separated segments, so "Vec::push" matches
+/// `std::vec::Vec::push` but a bare substring never matches by accident.
+pub(crate) fn path_matches(name: &str, pattern: &str) -> bool {
+    name == pattern || name.ends_with(&format!("::{pattern}"))
 }
 
 /// `std::vec::Vec::<T>::push` -> `std::vec::Vec::push`: generic-argument
