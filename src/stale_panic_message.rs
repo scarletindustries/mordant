@@ -3,7 +3,7 @@ use rustc_hir::{Expr, ExprKind};
 use rustc_lint::{LateContext, LateLintPass};
 
 use crate::baseline::emit;
-use crate::claims::{self, DefNames};
+use crate::claims::{self, DefNames, FileWords};
 
 rustc_lint::declare_lint! {
     /// Flags a panic-family message (`panic!`, `unreachable!`, `assert!`,
@@ -18,6 +18,7 @@ rustc_lint::declare_lint! {
 #[derive(Default)]
 pub struct StalePanicMessage {
     defs: Option<DefNames>,
+    files: FileWords,
 }
 
 rustc_lint::impl_lint_pass!(StalePanicMessage => [STALE_PANIC_MESSAGE]);
@@ -36,14 +37,19 @@ const PANIC_MACROS: &[&str] = &[
 ];
 
 impl StalePanicMessage {
-    fn check_message(&self, cx: &LateContext<'_>, text: &str, at: rustc_span::Span) {
+    fn check_message(&mut self, cx: &LateContext<'_>, text: &str, at: rustc_span::Span) {
         let Some(defs) = &self.defs else { return };
-        let code = claims::file_code_only(cx, at);
-        // The message text is itself part of the file's code lines; blank
-        // every copy of it so the message cannot vouch for its own names.
-        let code = code.replace(text, "");
-        for ident in claims::backticked_idents(text) {
-            if !claims::word_in(&code, &ident) && !defs.contains(cx, &ident) {
+        let idents = claims::backticked_idents(text);
+        if idents.is_empty() {
+            return;
+        }
+        let file = self.files.get(cx, at);
+        // The message text is itself part of the file's code lines. Its
+        // copies do not count, so the message cannot vouch for its own names.
+        let copies = file.code.matches(text).count();
+        for ident in idents {
+            let outside = file.count(&ident) > copies * claims::word_count(text, &ident);
+            if !outside && !defs.contains(cx, &ident) {
                 emit(
                     cx,
                     STALE_PANIC_MESSAGE,

@@ -2,7 +2,7 @@ use rustc_hir::{Block, BlockCheckMode, UnsafeSource};
 use rustc_lint::{LateContext, LateLintPass};
 
 use crate::baseline::emit;
-use crate::claims::{self, DefNames};
+use crate::claims::{self, DefNames, FileWords};
 
 rustc_lint::declare_lint! {
     /// Flags a `// SAFETY:` comment that relies on a backticked identifier
@@ -22,6 +22,7 @@ rustc_lint::declare_lint! {
 #[derive(Default)]
 pub struct StaleSafetyComment {
     defs: Option<DefNames>,
+    files: FileWords,
 }
 
 rustc_lint::impl_lint_pass!(StaleSafetyComment => [STALE_SAFETY_COMMENT]);
@@ -56,9 +57,9 @@ impl<'tcx> LateLintPass<'tcx> for StaleSafetyComment {
         // justification legitimately points at a sibling impl or a helper a
         // few items away, not only at the enclosing function. Comment text is
         // stripped first, so a comment cannot vouch for itself.
-        let code = claims::file_code_only(cx, block.span);
+        let file = self.files.get(cx, block.span);
         for ident in claims::backticked_idents(&comment) {
-            if !claims::word_in(&code, &ident) && !defs.contains(cx, &ident) {
+            if file.count(&ident) == 0 && !defs.contains(cx, &ident) {
                 emit(
                     cx,
                     STALE_SAFETY_COMMENT,

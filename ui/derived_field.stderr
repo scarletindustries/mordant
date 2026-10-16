@@ -33,5 +33,21 @@ LL | |     }
    | |_____^
    = help: add `fn remaining(&self)` to `Header` and delete the `remaining` field
 
-warning: 2 warnings emitted
+warning: `scale` always has the same value for a given `unit`, in all 2 places `Measure` is b$DIRlt. It is a stored copy of something `unit` decides
+  --> $DIR/derived_field.rs:262:1
+   |
+LL | pub struct Measure {
+   | ^^^^^^^^^^^^^^^^^^
+   |
+note: one of the constructions
+  --> $DIR/derived_field.rs:268:5
+   |
+LL | /     Measure {
+LL | |         unit: Unit::Bytes,
+LL | |         scale: 1,
+LL | |     }
+   | |_____^
+   = help: add `fn scale(&self)` to `Unit` and delete the `scale` field
+
+warning: 3 warnings emitted
 

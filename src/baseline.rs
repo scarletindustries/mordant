@@ -41,9 +41,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-use clippy_utils::diagnostics::{span_lint_and_help, span_lint_and_then, span_lint_hir_and_then};
+use clippy_utils::diagnostics::span_lint_hir_and_then;
 use rustc_errors::{Diag, DiagInner};
-use rustc_hir::HirId;
+use rustc_hir::{CRATE_HIR_ID, HirId, OwnerId};
 use rustc_lint::{LateContext, LateLintPass, Lint, LintContext};
 use rustc_span::{FileName, Span};
 
@@ -213,13 +213,9 @@ pub fn emit(
     help: impl Into<String>,
 ) {
     let help: String = help.into();
-    match weigh(cx, lint, span, cx.last_node_with_lint_attrs) {
-        Verdict::Silent => {}
-        Verdict::Lint => span_lint_and_help(cx, lint, span, msg.into(), None, help),
-        Verdict::Held(held) => held.keep(cx, span, msg.into(), |diag| {
-            diag.help(help);
-        }),
-    }
+    emit_hir_then(cx, lint, level_node(cx, span), span, msg, |diag| {
+        diag.help(help);
+    });
 }
 
 /// `emit` with a secondary span: the finding is at `span`, the evidence for
@@ -234,15 +230,48 @@ pub fn emit_with_note(
     help: impl Into<String>,
 ) {
     let (note, help): (String, String) = (note.into(), help.into());
-    let decorate = |diag: &mut Diag<'_, ()>| {
+    emit_hir_then(cx, lint, level_node(cx, span), span, msg, |diag| {
         diag.span_note(note_span, note);
         diag.help(help);
-    };
-    match weigh(cx, lint, span, cx.last_node_with_lint_attrs) {
-        Verdict::Silent => {}
-        Verdict::Lint => span_lint_and_then(cx, lint, span, msg.into(), decorate),
-        Verdict::Held(held) => held.keep(cx, span, msg.into(), decorate),
+    });
+}
+
+/// The node whose `#[allow]` and `#[expect]` apply to a finding at `span`.
+/// A lint that reports after the whole crate is checked is at the crate
+/// root, where only a crate-level attribute is seen. Then the node is the
+/// smallest one whose source contains `span`, so an attribute on the item,
+/// field or statement around the finding applies.
+fn level_node(cx: &LateContext<'_>, span: Span) -> HirId {
+    let last = cx.last_node_with_lint_attrs;
+    if last != CRATE_HIR_ID {
+        return last;
     }
+    let tcx = cx.tcx;
+    static OWNERS: OnceLock<Vec<(Span, OwnerId)>> = OnceLock::new();
+    let owners = OWNERS.get_or_init(|| {
+        tcx.hir_crate_items(())
+            .owners()
+            .map(|o| (tcx.hir_span_with_body(HirId::make_owner(o.def_id)), o))
+            .collect()
+    });
+    let mut best: Option<(Span, OwnerId)> = None;
+    for &(s, owner) in owners {
+        if s.contains(span) && best.is_none_or(|(b, _)| b.contains(s)) {
+            best = Some((s, owner));
+        }
+    }
+    let Some((mut found_span, owner)) = best else {
+        return CRATE_HIR_ID;
+    };
+    let mut found = HirId::make_owner(owner.def_id);
+    for local_id in tcx.hir_owner_nodes(owner).nodes.indices() {
+        let id = HirId { owner, local_id };
+        let s = tcx.hir_span(id);
+        if s.contains(span) && found_span.contains(s) {
+            (found, found_span) = (id, s);
+        }
+    }
+    found
 }
 
 /// `emit` for a finding whose lint level is read at `hir_id` rather than at

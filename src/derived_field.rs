@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::DefId;
-use rustc_hir::{Expr, ExprKind, StructTailExpr};
+use rustc_hir::{Expr, ExprKind};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_span::{Span, Symbol};
 
@@ -10,7 +10,7 @@ use crate::MordantConfig;
 use crate::adt_facts::{has_fixed_repr, has_positional_fields};
 use crate::baseline::emit_with_note;
 use crate::enum_facts::ctor_literal_variant;
-use crate::hir_shapes::{assigned_adt_field, peel_blocks_unsafe};
+use crate::hir_shapes::{assigned_adt_field, in_derived_clone, peel_blocks_unsafe};
 
 rustc_lint::declare_lint! {
     /// Flags a field that always has the same value for a given value of a
@@ -154,11 +154,14 @@ impl<'tcx> LateLintPass<'tcx> for DerivedField {
             self.note_assignment(cx, place);
             return;
         }
-        // A `..base` literal overrides part of a value that already exists, so
-        // the fields written are the ones deliberately being made to differ.
-        let ExprKind::Struct(qpath, fields, StructTailExpr::None) = expr.kind else {
+        // A `..base` literal is an ordinary site. The fields it copies from
+        // `base` are not in `fields`, so they count as unknown there.
+        let ExprKind::Struct(qpath, fields, _) = expr.kind else {
             return;
         };
+        if in_derived_clone(cx, expr.hir_id) {
+            return;
+        }
         // Typeck rather than the path, so an alias or `Self` resolves.
         let Some(adt) = cx.typeck_results().expr_ty(expr).ty_adt_def() else {
             return;

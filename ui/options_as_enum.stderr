@@ -31,5 +31,21 @@ LL | |     }
    | |_____^
    = help: replace `left`, `right` with one enum field, one variant per case
 
-warning: 2 warnings emitted
+warning: `DerivedOutcome` is b$DIRlt in 2 places and none sets more than one of `ok`, `err` to `Some`. The fields are alternatives, but the struct allows both at once
+  --> $DIR/options_as_enum.rs:157:1
+   |
+LL | struct DerivedOutcome {
+   | ^^^^^^^^^^^^^^^^^^^^^
+   |
+note: one of the constructions
+  --> $DIR/options_as_enum.rs:163:5
+   |
+LL | /     DerivedOutcome {
+LL | |         ok: Some(1),
+LL | |         err: None,
+LL | |     }
+   | |_____^
+   = help: replace `ok`, `err` with one enum field, one variant per case
+
+warning: 3 warnings emitted
 

@@ -25,6 +25,8 @@ fn run(src_base: &str, config: &str) {
         rustc_path: env!("CARGO_BIN_EXE_mordant-driver").into(),
         src_base: src_base.into(),
         target_rustcflags: Some("--emit=metadata -Zui-testing".to_string()),
+        // `BLESS=1 cargo test` rewrites each `.stderr` to what the lints print.
+        bless: std::env::var_os("BLESS").is_some(),
         ..compiletest_rs::Config::default()
     });
 }

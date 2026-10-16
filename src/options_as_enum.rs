@@ -73,6 +73,11 @@ fn relevant_adt<'tcx>(
 
 impl<'tcx> LateLintPass<'tcx> for OptionsAsEnum {
     fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
+        // A derived `Clone` copies a value, and a derived `Default` sets
+        // every `Option` to `None`. Neither sets two fields to `Some`.
+        if clippy_utils::in_automatically_derived(cx.tcx, expr.hir_id) {
+            return;
+        }
         match expr.kind {
             ExprKind::Struct(_, fields, tail) => {
                 let ty = cx.typeck_results().expr_ty(expr);

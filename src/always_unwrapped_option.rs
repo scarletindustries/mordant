@@ -91,6 +91,10 @@ impl<'tcx> LateLintPass<'tcx> for AlwaysUnwrappedOption {
         let ExprKind::Field(base, ident) = expr.kind else {
             return;
         };
+        // A derived `Debug` or `Clone` reads every field and never unwraps.
+        if clippy_utils::in_automatically_derived(cx.tcx, expr.hir_id) {
+            return;
+        }
         let Some(adt_did) = option_field_of(cx, base, ident.name) else {
             return;
         };
@@ -103,18 +107,23 @@ impl<'tcx> LateLintPass<'tcx> for AlwaysUnwrappedOption {
     }
 
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
-        for ((adt, field), facts) in &self.fields {
-            if facts.handled > 0 || facts.panicking.len() < 2 {
-                continue;
-            }
-            let Some(fdef) = struct_field(cx.tcx.adt_def(*adt), *field) else {
-                continue;
-            };
+        let mut found: Vec<_> = self
+            .fields
+            .iter()
+            .filter(|(_, facts)| facts.handled == 0 && facts.panicking.len() >= 2)
+            .filter_map(|((adt, field), facts)| {
+                let fdef = struct_field(cx.tcx.adt_def(*adt), *field)?;
+                Some((cx.tcx.def_span(fdef.did), adt, field, facts))
+            })
+            .collect();
+        // Deterministic order: findings are compared against a baseline.
+        found.sort_by_key(|(span, ..)| *span);
+        for (span, adt, field, facts) in found {
             let owner = cx.tcx.item_name(*adt);
             emit_with_note(
                 cx,
                 ALWAYS_UNWRAPPED_OPTION,
-                cx.tcx.def_span(fdef.did),
+                span,
                 format!(
                     "`{owner}.{field}` is unwrapped at all {} of its reads and `None` is never handled, so `None` can only crash",
                     facts.panicking.len(),
