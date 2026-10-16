@@ -19,6 +19,7 @@ use rustc_middle::mir::{
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_span::{Span, sym};
 
+use crate::call_graph::resolve_item;
 use crate::mir_flow::{MirRef, mir_for};
 
 /// Calls followed into other bodies before the search gives up.
@@ -307,14 +308,7 @@ impl<'a, 'b, 'tcx> Walk<'a, 'b, 'tcx> {
             return Some(def);
         }
         let env = ty::TypingEnv::post_analysis(tcx, self.body.source.def_id());
-        let args = tcx
-            .try_normalize_erasing_regions(env, ty::Unnormalized::new_wip(args))
-            .ok()?;
-        let instance = ty::Instance::try_resolve(tcx, env, def, args).ok()??;
-        match instance.def {
-            ty::InstanceKind::Item(item) => Some(item),
-            _ => None,
-        }
+        resolve_item(tcx, env, def, args)
     }
 }
 

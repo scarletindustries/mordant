@@ -5,7 +5,7 @@ use rustc_middle::ty::TyCtxt;
 
 use crate::MordantConfig;
 use crate::baseline::emit_hir_then;
-use crate::call_graph::{Call, CallGraph};
+use crate::call_graph::{CallGraph, Edge};
 use crate::mir_flow::{counted_size, mir_for};
 
 rustc_lint::declare_lint! {
@@ -58,8 +58,8 @@ fn marked(tcx: TyCtxt<'_>, def: LocalDefId) -> bool {
 }
 
 enum Finding {
-    Cycle(Vec<Call>),
-    Copies { size: usize, sites: Vec<Call> },
+    Cycle(Vec<Edge>),
+    Copies { size: usize, sites: Vec<Edge> },
 }
 
 impl<'tcx> LateLintPass<'tcx> for InlineAlwaysTooBig {
@@ -70,7 +70,7 @@ impl<'tcx> LateLintPass<'tcx> for InlineAlwaysTooBig {
         if marked_fns.is_empty() {
             return;
         }
-        let graph = CallGraph::build(tcx);
+        let graph = CallGraph::get(tcx);
         let callers = graph.callers();
         let mut findings: Vec<(LocalDefId, Finding)> = Vec::new();
         for def in marked_fns {

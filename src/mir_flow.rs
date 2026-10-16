@@ -119,7 +119,7 @@ pub(crate) fn counted_size(body: &Body<'_>) -> usize {
 /// raises an internal compiler error on `BoundsCheck` and
 /// `MisalignedPointerDereference`, whose panics take runtime arguments.
 /// Those two are matched here first; `BoundsCheck` is the most common kind.
-fn assert_panic_lang_item(kind: &AssertKind<Operand<'_>>) -> LangItem {
+pub(crate) fn assert_panic_lang_item(kind: &AssertKind<Operand<'_>>) -> LangItem {
     match kind {
         AssertKind::BoundsCheck { .. } => LangItem::PanicBoundsCheck,
         AssertKind::MisalignedPointerDereference { .. } => {

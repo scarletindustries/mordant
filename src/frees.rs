@@ -29,6 +29,7 @@ use rustc_middle::mir::{
 use rustc_middle::ty::{self, Instance, Ty, TyCtxt, TypingEnv};
 use rustc_span::{Span, sym};
 
+use crate::call_graph::resolve_instance;
 use crate::hir_shapes::strip_generic_segments;
 use crate::mir_flow::{FlowGraph, mir_for};
 
@@ -466,7 +467,7 @@ fn resolve<'tcx>(
             ty::EarlyBinder::bind(tcx, args),
         )
         .ok()?;
-    Instance::try_resolve(tcx, env, def, args).ok()?
+    resolve_instance(tcx, env, def, args)
 }
 
 /// `Box::from_raw` and its `NonNull` and allocator forms.
