@@ -37,6 +37,8 @@ mod discarded_error;
 mod enum_facts;
 mod error_collapsed_to_bool;
 mod field_valid_only_when;
+#[allow(dead_code, unused_imports, reason = "the lints that read it move over next")]
+mod field_writes;
 mod forbidden_reach;
 mod freed_while_borrowed;
 mod frees;
@@ -348,6 +350,13 @@ fn register(
         known: Vec::new(),
         test_build,
     };
+    // Before the lints that read its facts, so it has seen every node and
+    // published them by the time their `check_crate_post` runs.
+    let needed = !test_build
+        && field_writes::READERS
+            .iter()
+            .any(|l| !disabled.iter().any(|d| d == l));
+    r.add_pass(needed, Vec::new(), field_writes::FieldWritesPass::default);
     r.add(true, move || StringlyError { config });
     r.add(true, move || KeyNotIdentity::new(config));
     r.add(true, || StringifiedError);
