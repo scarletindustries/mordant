@@ -26,6 +26,8 @@ mod baseline;
 mod baseline_file;
 mod bool_beside_option;
 mod bool_cluster;
+mod bound_checked_only_in_debug;
+mod call_graph;
 mod cast_bypasses_from;
 mod claims;
 mod ctor_flow;
@@ -36,12 +38,16 @@ mod enum_facts;
 mod error_collapsed_to_bool;
 mod field_valid_only_when;
 mod forbidden_reach;
+mod freed_while_borrowed;
+mod frees;
 mod generic_body_not_generic;
 mod guard_blind_to_action;
 mod hir_clone;
 mod hir_shapes;
 mod index_of_other_kind;
+mod inline_always_too_big;
 mod insert_then_unwrap;
+mod int_facts;
 mod interchangeable_aliases;
 mod key_not_identity;
 mod lock_order;
@@ -53,10 +59,12 @@ mod parallel_bools;
 mod parallel_params;
 mod parallel_vecs;
 mod param_wider_than_callers;
+mod pointer_origin;
 pub mod protocol;
 mod reimplemented_helper;
 mod return_wider_than_body;
 mod runtime_typestate;
+mod safe_fn_returns_shared_mut;
 mod same_match_twice;
 mod sentinel_integer;
 mod some_still_unchecked;
@@ -71,6 +79,7 @@ mod unchecked_construction;
 mod unchecked_input_len;
 mod unit_mismatch;
 mod unread_error_variant;
+mod unsafe_send_covers_more_than_pointers;
 mod unused_pub;
 mod variant_flow;
 mod wildcard_over_own_enum;
@@ -212,6 +221,25 @@ pub struct MordantConfig {
     /// the fn at before its body counts as duplicated. One instantiation
     /// duplicates nothing.
     pub generic_body_not_generic_min_instantiations: usize = 2,
+    /// The smallest body, in MIR statements, that `inline_always_too_big`
+    /// counts as large. About what a 30 line fn produces.
+    pub inline_always_too_big_min_statements: usize = 100,
+    /// In-crate call sites a large `#[inline(always)]` fn needs before
+    /// `inline_always_too_big` names it.
+    pub inline_always_too_big_min_call_sites: usize = 3,
+    /// Types that must stay on the thread that made them, for
+    /// `unsafe_send_covers_more_than_pointers`: a handle a runtime ties to
+    /// one thread although its fields are only pointers. Spelled like
+    /// `key-not-identity-types`. Empty by default.
+    pub thread_affine_types: Vec<String>,
+    /// Fns that free the value behind their first pointer argument on every
+    /// path, for `freed_while_borrowed`. Needed for fns of other crates,
+    /// whose bodies a check build cannot read (`bun_core::heap::destroy`).
+    /// Matched by `::`-segment suffix of the path, generics left out.
+    pub freed_while_borrowed_frees: Vec<String>,
+    /// Like `freed-while-borrowed-frees`, for fns that free only on some
+    /// paths, such as a reference count release that frees on the last one.
+    pub freed_while_borrowed_releases: Vec<String>,
 }
 
 /// Called by `mordant-driver` once per compiler session, before any lint
@@ -350,19 +378,36 @@ fn register(
     r.add(true, ParallelVecs::default);
     r.add(true, bool_beside_option::BoolBesideOption::default);
     r.add(true, SentinelInteger::default);
+    r.add(
+        true,
+        bound_checked_only_in_debug::BoundCheckedOnlyInDebug::default,
+    );
     r.add(true, StringlyState::default);
     r.add(config.parallel_params_enabled, move || {
         ParallelParams::new(config)
     });
     r.add(true, BareBoolArgs::default);
+    r.add(true, move || freed_while_borrowed::FreedWhileBorrowed {
+        config,
+    });
     r.add(true, TupleWantsStruct::default);
     r.add(true, || InterchangeableAliases);
+    r.add(true, move || {
+        unsafe_send_covers_more_than_pointers::UnsafeSendCoversMoreThanPointers { config }
+    });
     r.add(config.some_still_unchecked_enabled, || {
         some_still_unchecked::SomeStillUnchecked
     });
     r.add(config.generic_body_not_generic_enabled, move || {
         GenericBodyNotGeneric::new(config)
     });
+    r.add(true, move || {
+        inline_always_too_big::InlineAlwaysTooBig::new(config)
+    });
+    r.add(
+        true,
+        safe_fn_returns_shared_mut::SafeFnReturnsSharedMut::default,
+    );
     r.add_recorder(
         true,
         vec![unused_pub::UNUSED_PUB],
@@ -492,6 +537,8 @@ fn config_default_thresholds_match_docs() {
     assert_eq!(c.parallel_params_min_fns, 3);
     assert_eq!(c.generic_body_not_generic_min_statements, 24);
     assert_eq!(c.generic_body_not_generic_min_instantiations, 2);
+    assert_eq!(c.inline_always_too_big_min_statements, 100);
+    assert_eq!(c.inline_always_too_big_min_call_sites, 3);
 }
 
 /// An empty table (file present, keys omitted) must not drift from
@@ -621,6 +668,7 @@ fn disabled_expands_a_group_to_its_members() {
             "same_match_twice",
             "reimplemented_helper",
             "generic_body_not_generic",
+            "inline_always_too_big",
             "group:nope"
         ]
     );

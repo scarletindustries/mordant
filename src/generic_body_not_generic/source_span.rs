@@ -7,7 +7,8 @@ use rustc_middle::mir::{self, BasicBlock};
 use rustc_middle::ty::TyCtxt;
 use rustc_span::{BytePos, ExpnKind, Span};
 
-use super::classify::{PlaceParams, counted_statement, counted_terminator};
+use super::classify::PlaceParams;
+use crate::mir_flow::{counted_statement, counted_terminator};
 
 /// Where in the source a part is, for a note. The finding's own span stays
 /// the fn signature, which the baseline matches and an `#[allow]` goes on.

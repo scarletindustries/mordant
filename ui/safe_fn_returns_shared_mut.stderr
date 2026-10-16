@@ -1,0 +1,140 @@
+warning: safe fn `counter` returns `&'static mut u64` made from the static `COUNTER`, so two calls give two live `&mut` to the same memory
+  --> $DIR/safe_fn_returns_shared_mut.rs:32:1
+   |
+LL | fn counter() -> &'static mut u64 {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the reference comes from `COUNTER` here
+  --> $DIR/safe_fn_returns_shared_mut.rs:33:19
+   |
+LL |     unsafe { &mut COUNTER }
+   |                   ^^^^^^^
+   = help: make `counter` an `unsafe fn` with a `# Safety` section that says callers must not hold two results at once. Or pass the `&mut` to a closure so it lives only for that call, or return a raw pointer
+   = note: `#[warn(safe_fn_returns_shared_mut)]` on by default
+
+warning: safe fn `buf` returns `&'static mut [u8; 64]` made from the static `BUF`, so two calls give two live `&mut` to the same memory
+  --> $DIR/safe_fn_returns_shared_mut.rs:37:1
+   |
+LL | fn buf() -> &'static mut [u8; 64] {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the reference comes from `BUF` here
+  --> $DIR/safe_fn_returns_shared_mut.rs:38:20
+   |
+LL |     unsafe { &mut *BUF.get() }
+   |                    ^^^
+   = help: make `buf` an `unsafe fn` with a `# Safety` section that says callers must not hold two results at once. Or pass the `&mut` to a closure so it lives only for that call, or return a raw pointer
+
+warning: safe fn `state` returns `&'static mut std::vec::Vec<u8>` made from the static `STATE`, so two calls give two live `&mut` to the same memory
+  --> $DIR/safe_fn_returns_shared_mut.rs:42:1
+   |
+LL | fn state() -> &'static mut Vec<u8> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the reference comes from `STATE` here
+  --> $DIR/safe_fn_returns_shared_mut.rs:43:16
+   |
+LL |     unsafe { (*STATE.get()).assume_init_mut() }
+   |                ^^^^^
+   = help: make `state` an `unsafe fn` with a `# Safety` section that says callers must not hold two results at once. Or pass the `&mut` to a closure so it lives only for that call, or return a raw pointer
+
+warning: safe fn `state_again` returns `&'static mut std::vec::Vec<u8>` made from the static `STATE`, so two calls give two live `&mut` to the same memory
+  --> $DIR/safe_fn_returns_shared_mut.rs:47:1
+   |
+LL | fn state_again() -> &'static mut Vec<u8> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the reference comes from `STATE` here
+  --> $DIR/safe_fn_returns_shared_mut.rs:48:5
+   |
+LL |     state()
+   |     ^^^^^^^
+   = help: make `state_again` an `unsafe fn` with a `# Safety` section that says callers must not hold two results at once. Or pass the `&mut` to a closure so it lives only for that call, or return a raw pointer
+
+warning: safe fn `scratch` returns `&'static mut [u8; 32]` made from a thread-local, so two calls on one thread give two live `&mut` to the same memory
+  --> $DIR/safe_fn_returns_shared_mut.rs:52:1
+   |
+LL | fn scratch() -> &'static mut [u8; 32] {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the reference comes from the thread-local here
+  --> $DIR/safe_fn_returns_shared_mut.rs:53:13
+   |
+LL |     SCRATCH.with(|c| unsafe { &mut *c.get() })
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: make `scratch` an `unsafe fn` with a `# Safety` section that says callers must not hold two results at once. Or pass the `&mut` to a closure so it lives only for that call, or return a raw pointer
+
+warning: safe fn `lazy` returns `&'static mut [u8; 16]` made from a thread-local, so two calls on one thread give two live `&mut` to the same memory
+  --> $DIR/safe_fn_returns_shared_mut.rs:57:1
+   |
+LL | fn lazy() -> &'static mut [u8; 16] {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the reference comes from the thread-local here
+  --> $DIR/safe_fn_returns_shared_mut.rs:58:18
+   |
+LL |       let p = LAZY.with(|c| {
+   |  __________________^
+LL | |         let mut p = c.get();
+LL | |         if p.is_null() {
+LL | |             p = Box::into_raw(Box::new([0; 16]));
+...  |
+LL | |         p
+LL | |     });
+   | |______^
+   = help: make `lazy` an `unsafe fn` with a `# Safety` section that says callers must not hold two results at once. Or pass the `&mut` to a closure so it lives only for that call, or return a raw pointer
+
+warning: safe fn `cell_mut` returns `&'static mut [u8; N]` made from what `c` points to, so two calls with the same `c` give two live `&mut` to the same memory
+  --> $DIR/safe_fn_returns_shared_mut.rs:70:1
+   |
+LL | fn cell_mut<const N: usize>(c: &UnsafeCell<[u8; N]>) -> &'static mut [u8; N] {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the reference comes from `c`, and the result's lifetime is not tied to it
+  --> $DIR/safe_fn_returns_shared_mut.rs:70:29
+   |
+LL | fn cell_mut<const N: usize>(c: &UnsafeCell<[u8; N]>) -> &'static mut [u8; N] {
+   |                             ^
+   = help: make `cell_mut` an `unsafe fn` with a `# Safety` section that says callers must not hold two results at once. Or return a raw pointer
+
+warning: safe fn `log_mut` returns `&'a mut std::vec::Vec<std::string::String>` made from what `self` points to, so two calls with the same `self` give two live `&mut` to the same memory
+  --> $DIR/safe_fn_returns_shared_mut.rs:80:5
+   |
+LL |     fn log_mut<'a>(&self) -> &'a mut Vec<String> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the reference comes from `self`, and the result's lifetime is not tied to it
+  --> $DIR/safe_fn_returns_shared_mut.rs:80:20
+   |
+LL |     fn log_mut<'a>(&self) -> &'a mut Vec<String> {
+   |                    ^^^^^
+   = help: make `log_mut` an `unsafe fn` with a `# Safety` section that says callers must not hold two results at once. Or return a raw pointer
+
+warning: safe fn `node` returns `&'a mut u32` made from what `p` points to, so two calls with the same `p` give two live `&mut` to the same memory
+  --> $DIR/safe_fn_returns_shared_mut.rs:86:1
+   |
+LL | fn node<'a>(p: *mut u32) -> &'a mut u32 {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the reference comes from `p`, and the result's lifetime is not tied to it
+  --> $DIR/safe_fn_returns_shared_mut.rs:86:13
+   |
+LL | fn node<'a>(p: *mut u32) -> &'a mut u32 {
+   |             ^
+   = help: make `node` an `unsafe fn` with a `# Safety` section that says callers must not hold two results at once. Or return a raw pointer
+
+warning: safe fn `node_nn` returns `&'a mut u32` made from what `p` points to, so two calls with the same `p` give two live `&mut` to the same memory
+  --> $DIR/safe_fn_returns_shared_mut.rs:91:1
+   |
+LL | fn node_nn<'a>(mut p: NonNull<u32>) -> &'a mut u32 {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the reference comes from `p`, and the result's lifetime is not tied to it
+  --> $DIR/safe_fn_returns_shared_mut.rs:91:16
+   |
+LL | fn node_nn<'a>(mut p: NonNull<u32>) -> &'a mut u32 {
+   |                ^^^^^
+   = help: make `node_nn` an `unsafe fn` with a `# Safety` section that says callers must not hold two results at once. Or return a raw pointer
+
+warning: 10 warnings emitted
+

@@ -4,7 +4,9 @@
 //! lint applies its own filters on top; what lives here is only the part they
 //! spelled identically.
 
+use clippy_utils::macros::{find_assert_args, root_macro_call_first_node};
 use clippy_utils::res::{MaybeDef as _, MaybeQPath as _};
+use clippy_utils::source::snippet;
 use rustc_abi::ExternAbi;
 use rustc_hir::attrs::lang_items::LangItem;
 use rustc_hir::def::{DefKind, Res};
@@ -16,7 +18,7 @@ use rustc_hir::{
 use rustc_lint::LateContext;
 use rustc_middle::ty::AdtDef;
 use rustc_span::symbol::kw;
-use rustc_span::{Ident, Symbol};
+use rustc_span::{Ident, Symbol, sym};
 
 /// Is `id` inside a `#[derive(Clone)]` impl? That body copies a value
 /// that already exists, so it shows nothing about which values a field gets.
@@ -522,5 +524,70 @@ pub(crate) fn declared_ty<'tcx>(
             return_decl_ty(cx, callee_of(cx, e)?.def())
         }
         _ => None,
+    }
+}
+
+/// What a debug-only check is: the `debug_assert!` family, or an
+/// `if cfg!(debug_assertions) { .. }` with no `else`.
+pub(crate) enum DebugOnly<'tcx> {
+    /// `debug_assert!(c)`, with `c`. The `_eq` and `_ne` forms carry none.
+    Assert(Option<&'tcx Expr<'tcx>>),
+    /// The block that runs only when debug assertions are on.
+    CfgBlock(&'tcx Block<'tcx>),
+}
+
+/// `e` runs only when debug assertions are on, so release builds drop it.
+pub(crate) fn debug_only<'tcx>(
+    cx: &LateContext<'tcx>,
+    e: &'tcx Expr<'tcx>,
+) -> Option<DebugOnly<'tcx>> {
+    if let Some(mac) = root_macro_call_first_node(cx, e) {
+        return match cx.tcx.get_diagnostic_name(mac.def_id) {
+            Some(sym::debug_assert_macro) => Some(DebugOnly::Assert(
+                find_assert_args(cx, e, mac.expn).map(|(c, _)| c),
+            )),
+            Some(sym::debug_assert_eq_macro | sym::debug_assert_ne_macro) => {
+                Some(DebugOnly::Assert(None))
+            }
+            _ => None,
+        };
+    }
+    let ExprKind::If(cond, then, None) = e.kind else {
+        return None;
+    };
+    let ExprKind::Block(block, _) = then.kind else {
+        return None;
+    };
+    let mac = root_macro_call_first_node(cx, peel_not(cond).0)?;
+    let text: String = snippet(cx, mac.span, "")
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    (cx.tcx.item_name(mac.def_id) == sym::cfg && text == "cfg!(debug_assertions)")
+        .then_some(DebugOnly::CfgBlock(block))
+}
+
+/// The conditions `e` asserts only in debug builds: the one of a
+/// `debug_assert!`, or those of the `assert!` statements directly inside an
+/// `if cfg!(debug_assertions)` block.
+pub(crate) fn debug_only_conditions<'tcx>(
+    cx: &LateContext<'tcx>,
+    e: &'tcx Expr<'tcx>,
+) -> Vec<&'tcx Expr<'tcx>> {
+    match debug_only(cx, e) {
+        Some(DebugOnly::Assert(cond)) => cond.into_iter().collect(),
+        Some(DebugOnly::CfgBlock(block)) => block
+            .stmts
+            .iter()
+            .filter_map(stmt_expr)
+            .chain(block.expr)
+            .filter_map(|s| {
+                let mac = root_macro_call_first_node(cx, s)?;
+                (cx.tcx.get_diagnostic_name(mac.def_id) == Some(sym::assert_macro))
+                    .then(|| find_assert_args(cx, s, mac.expn).map(|(c, _)| c))
+                    .flatten()
+            })
+            .collect(),
+        None => Vec::new(),
     }
 }

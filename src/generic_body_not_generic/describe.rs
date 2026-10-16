@@ -18,9 +18,10 @@ use rustc_middle::ty::{self, GenericArgsRef, GenericParamDefKind, Ty, TyCtxt, Ty
 use rustc_span::{Span, Symbol};
 
 use super::GENERIC_BODY_NOT_GENERIC;
-use super::classify::{PlaceParams, counted_statement, counted_terminator};
+use super::classify::PlaceParams;
 use super::source_span::SourceSpan;
 use crate::baseline::{emit_hir_then, join};
+use crate::mir_flow::{counted_statement, counted_terminator};
 use crate::mir_flow::{local_name, reads_any};
 
 fn inline_note(tcx: TyCtxt<'_>, def: LocalDefId) -> Option<String> {

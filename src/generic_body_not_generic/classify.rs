@@ -17,7 +17,7 @@ use rustc_middle::ty::{
 };
 use rustc_span::{ExpnKind, Span, Spanned};
 
-use crate::mir_flow::{FlowGraph, mir_for, reads_any};
+use crate::mir_flow::{FlowGraph, counted_statement, counted_terminator, mir_for, reads_any};
 
 /// For one basic block: items that do something at run time, those among
 /// them that use a parameter ("dependent"), and those written by hand.
@@ -42,34 +42,6 @@ pub(super) fn hand_written(span: Span) -> bool {
             ExpnKind::Desugaring(_) | ExpnKind::AstPass(_) => ctxt = expn.call_site.ctxt(),
         }
     }
-}
-
-pub(super) fn counted_statement(statement: &Statement<'_>) -> bool {
-    !matches!(
-        statement.kind,
-        StatementKind::StorageLive(_)
-            | StatementKind::StorageDead(_)
-            | StatementKind::Nop
-            | StatementKind::FakeRead(_)
-            | StatementKind::PlaceMention(_)
-            | StatementKind::AscribeUserType(..)
-            | StatementKind::Coverage(_)
-            | StatementKind::ConstEvalCounter
-            | StatementKind::BackwardIncompatibleDropHint { .. }
-    )
-}
-
-pub(super) fn counted_terminator(terminator: &Terminator<'_>) -> bool {
-    !matches!(
-        terminator.kind,
-        TerminatorKind::Goto { .. }
-            | TerminatorKind::Return
-            | TerminatorKind::Unreachable
-            | TerminatorKind::UnwindResume
-            | TerminatorKind::UnwindTerminate(_)
-            | TerminatorKind::FalseEdge { .. }
-            | TerminatorKind::FalseUnwind { .. }
-    )
 }
 
 /// Tests whether a type, statement or terminator uses a type or const parameter. A closure's type

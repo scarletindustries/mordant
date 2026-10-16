@@ -35,6 +35,7 @@ pub const GROUPS: &[(&str, &[&str])] = &[
             "narrowed_two_ways",
             "cast_bypasses_from",
             "sentinel_integer",
+            "bound_checked_only_in_debug",
         ],
     ),
     (
@@ -60,6 +61,7 @@ pub const GROUPS: &[(&str, &[&str])] = &[
             "same_match_twice",
             "reimplemented_helper",
             "generic_body_not_generic",
+            "inline_always_too_big",
         ],
     ),
     (
@@ -77,6 +79,14 @@ pub const GROUPS: &[(&str, &[&str])] = &[
         &["key_not_identity", "insert_then_unwrap", "lock_order"],
     ),
     ("comments", &["stale_safety_comment", "stale_panic_message"]),
+    (
+        "unsafe",
+        &[
+            "safe_fn_returns_shared_mut",
+            "unsafe_send_covers_more_than_pointers",
+            "freed_while_borrowed",
+        ],
+    ),
     ("unused", &["unused_pub"]),
     ("custom", &["forbidden_reach"]),
 ];
@@ -119,6 +129,7 @@ mod tests {
                     "same_match_twice",
                     "reimplemented_helper",
                     "generic_body_not_generic",
+                    "inline_always_too_big",
                 ][..]
             )
         );

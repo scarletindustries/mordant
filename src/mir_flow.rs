@@ -2,6 +2,7 @@
 //! bodies. Nothing here decides what to report; each caller does that.
 //!
 //! * `mir_for`: the MIR body before optimization (`?` is still `Try::branch`).
+//! * `counted_size`: the statements and terminators of a body that emit code.
 //! * `assert_panics`: panics from `Assert` terminators, which have no HIR call.
 //! * `place_info`: a place as an [`Atom`] (a local plus leading field
 //!   indices) and how precisely the atom matches the place ([`Exactness`]).
@@ -21,7 +22,7 @@ use rustc_index::{IndexSlice, IndexVec};
 use rustc_middle::mir::visit::{PlaceContext, Visitor};
 use rustc_middle::mir::{
     AssertKind, BasicBlock, BasicBlockData, Body, Local, Location, Operand, Place, ProjectionElem,
-    TerminatorKind, VarDebugInfoContents,
+    Statement, StatementKind, Terminator, TerminatorKind, VarDebugInfoContents,
 };
 use rustc_middle::ty::TyCtxt;
 use rustc_span::{Span, Symbol};
@@ -56,6 +57,57 @@ impl<'tcx> std::ops::Deref for MirRef<'tcx> {
             MirRef::Opt(b) => b,
         }
     }
+}
+
+// ── size ─────────────────────────────────────────────────────────────────────
+
+/// False for statements that emit no code: storage markers, fake reads,
+/// type ascriptions and the like.
+pub(crate) fn counted_statement(statement: &Statement<'_>) -> bool {
+    !matches!(
+        statement.kind,
+        StatementKind::StorageLive(_)
+            | StatementKind::StorageDead(_)
+            | StatementKind::Nop
+            | StatementKind::FakeRead(_)
+            | StatementKind::PlaceMention(_)
+            | StatementKind::AscribeUserType(..)
+            | StatementKind::Coverage(_)
+            | StatementKind::ConstEvalCounter
+            | StatementKind::BackwardIncompatibleDropHint { .. }
+    )
+}
+
+/// False for plain jumps, returns and unwind ends.
+pub(crate) fn counted_terminator(terminator: &Terminator<'_>) -> bool {
+    !matches!(
+        terminator.kind,
+        TerminatorKind::Goto { .. }
+            | TerminatorKind::Return
+            | TerminatorKind::Unreachable
+            | TerminatorKind::UnwindResume
+            | TerminatorKind::UnwindTerminate(_)
+            | TerminatorKind::FalseEdge { .. }
+            | TerminatorKind::FalseUnwind { .. }
+    )
+}
+
+/// The statements and terminators of `body` that emit code, outside cleanup
+/// blocks: the size of a body as the lints here count it.
+pub(crate) fn counted_size(body: &Body<'_>) -> usize {
+    body.basic_blocks
+        .iter()
+        .filter(|data| !data.is_cleanup)
+        .map(|data| {
+            let statements = data
+                .statements
+                .iter()
+                .filter(|s| counted_statement(s))
+                .count();
+            let end = data.terminator.as_ref().is_some_and(counted_terminator);
+            statements + usize::from(end)
+        })
+        .sum()
 }
 
 // ── panics with no call ──────────────────────────────────────────────────────
