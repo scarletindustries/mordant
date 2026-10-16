@@ -92,24 +92,6 @@ pub(crate) fn counted_terminator(terminator: &Terminator<'_>) -> bool {
     )
 }
 
-/// The statements and terminators of `body` that emit code, outside cleanup
-/// blocks: the size of a body as the lints here count it.
-pub(crate) fn counted_size(body: &Body<'_>) -> usize {
-    body.basic_blocks
-        .iter()
-        .filter(|data| !data.is_cleanup)
-        .map(|data| {
-            let statements = data
-                .statements
-                .iter()
-                .filter(|s| counted_statement(s))
-                .count();
-            let end = data.terminator.as_ref().is_some_and(counted_terminator);
-            statements + usize::from(end)
-        })
-        .sum()
-}
-
 // ── panics with no call ──────────────────────────────────────────────────────
 
 /// The panic function rustc calls when this assertion fails, as its lang

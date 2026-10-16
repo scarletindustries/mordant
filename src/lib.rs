@@ -46,7 +46,6 @@ mod guard_blind_to_action;
 mod hir_clone;
 mod hir_shapes;
 mod index_of_other_kind;
-mod inline_always_too_big;
 mod insert_then_unwrap;
 mod int_facts;
 mod interchangeable_aliases;
@@ -222,12 +221,6 @@ pub struct MordantConfig {
     /// the fn at before its body counts as duplicated. One instantiation
     /// duplicates nothing.
     pub generic_body_not_generic_min_instantiations: usize = 2,
-    /// The smallest body, in MIR statements, that `inline_always_too_big`
-    /// counts as large. About what a 30 line fn produces.
-    pub inline_always_too_big_min_statements: usize = 100,
-    /// In-crate call sites a large `#[inline(always)]` fn needs before
-    /// `inline_always_too_big` names it.
-    pub inline_always_too_big_min_call_sites: usize = 3,
     /// Types that must stay on the thread that made them, for
     /// `unsafe_send_covers_more_than_pointers`: a handle a runtime ties to
     /// one thread although its fields are only pointers. Spelled like
@@ -409,9 +402,6 @@ fn register(
     r.add(config.generic_body_not_generic_enabled, move || {
         GenericBodyNotGeneric::new(config)
     });
-    r.add(true, move || {
-        inline_always_too_big::InlineAlwaysTooBig::new(config)
-    });
     r.add(
         true,
         safe_fn_returns_shared_mut::SafeFnReturnsSharedMut::default,
@@ -545,8 +535,6 @@ fn config_default_thresholds_match_docs() {
     assert_eq!(c.parallel_params_min_fns, 3);
     assert_eq!(c.generic_body_not_generic_min_statements, 24);
     assert_eq!(c.generic_body_not_generic_min_instantiations, 2);
-    assert_eq!(c.inline_always_too_big_min_statements, 100);
-    assert_eq!(c.inline_always_too_big_min_call_sites, 3);
 }
 
 /// An empty table (file present, keys omitted) must not drift from
@@ -685,7 +673,6 @@ fn disabled_expands_a_group_to_its_members() {
             "same_match_twice",
             "reimplemented_helper",
             "generic_body_not_generic",
-            "inline_always_too_big",
             "group:nope"
         ]
     );

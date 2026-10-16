@@ -69,7 +69,7 @@ cargo mordant --workspace --keep-going
 
 ## Lints
 
-There are 50, in families. Each family is a lint group, so `#![allow(mordant_naming)]` silences every naming lint. The [lint reference](https://scarlet.industries/docs/mordant/lints) has an example and a fix for each.
+There are 49, in families. Each family is a lint group, so `#![allow(mordant_naming)]` silences every naming lint. The [lint reference](https://scarlet.industries/docs/mordant/lints) has an example and a fix for each.
 
 | Family         | Group                 | Lints |
 | -------------- | --------------------- | ----- |
@@ -77,7 +77,7 @@ There are 50, in families. Each family is a lint group, so `#![allow(mordant_nam
 | Checks         | `mordant_checks`      | `unchecked_construction` `defaulted_failure` `unchecked_input_len` `guard_blind_to_action` `stale_across_reentry` `error_collapsed_to_bool` `narrowed_two_ways` `cast_bypasses_from` `sentinel_integer` `bound_checked_only_in_debug` |
 | Errors         | `mordant_errors`      | `stringly_error` `stringified_error` `discarded_error` `unread_error_variant` |
 | Enums          | `mordant_enums`       | `wildcard_over_own_enum` `param_wider_than_callers` `return_wider_than_body` |
-| Duplication    | `mordant_duplication` | `same_match_twice` `reimplemented_helper` `generic_body_not_generic` `inline_always_too_big` |
+| Duplication    | `mordant_duplication` | `same_match_twice` `reimplemented_helper` `generic_body_not_generic` |
 | Naming         | `mordant_naming`      | `bare_bool_args` `arg_named_like_other_param` `interchangeable_aliases` `index_of_other_kind` `unit_mismatch` |
 | Keys and locks | `mordant_keys_locks`  | `key_not_identity` `insert_then_unwrap` `lock_order` `lock_taken_twice` |
 | Comments       | `mordant_comments`    | `stale_safety_comment` `stale_panic_message` |

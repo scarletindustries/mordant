@@ -8,8 +8,6 @@
 //! whose impl the types pick goes to that impl. Bodies run at compile time
 //! (consts, statics) are left out, since their calls are not in the binary.
 
-use std::collections::VecDeque;
-use std::collections::hash_map::Entry;
 use std::sync::OnceLock;
 
 use rustc_data_structures::fx::{FxHashMap, FxHashSet, FxIndexMap};
@@ -130,36 +128,6 @@ impl CallGraph {
             }
         }
         into
-    }
-
-    /// The shortest chain of calls that leads from `start` back to `start`,
-    /// or `None` when no call path returns to it.
-    pub(crate) fn cycle_through(&self, start: LocalDefId) -> Option<Vec<Edge>> {
-        let mut parent: FxHashMap<LocalDefId, Edge> = FxHashMap::default();
-        let mut queue = VecDeque::from([start]);
-        while let Some(cur) = queue.pop_front() {
-            for call in self.local_calls(cur) {
-                let Some(callee) = call.local_callee() else {
-                    continue;
-                };
-                if callee == start {
-                    let mut chain = vec![call];
-                    let mut at = cur;
-                    while at != start {
-                        let step = parent[&at];
-                        chain.push(step);
-                        at = step.caller;
-                    }
-                    chain.reverse();
-                    return Some(chain);
-                }
-                if let Entry::Vacant(slot) = parent.entry(callee) {
-                    slot.insert(call);
-                    queue.push_back(callee);
-                }
-            }
-        }
-        None
     }
 }
 
