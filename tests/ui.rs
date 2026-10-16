@@ -88,6 +88,22 @@ fn ui() {
             from = "neg_overflow_root"
             never = ["panic_const_neg_overflow"]
 
+            [[mordant.forbidden-reach]]
+            from = "trait_root"
+            never = ["std::vec::Vec::push"]
+
+            [[mordant.forbidden-reach]]
+            from = "drop_root"
+            never = ["std::vec::Vec::push"]
+
+            [[mordant.forbidden-reach]]
+            from = "closure_root"
+            never = ["std::vec::Vec::push"]
+
+            [[mordant.forbidden-reach]]
+            from = "generic_root"
+            never = ["std::vec::Vec::push"]
+
             # The two controls: a live ban on a family their bodies do not
             # reach, so a silent run here is the lint discriminating and not
             # the rule failing to resolve.

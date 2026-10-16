@@ -1,0 +1,49 @@
+warning: `trait_root` can reach `std::vec::Vec::<T, A>::push`, which the `forbidden-reach` config bans for it. Path: trait_root -> <Pushes as Store>::put -> std::vec::Vec::<T, A>::push
+  --> $DIR/forbidden_reach_edges.rs:19:1
+   |
+LL | / fn trait_root(s: &mut Pushes) {
+LL | |     s.put(1);
+LL | | }
+   | |_^
+   |
+note: the last call in that path, to `std::vec::Vec::<T, A>::push`
+  --> $DIR/forbidden_reach_edges.rs:14:9
+   |
+LL |         self.0.push(n);
+   |         ^^^^^^^^^^^^^^
+   = help: break the path (each arrow is a real call in this crate), or relax the `forbidden-reach` rule for `trait_root` if the call is fine
+   = note: `#[warn(forbidden_reach)]` on by default
+
+warning: `drop_root` can reach `std::vec::Vec::<T, A>::push`, which the `forbidden-reach` config bans for it. Path: drop_root -> <Logs as std::ops::Drop>::drop -> std::vec::Vec::<T, A>::push
+  --> $DIR/forbidden_reach_edges.rs:36:1
+   |
+LL | / fn drop_root(h: Holder) {
+LL | |     let _ = h.logs.0.len();
+LL | | }
+   | |_^
+   |
+note: the last call in that path, to `std::vec::Vec::<T, A>::push`
+  --> $DIR/forbidden_reach_edges.rs:27:9
+   |
+LL |         self.0.push(0);
+   |         ^^^^^^^^^^^^^^
+   = help: break the path (each arrow is a real call in this crate), or relax the `forbidden-reach` rule for `drop_root` if the call is fine
+
+warning: `closure_root` can reach `std::vec::Vec::<T, A>::push`, which the `forbidden-reach` config bans for it. Path: closure_root -> closure_root::{closure#0} -> std::vec::Vec::<T, A>::push
+  --> $DIR/forbidden_reach_edges.rs:41:1
+   |
+LL | / fn closure_root(v: &mut Vec<u32>) {
+LL | |     let mut add = |n| v.push(n);
+LL | |     add(1);
+LL | | }
+   | |_^
+   |
+note: the last call in that path, to `std::vec::Vec::<T, A>::push`
+  --> $DIR/forbidden_reach_edges.rs:42:23
+   |
+LL |     let mut add = |n| v.push(n);
+   |                       ^^^^^^^^^
+   = help: break the path (each arrow is a real call in this crate), or relax the `forbidden-reach` rule for `closure_root` if the call is fine
+
+warning: 3 warnings emitted
+

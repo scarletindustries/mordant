@@ -41,6 +41,8 @@ pub(crate) struct Edge {
     /// The fn the edge runs: the impl item when the call resolves, or else
     /// the item the call names.
     pub(crate) callee: DefId,
+    /// The item the call names in the source: a trait item for a trait call.
+    pub(crate) named: DefId,
     /// The callee is the one body this edge runs, not a trait item or shim.
     pub(crate) resolved: bool,
     pub(crate) kind: EdgeKind,
@@ -90,6 +92,11 @@ impl CallGraph {
     /// The bodies in the graph, in HIR order.
     pub(crate) fn bodies(&self) -> impl Iterator<Item = LocalDefId> + '_ {
         self.out.keys().copied()
+    }
+
+    /// `def` is a body in the graph.
+    pub(crate) fn has_body(&self, def: LocalDefId) -> bool {
+        self.out.contains_key(&def)
     }
 
     /// The edges out of `caller`; empty for a body not in the graph.
@@ -154,10 +161,11 @@ impl CallGraph {
 fn body_edges<'tcx>(tcx: TyCtxt<'tcx>, owner: LocalDefId, body: &Body<'tcx>) -> Vec<Edge> {
     let env = TypingEnv::post_analysis(tcx, owner);
     let mut edges = Vec::new();
-    let mut push = |callee: DefId, resolved: bool, kind, span| {
+    let mut push = |callee: DefId, named: DefId, resolved: bool, kind, span| {
         edges.push(Edge {
             caller: owner,
             callee,
+            named,
             resolved,
             kind,
             span,
@@ -174,7 +182,13 @@ fn body_edges<'tcx>(tcx: TyCtxt<'tcx>, owner: LocalDefId, body: &Body<'tcx>) -> 
                 | AggregateKind::Coroutine(def, _)
                 | AggregateKind::CoroutineClosure(def, _) = **kind
             {
-                push(def, true, EdgeKind::Closure, statement.source_info.span);
+                push(
+                    def,
+                    def,
+                    true,
+                    EdgeKind::Closure,
+                    statement.source_info.span,
+                );
             }
         }
         let Some(terminator) = &data.terminator else {
@@ -187,19 +201,19 @@ fn body_edges<'tcx>(tcx: TyCtxt<'tcx>, owner: LocalDefId, body: &Body<'tcx>) -> 
                     continue;
                 };
                 match resolve_item(tcx, env, def, args) {
-                    Some(item) => push(item, true, EdgeKind::Call, span),
-                    None => push(def, false, EdgeKind::Call, span),
+                    Some(item) => push(item, def, true, EdgeKind::Call, span),
+                    None => push(def, def, false, EdgeKind::Call, span),
                 }
             }
             TerminatorKind::Drop { place, .. } => {
                 let ty = place.ty(&body.local_decls, tcx).ty;
                 for drop in drop_fns(tcx, env, ty) {
-                    push(drop, true, EdgeKind::Drop, span);
+                    push(drop, drop, true, EdgeKind::Drop, span);
                 }
             }
             TerminatorKind::Assert { msg, .. } => {
                 if let Some(def) = tcx.lang_items().get(assert_panic_lang_item(msg)) {
-                    push(def, true, EdgeKind::Panic, span);
+                    push(def, def, true, EdgeKind::Panic, span);
                 }
             }
             _ => {}

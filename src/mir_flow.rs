@@ -3,7 +3,7 @@
 //!
 //! * `mir_for`: the MIR body before optimization (`?` is still `Try::branch`).
 //! * `counted_size`: the statements and terminators of a body that emit code.
-//! * `assert_panics`: panics from `Assert` terminators, which have no HIR call.
+//! * `assert_panic_lang_item`: the panic fn an `Assert` terminator calls.
 //! * `place_info`: a place as an [`Atom`] (a local plus leading field
 //!   indices) and how precisely the atom matches the place ([`Exactness`]).
 //! * `switch_operand_atoms`: the atoms a `SwitchInt` terminator reads.
@@ -25,7 +25,7 @@ use rustc_middle::mir::{
     Statement, StatementKind, Terminator, TerminatorKind, VarDebugInfoContents,
 };
 use rustc_middle::ty::TyCtxt;
-use rustc_span::{Span, Symbol};
+use rustc_span::Symbol;
 
 // ── MIR access ───────────────────────────────────────────────────────────────
 
@@ -127,25 +127,6 @@ pub(crate) fn assert_panic_lang_item(kind: &AssertKind<Operand<'_>>) -> LangItem
         }
         other => other.panic_function(),
     }
-}
-
-/// Every panic `body` reaches through an `Assert` terminator rather than a
-/// call, as (lang item called, span that caused it). rustc adds these while
-/// building MIR -- bounds checks, arithmetic overflow, division or remainder
-/// by zero -- and they have no call in HIR, so a HIR visitor does not find
-/// them.
-/// **Overflow asserts exist only with `-C overflow-checks` on** (the debug
-/// default, and what `#[rustc_inherit_overflow_checks]` propagates); bounds
-/// checks and division by zero are always emitted. A missing overflow assert
-/// means the profile did not ask for one, not that the code cannot overflow.
-pub(crate) fn assert_panics<'a>(body: &'a Body<'_>) -> impl Iterator<Item = (LangItem, Span)> + 'a {
-    body.basic_blocks.iter().filter_map(|data| {
-        let term = data.terminator.as_ref()?;
-        let TerminatorKind::Assert { msg, .. } = &term.kind else {
-            return None;
-        };
-        Some((assert_panic_lang_item(msg), term.source_info.span))
-    })
 }
 
 // ── places as atoms ──────────────────────────────────────────────────────────
