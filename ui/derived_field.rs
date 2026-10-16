@@ -305,3 +305,23 @@ pub fn span_odd() -> Span2 {
         ..span_bytes()
     }
 }
+
+// Silent: another crate can build `Open`, so these are not all its sites.
+pub struct Open {
+    pub unit: Unit,
+    pub scale: u32,
+}
+
+pub fn open_bytes() -> Open {
+    Open {
+        unit: Unit::Bytes,
+        scale: 1,
+    }
+}
+
+pub fn open_pages() -> Open {
+    Open {
+        unit: Unit::Pages,
+        scale: 4096,
+    }
+}

@@ -7,7 +7,7 @@ use rustc_lint::{LateContext, LateLintPass};
 use rustc_span::{Span, Symbol};
 
 use crate::MordantConfig;
-use crate::adt_facts::{has_fixed_repr, has_positional_fields};
+use crate::adt_facts::{buildable_in_other_crates, has_fixed_repr, has_positional_fields};
 use crate::baseline::emit_with_note;
 use crate::enum_facts::ctor_literal_variant;
 use crate::hir_shapes::{assigned_adt_field, in_derived_clone, peel_blocks_unsafe};
@@ -28,8 +28,9 @@ rustc_lint::declare_lint! {
     /// constructors are then not the only thing deciding it, and a value the
     /// literals always pair one way may be re-paired later.
     ///
-    /// Silent on any type with an explicit `repr`, on foreign types, and
-    /// below `derived-field-min-sites` construction sites.
+    /// Silent on any type with an explicit `repr`, on foreign types, on a
+    /// type another crate can build, and below `derived-field-min-sites`
+    /// construction sites.
     pub DERIVED_FIELD,
     Warn,
     "a field whose value is decided by a sibling field"
@@ -171,7 +172,10 @@ impl<'tcx> LateLintPass<'tcx> for DerivedField {
         }
         let variant = adt.variant_of_res(cx.qpath_res(qpath, expr.hir_id));
         // A wire record legitimately restates what a sibling implies.
-        if has_fixed_repr(adt) || has_positional_fields(variant) {
+        if has_fixed_repr(adt)
+            || has_positional_fields(variant)
+            || buildable_in_other_crates(cx, adt, variant)
+        {
             return;
         }
         let mut vals = BTreeMap::new();
