@@ -47,7 +47,6 @@ fn ui() {
             stale-across-reentry-callees = ["Vm::run_callback", "dispatch*", "Worker::run_job", "Runner::schedule"]
             defaulted-failure-callees = ["from_str_radix", "listed_by_config"]
             defaulted-failure-ignored-errors = ["Pending"]
-            bool-cluster-enabled = true
             stale-safety-comment-enabled = true
             unchecked-input-len-enabled = true
             parallel-params-enabled = true
@@ -55,6 +54,10 @@ fn ui() {
             generic-body-not-generic-enabled = true
             thread-affine-types = ["JsHandle"]
             freed-while-borrowed-releases = ["Pool::release"]
+            lock-guard-types = ["Held"]
+            lock-methods = ["RawLock::lock"]
+            unlock-methods = ["RawLock::unlock"]
+            reentrant-lock-types = ["Shared"]
 
             [[mordant.forbidden-reach]]
             from = "hot_path"
@@ -87,6 +90,22 @@ fn ui() {
             [[mordant.forbidden-reach]]
             from = "neg_overflow_root"
             never = ["panic_const_neg_overflow"]
+
+            [[mordant.forbidden-reach]]
+            from = "trait_root"
+            never = ["std::vec::Vec::push"]
+
+            [[mordant.forbidden-reach]]
+            from = "drop_root"
+            never = ["std::vec::Vec::push"]
+
+            [[mordant.forbidden-reach]]
+            from = "closure_root"
+            never = ["std::vec::Vec::push"]
+
+            [[mordant.forbidden-reach]]
+            from = "generic_root"
+            never = ["std::vec::Vec::push"]
 
             # The two controls: a live ban on a family their bodies do not
             # reach, so a silent run here is the lint discriminating and not

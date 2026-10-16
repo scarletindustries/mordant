@@ -1,10 +1,7 @@
-use std::collections::HashMap;
-
-use crate::adt_facts::{field_ty, is_option_ty, private_local_struct};
+use crate::adt_facts::{field_ty, is_option_ty};
 use crate::baseline::emit_with_note;
-use crate::hir_shapes::assigned_field;
+use crate::field_writes;
 use rustc_hir::def_id::DefId;
-use rustc_hir::{Expr, ExprKind, StructTailExpr};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
 use rustc_span::{Span, Symbol};
@@ -17,26 +14,19 @@ rustc_lint::declare_lint! {
     /// struct allows both at once. One enum field with a variant per case
     /// says what the code means and cannot hold two at once.
     ///
-    /// Only fires on structs private to the crate, with every construction a
-    /// literal `Some(..)`/`None` struct expression and no later field
-    /// assignment, whether direct or through a `Box`, guard or other `Deref`
-    /// container — anything else is unprovable and stays silent.
+    /// Only fires on structs private to the crate, when every build writes
+    /// each `Option` field as `Some(..)` or `None` and nothing writes one
+    /// later. A later write is an assignment, a compound assignment or a
+    /// `&mut` to the field, such as `.insert(..)`, direct or through a
+    /// `Box`, guard or other `Deref` container. A derived `Default` sets
+    /// every field to `None`, so it passes and is not counted.
     pub OPTIONS_AS_ENUM,
     Warn,
     "struct whose Option fields are never populated together"
 }
 
-#[derive(Default)]
-struct Facts {
-    unprovable: bool,
-    /// Per construction site: where it is and which option fields were
-    /// `Some`.
-    sites: Vec<(Span, Vec<Symbol>)>,
-}
-
 pub struct OptionsAsEnum {
     min_fields: usize,
-    structs: HashMap<DefId, Facts>,
 }
 
 rustc_lint::impl_lint_pass!(OptionsAsEnum => [OPTIONS_AS_ENUM]);
@@ -45,7 +35,6 @@ impl OptionsAsEnum {
     pub fn new(config: &MordantConfig) -> Self {
         Self {
             min_fields: config.options_as_enum_min_fields,
-            structs: HashMap::new(),
         }
     }
 }
@@ -59,83 +48,56 @@ fn option_fields(cx: &LateContext<'_>, adt: ty::AdtDef<'_>) -> Vec<Symbol> {
         .collect()
 }
 
-/// The struct this expression constructs or field-assigns into, if it is a
-/// crate-local, crate-private struct with enough Option fields to care about.
-fn relevant_adt<'tcx>(
-    cx: &LateContext<'tcx>,
-    ty: ty::Ty<'tcx>,
-    min_fields: usize,
-) -> Option<(ty::AdtDef<'tcx>, Vec<Symbol>)> {
-    let adt = private_local_struct(cx, ty)?;
-    let opts = option_fields(cx, adt);
-    (opts.len() >= min_fields).then_some((adt, opts))
+/// Per build of `did` the user wrote, where it is and which option fields
+/// it sets to `Some`. A derived build only has to pass the check. None when
+/// a build writes an option field with a value that is not `Some(..)` or
+/// `None`.
+fn sites(cx: &LateContext<'_>, did: DefId, opts: &[Symbol]) -> Option<Vec<(Span, Vec<Symbol>)>> {
+    let mut sites = Vec::new();
+    for build in field_writes::facts().builds(did) {
+        let mut somes = Vec::new();
+        for f in opts {
+            let value = &build.get(*f)?.value;
+            if value.is_some(cx.tcx) {
+                somes.push(*f);
+            } else if !value.is_none(cx.tcx) {
+                return None;
+            }
+        }
+        if build.derived && somes.len() < 2 {
+            continue;
+        }
+        sites.push((build.span, somes));
+    }
+    Some(sites)
 }
 
 impl<'tcx> LateLintPass<'tcx> for OptionsAsEnum {
-    fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
-        // A derived `Clone` copies a value, and a derived `Default` sets
-        // every `Option` to `None`. Neither sets two fields to `Some`.
-        if clippy_utils::in_automatically_derived(cx.tcx, expr.hir_id) {
-            return;
-        }
-        match expr.kind {
-            ExprKind::Struct(_, fields, tail) => {
-                let ty = cx.typeck_results().expr_ty(expr);
-                let Some((adt, opts)) = relevant_adt(cx, ty, self.min_fields) else {
-                    return;
-                };
-                let facts = self.structs.entry(adt.did()).or_default();
-                if !matches!(tail, StructTailExpr::None) {
-                    facts.unprovable = true;
-                    return;
-                }
-                let mut somes = Vec::new();
-                for field in fields {
-                    if !opts.contains(&field.ident.name) {
-                        continue;
-                    }
-                    if crate::hir_shapes::as_some_expr(cx, field.expr).is_some() {
-                        somes.push(field.ident.name);
-                    } else if !crate::hir_shapes::is_none_expr(cx, field.expr) {
-                        facts.unprovable = true;
-                        return;
-                    }
-                }
-                facts.sites.push((expr.span, somes));
-            }
-            // A later `s.field = ...` write re-opens every combination; the
-            // construction sites alone no longer prove anything.
-            ExprKind::Assign(place, _, _) | ExprKind::AssignOp(_, place, _) => {
-                let Some((base, ident, _)) = assigned_field(place) else {
-                    return;
-                };
-                let ty = cx.typeck_results().expr_ty_adjusted(base);
-                let Some((adt, opts)) = relevant_adt(cx, ty, self.min_fields) else {
-                    return;
-                };
-                if opts.contains(&ident.name) {
-                    self.structs.entry(adt.did()).or_default().unprovable = true;
-                }
-            }
-            _ => {}
-        }
-    }
-
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
-        let mut structs: Vec<(&DefId, &Facts)> = self.structs.iter().collect();
-        // Deterministic order: findings are compared against a baseline.
-        structs.sort_by_key(|(did, _)| cx.tcx.def_span(**did));
-        for (did, facts) in structs {
-            if facts.unprovable || facts.sites.len() < 2 {
+        let facts = field_writes::facts();
+        for did in facts.variants(cx.tcx) {
+            if !facts.access(did).is_some_and(|r| r.private) {
                 continue;
             }
-            if facts.sites.iter().any(|(_, s)| s.len() > 1) {
+            let opts = option_fields(cx, cx.tcx.adt_def(did));
+            if opts.len() < self.min_fields {
                 continue;
             }
-            // At least two distinct fields must actually appear as Some;
-            // otherwise this is one live field and dead siblings, not a state.
+            // A write after the build re-opens every combination. The
+            // builds alone no longer prove anything.
+            if opts.iter().any(|f| !facts.writes(did, *f).is_empty()) {
+                continue;
+            }
+            let Some(sites) = sites(cx, did, &opts) else {
+                continue;
+            };
+            if sites.len() < 2 || sites.iter().any(|(_, s)| s.len() > 1) {
+                continue;
+            }
+            // At least two distinct fields must actually appear as Some.
+            // Otherwise this is one live field and dead siblings, not a state.
             let mut seen: Vec<Symbol> = Vec::new();
-            for (_, site) in &facts.sites {
+            for (_, site) in &sites {
                 for f in site {
                     if !seen.contains(f) {
                         seen.push(*f);
@@ -150,13 +112,13 @@ impl<'tcx> LateLintPass<'tcx> for OptionsAsEnum {
             emit_with_note(
                 cx,
                 OPTIONS_AS_ENUM,
-                cx.tcx.def_span(*did),
+                cx.tcx.def_span(did),
                 format!(
                     "`{}` is built in {} places and none sets more than one of {names} to `Some`. The fields are alternatives, but the struct allows both at once",
-                    cx.tcx.def_path_str(*did),
-                    facts.sites.len(),
+                    cx.tcx.def_path_str(did),
+                    sites.len(),
                 ),
-                facts.sites[0].0,
+                sites[0].0,
                 "one of the constructions",
                 format!("replace {names} with one enum field, one variant per case"),
             );

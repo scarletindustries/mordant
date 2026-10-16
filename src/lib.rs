@@ -37,6 +37,7 @@ mod discarded_error;
 mod enum_facts;
 mod error_collapsed_to_bool;
 mod field_valid_only_when;
+mod field_writes;
 mod forbidden_reach;
 mod freed_while_borrowed;
 mod frees;
@@ -45,7 +46,6 @@ mod guard_blind_to_action;
 mod hir_clone;
 mod hir_shapes;
 mod index_of_other_kind;
-mod inline_always_too_big;
 mod insert_then_unwrap;
 mod int_facts;
 mod interchangeable_aliases;
@@ -86,23 +86,12 @@ mod wildcard_over_own_enum;
 
 /// Read from `mordant.toml` under `[mordant]` in the linted workspace root.
 ///
-/// `bool_cluster` is allowed on this one struct, and it is the lawful-lattice
-/// case the lint's own help describes rather than an exemption from it. The
-/// bools are opt-ins belonging to *different* lints: every combination is
-/// reachable from `mordant.toml` and each means what it says, so there is no
-/// invariant between them for a type to carry. The field set is also this
-/// pack's public interface — every field is a TOML key, and Scarlet's `xtask`
-/// gate reads these field names out of the pinned source to decide which keys
-/// it may set — so grouping them into sub-structs would rename user-visible
-/// keys to satisfy a lint about internal invariants.
-///
 /// `register_lints` uses `Default` when the linted workspace has no
 /// `mordant.toml` or the file has no `[mordant]` table; the container-level
 /// `serde(default)` fills any omitted key from it too.
 #[derive(Default, serde::Deserialize)]
 #[cfg_attr(test, derive(Debug, PartialEq))]
 #[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
-#[cfg_attr(mordant, allow(bool_cluster))]
 pub struct MordantConfig {
     /// Lints, by name, that stay registered (so an `allow` of one still
     /// resolves) but never run. `group:<name>` stands for every lint in that
@@ -145,6 +134,17 @@ pub struct MordantConfig {
     /// suppress up to the recorded count per (lint, file) and surface only new
     /// findings. Regenerate with `MORDANT_BASELINE_WRITE=1`.
     pub baseline: Option<String>,
+    /// Types whose values are lock guards, for `lock_order`, on top of the
+    /// std and `parking_lot` guards. A call returning one takes a lock.
+    pub lock_guard_types: Vec<String>,
+    /// Methods that take a lock with no guard (`threading::Mutex::lock`).
+    /// The lock is held until a matching `unlock-methods` call.
+    pub lock_methods: Vec<String>,
+    /// Methods that release a lock taken by a `lock-methods` call.
+    pub unlock_methods: Vec<String>,
+    /// Lock or guard types the same thread may take again, which
+    /// `lock_taken_twice` leaves alone.
+    pub reentrant_lock_types: Vec<String>,
     /// Reachability bans: from each matching root, no call path may reach a
     /// banned definition. Findings carry the witness path.
     pub forbidden_reach: Vec<forbidden_reach::ReachRule>,
@@ -162,9 +162,9 @@ pub struct MordantConfig {
     /// name). Empty by default; the lint then reports only callees whose
     /// body it can see the check in.
     pub defaulted_failure_callees: Vec<String>,
-    /// Opt-in: run `bool_cluster`. Off by default because most structs it
-    /// names are option bags; the state machines among them are found by
-    /// running it once, not by gating on it.
+    /// No longer needed: `bool_cluster` is on by default now that it fires
+    /// only on proof. The key is still accepted so that older files parse,
+    /// and its value is not read.
     pub bool_cluster_enabled: bool,
     /// Opt-in: run `stale_safety_comment`. Off by default because a name a
     /// crate cannot see is usually defined in C++, a script, or a downstream
@@ -221,12 +221,6 @@ pub struct MordantConfig {
     /// the fn at before its body counts as duplicated. One instantiation
     /// duplicates nothing.
     pub generic_body_not_generic_min_instantiations: usize = 2,
-    /// The smallest body, in MIR statements, that `inline_always_too_big`
-    /// counts as large. About what a 30 line fn produces.
-    pub inline_always_too_big_min_statements: usize = 100,
-    /// In-crate call sites a large `#[inline(always)]` fn needs before
-    /// `inline_always_too_big` names it.
-    pub inline_always_too_big_min_call_sites: usize = 3,
     /// Types that must stay on the thread that made them, for
     /// `unsafe_send_covers_more_than_pointers`: a handle a runtime ties to
     /// one thread although its fields are only pointers. Spelled like
@@ -337,12 +331,19 @@ fn register(
         known: Vec::new(),
         test_build,
     };
+    // Before the lints that read its facts, so it has seen every node and
+    // published them by the time their `check_crate_post` runs.
+    let needed = !test_build
+        && field_writes::READERS
+            .iter()
+            .any(|l| !disabled.iter().any(|d| d == l));
+    r.add_pass(needed, Vec::new(), field_writes::FieldWritesPass::default);
     r.add(true, move || StringlyError { config });
     r.add(true, move || KeyNotIdentity::new(config));
     r.add(true, || StringifiedError);
     r.add(true, move || OptionsAsEnum::new(config));
     r.add(true, ParallelBools::default);
-    r.add(config.bool_cluster_enabled, move || BoolCluster { config });
+    r.add(true, move || BoolCluster { config });
     r.add(true, move || UncheckedConstruction::new(config));
     r.add(true, UnreadErrorVariant::default);
     r.add(true, GuardBlindToAction::default);
@@ -352,7 +353,7 @@ fn register(
     );
     r.add(true, || UnitMismatch);
     r.add(true, StalePanicMessage::default);
-    r.add(true, LockOrder::default);
+    r.add(true, move || LockOrder::new(config));
     r.add(true, move || ForbiddenReach::new(config));
     r.add(true, RuntimeTypestate::default);
     r.add(true, AlwaysUnwrappedOption::default);
@@ -400,9 +401,6 @@ fn register(
     });
     r.add(config.generic_body_not_generic_enabled, move || {
         GenericBodyNotGeneric::new(config)
-    });
-    r.add(true, move || {
-        inline_always_too_big::InlineAlwaysTooBig::new(config)
     });
     r.add(
         true,
@@ -537,8 +535,6 @@ fn config_default_thresholds_match_docs() {
     assert_eq!(c.parallel_params_min_fns, 3);
     assert_eq!(c.generic_body_not_generic_min_statements, 24);
     assert_eq!(c.generic_body_not_generic_min_instantiations, 2);
-    assert_eq!(c.inline_always_too_big_min_statements, 100);
-    assert_eq!(c.inline_always_too_big_min_call_sites, 3);
 }
 
 /// An empty table (file present, keys omitted) must not drift from
@@ -575,6 +571,15 @@ fn unknown_key_is_an_error_naming_it() {
         msg.contains("wildcard-local-enum-max-variants"),
         "error should name the offending key: {msg}"
     );
+}
+
+/// `bool_cluster` is on by default now, and files written when it was an
+/// opt-in still parse.
+#[test]
+fn bool_cluster_enabled_is_still_accepted() {
+    let parsed: MordantConfig =
+        toml::from_str("bool-cluster-enabled = true\n").expect("the old key parses");
+    assert!(parsed.bool_cluster_enabled);
 }
 
 #[test]
@@ -668,7 +673,6 @@ fn disabled_expands_a_group_to_its_members() {
             "same_match_twice",
             "reimplemented_helper",
             "generic_body_not_generic",
-            "inline_always_too_big",
             "group:nope"
         ]
     );

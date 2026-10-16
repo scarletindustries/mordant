@@ -110,3 +110,49 @@ fn main() {
     o.mark();
     o.touch(true);
 }
+
+// Flagged: `Task` again with the common derives, which write no field after
+// a build.
+#[derive(Clone, Debug, Default)]
+struct TaskTwin {
+    running: bool,
+    done: bool,
+}
+
+impl TaskTwin {
+    fn start(&mut self) {
+        self.running = true;
+        self.done = false;
+    }
+
+    fn finish(&mut self) {
+        self.running = false;
+        self.done = true;
+    }
+}
+
+// Fine: a `&mut` to `held` alone can change it without `free`.
+struct Borrowed {
+    held: bool,
+    free: bool,
+}
+
+impl Borrowed {
+    fn take(&mut self) {
+        self.held = true;
+        self.free = false;
+    }
+
+    fn give(&mut self) {
+        self.held = false;
+        self.free = true;
+    }
+}
+
+fn flip(b: &mut bool) {
+    *b = !*b;
+}
+
+fn lone_borrow(b: &mut Borrowed) {
+    flip(&mut b.held);
+}

@@ -1,19 +1,56 @@
-warning: `ShareVerdict` has 5 bool fields (`fair`, `rr`, `census`, `stacks`, `counters`). That is 32 possible combinations
-  --> $DIR/bool_cluster.rs:4:1
-   |
-LL | struct ShareVerdict {
-   | ^^^^^^^^^^^^^^^^^^^
-   |
-   = help: if only some combinations are valid, replace the bools with an enum of those. If the layout is fixed from outside, add a `repr` to `ShareVerdict` to say so
-   = note: `#[warn(bool_cluster)]` on by default
-
-warning: `Refusals` has 3 bool fields (`too_big`, `exhausted`, `fragmented`). That is 8 possible combinations
-  --> $DIR/bool_cluster.rs:14:1
+warning: `Refusals` has 3 bool fields (`too_big`, `exhausted`, `fragmented`), and the crate only makes 2 of their 8 combinations
+  --> $DIR/bool_cluster.rs:5:1
    |
 LL | struct Refusals {
    | ^^^^^^^^^^^^^^^
    |
-   = help: if only some combinations are valid, replace the bools with an enum of those. If the layout is fixed from outside, add a `repr` to `Refusals` to say so
+note: one of the struct literals
+  --> $DIR/bool_cluster.rs:13:5
+   |
+LL | /     Refusals {
+LL | |         too_big: true,
+LL | |         exhausted: false,
+LL | |         fragmented: false,
+LL | |         slots_leaked,
+LL | |     }
+   | |_____^
+   = help: replace the bools with an enum of 2 variants, one per combination: `RefuseBig` (`too_big` set, from `refuse_big`), `RefuseFragmented` (`fragmented` set, from `refuse_fragmented`)
+   = note: `#[warn(bool_cluster)]` on by default
 
-warning: 2 warnings emitted
+warning: `Mode` has 3 bool fields (`read`, `write`, `append`), and the crate only makes 2 of their 8 combinations
+  --> $DIR/bool_cluster.rs:32:1
+   |
+LL | struct Mode {
+   | ^^^^^^^^^^^
+   |
+note: one of the struct literals
+  --> $DIR/bool_cluster.rs:40:21
+   |
+LL |           Some(()) => Mode {
+   |  _____________________^
+LL | |             read: false,
+LL | |             write: true,
+LL | |             append: true,
+LL | |         },
+   | |_________^
+   = help: replace the bools with an enum of 2 variants, one per combination: `WriteAppend` (`write` and `append` set, from `mode`), `Read` (`read` set, from `mode`)
+
+warning: `RefusalsTwin` has 3 bool fields (`too_big`, `exhausted`, `fragmented`), and the crate only makes 3 of their 8 combinations
+  --> $DIR/bool_cluster.rs:64:1
+   |
+LL | struct RefusalsTwin {
+   | ^^^^^^^^^^^^^^^^^^^
+   |
+note: one of the struct literals
+  --> $DIR/bool_cluster.rs:71:5
+   |
+LL | /     RefusalsTwin {
+LL | |         too_big: true,
+LL | |         exhausted: false,
+LL | |         fragmented: false,
+LL | |     }
+   | |_____^
+   = help: replace the bools with an enum of 3 variants, one per combination: `Default` (none set, from `default`), `TwinBig` (`too_big` set, from `twin_big`), `TwinFragmented` (`fragmented` set, from `twin_fragmented`)
+
+warning: 3 warnings emitted
 

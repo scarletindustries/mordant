@@ -1,16 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::DefId;
-use rustc_hir::{Expr, ExprKind};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_span::{Span, Symbol};
 
 use crate::MordantConfig;
-use crate::adt_facts::{buildable_in_other_crates, has_fixed_repr, has_positional_fields};
+use crate::adt_facts::{has_fixed_repr, has_positional_fields};
 use crate::baseline::emit_with_note;
-use crate::enum_facts::ctor_literal_variant;
-use crate::hir_shapes::{assigned_adt_field, in_derived_clone, peel_blocks_unsafe};
+use crate::field_writes::{self, Value};
 
 rustc_lint::declare_lint! {
     /// Flags a field that always has the same value for a given value of a
@@ -24,9 +21,10 @@ rustc_lint::declare_lint! {
     /// biject whenever a small table's rows differ, which is a property of
     /// the table and not of the type; see `Val::decides`.
     ///
-    /// A field that is also assigned somewhere (`x.f = …`) is skipped: the
-    /// constructors are then not the only thing deciding it, and a value the
-    /// literals always pair one way may be re-paired later.
+    /// A field that is also written after a build (`x.f = …`, `x.f += …`,
+    /// `&mut x.f`) is skipped: the builds are then not the only thing
+    /// deciding it, and a value the literals always pair one way may be
+    /// re-paired later. So is a field another crate can assign.
     ///
     /// Silent on any type with an explicit `repr`, on foreign types, on a
     /// type another crate can build, and below `derived-field-min-sites`
@@ -38,9 +36,6 @@ rustc_lint::declare_lint! {
 
 pub struct DerivedField {
     min_sites: usize,
-    seen: HashMap<DefId, Vec<Site>>,
-    /// (variant, field) pairs written by an assignment rather than a literal.
-    assigned: HashMap<DefId, BTreeSet<Symbol>>,
 }
 
 rustc_lint::impl_lint_pass!(DerivedField => [DERIVED_FIELD]);
@@ -52,14 +47,13 @@ impl DerivedField {
     pub fn new(config: &MordantConfig) -> Self {
         Self {
             min_sites: config.derived_field_min_sites.max(FLOOR),
-            seen: HashMap::new(),
-            assigned: HashMap::new(),
         }
     }
 }
 
 struct Site {
     span: Span,
+    derived: bool,
     fields: BTreeMap<Symbol, Val>,
 }
 
@@ -76,6 +70,18 @@ enum Val {
 }
 
 impl Val {
+    fn of(v: &Value) -> Option<Val> {
+        match v {
+            Value::Variant(d) => Some(Val::Variant(*d)),
+            Value::Const(d) => Some(Val::NamedConst(*d)),
+            Value::Bool(b) => Some(Val::Lit(b.to_string())),
+            Value::Int(n) => Some(Val::Lit(n.to_string())),
+            Value::Str(s) => Some(Val::Lit(format!("{s:?}"))),
+            Value::OtherLit(s) => Some(Val::Lit(s.clone())),
+            Value::Default | Value::Unknown => None,
+        }
+    }
+
     /// Can this value *decide* a sibling — is it drawn from a closed set this
     /// crate defined?
     ///
@@ -105,103 +111,44 @@ impl Val {
     }
 }
 
-/// Strip the wrappers that do not change which value an expression names.
-fn peel<'tcx>(e: &'tcx Expr<'tcx>) -> &'tcx Expr<'tcx> {
-    let e = peel_blocks_unsafe(e);
-    match e.kind {
-        ExprKind::AddrOf(_, _, inner) => peel(inner),
-        _ => e,
+/// The builds of `did` with the fields each one names a value for, when the
+/// lint looks at the type at all.
+fn sites(cx: &LateContext<'_>, did: DefId) -> Option<Vec<Site>> {
+    let facts = field_writes::facts();
+    if facts.access(did)?.others_build {
+        return None;
     }
-}
-
-fn classify<'tcx>(cx: &LateContext<'tcx>, e: &'tcx Expr<'tcx>) -> Option<Val> {
-    let e = peel(e);
-    // `Some(x)`, `Wide(n)` — the variant is the fact, the payload is not.
-    if let Some(v) = ctor_literal_variant(cx, e) {
-        return Some(Val::Variant(v));
+    let adt = field_writes::adt_of(cx.tcx, did);
+    // A wire record legitimately restates what a sibling implies.
+    if has_fixed_repr(adt) || has_positional_fields(adt.variant_with_id(did)) {
+        return None;
     }
-    match e.kind {
-        ExprKind::Path(ref qpath) => match cx.qpath_res(qpath, e.hir_id) {
-            Res::Def(DefKind::Const { .. } | DefKind::AssocConst { .. }, did) => {
-                Some(Val::NamedConst(did))
-            }
-            _ => None,
-        },
-        ExprKind::Lit(lit) => Some(Val::Lit(format!("{:?}", lit.node))),
-        _ => None,
-    }
-}
-
-impl DerivedField {
-    /// `s.f = …`, through any number of derefs and autoderefs: `f` of `s`'s
-    /// struct is decided by more than its literals.
-    fn note_assignment<'tcx>(&mut self, cx: &LateContext<'tcx>, place: &'tcx Expr<'tcx>) {
-        let Some((adt, field, _)) = assigned_adt_field(cx, place) else {
-            return;
-        };
-        if !adt.is_struct() || !adt.did().is_local() {
-            return;
-        }
-        self.assigned
-            .entry(adt.non_enum_variant().def_id)
-            .or_default()
-            .insert(field.name);
-    }
+    let sites = facts
+        .builds(did)
+        .iter()
+        .map(|b| Site {
+            span: b.span,
+            derived: b.derived,
+            fields: b
+                .fields
+                .iter()
+                .filter_map(|i| Some((i.name, Val::of(&i.value)?)))
+                .collect(),
+        })
+        .collect();
+    Some(sites)
 }
 
 impl<'tcx> LateLintPass<'tcx> for DerivedField {
-    fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
-        if let ExprKind::Assign(place, ..) | ExprKind::AssignOp(_, place, _) = expr.kind {
-            self.note_assignment(cx, place);
-            return;
-        }
-        // A `..base` literal is an ordinary site. The fields it copies from
-        // `base` are not in `fields`, so they count as unknown there.
-        let ExprKind::Struct(qpath, fields, _) = expr.kind else {
-            return;
-        };
-        if in_derived_clone(cx, expr.hir_id) {
-            return;
-        }
-        // Typeck rather than the path, so an alias or `Self` resolves.
-        let Some(adt) = cx.typeck_results().expr_ty(expr).ty_adt_def() else {
-            return;
-        };
-        if !adt.did().is_local() {
-            return;
-        }
-        let variant = adt.variant_of_res(cx.qpath_res(qpath, expr.hir_id));
-        // A wire record legitimately restates what a sibling implies.
-        if has_fixed_repr(adt)
-            || has_positional_fields(variant)
-            || buildable_in_other_crates(cx, adt, variant)
-        {
-            return;
-        }
-        let mut vals = BTreeMap::new();
-        for f in fields {
-            if let Some(v) = classify(cx, f.expr) {
-                vals.insert(f.ident.name, v);
-            }
-        }
-        self.seen.entry(variant.def_id).or_default().push(Site {
-            span: expr.span,
-            fields: vals,
-        });
-    }
-
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
-        let mut keys: Vec<DefId> = self
-            .seen
-            .iter()
-            .filter(|(_, s)| s.len() >= self.min_sites)
-            .map(|(d, _)| *d)
-            .collect();
-        // Deterministic order: findings are compared against a baseline.
-        keys.sort_by_key(|d| cx.tcx.def_span(*d));
-
-        for did in keys {
-            let sites = &self.seen[&did];
+        let facts = field_writes::facts();
+        for did in facts.variants(cx.tcx) {
+            let Some(sites) = sites(cx, did) else {
+                continue;
+            };
+            if sites.len() < self.min_sites {
+                continue;
+            }
             // Fields every site gave a name to. A site that left one unknown
             // cannot witness a correspondence, so the whole field is dropped
             // rather than the pairing being read off a subset.
@@ -209,9 +156,7 @@ impl<'tcx> LateLintPass<'tcx> for DerivedField {
             for s in &sites[1..] {
                 common.retain(|k| s.fields.contains_key(k));
             }
-            if let Some(assigned) = self.assigned.get(&did) {
-                common.retain(|f| !assigned.contains(f));
-            }
+            common.retain(|f| facts.only_built_here(did, *f));
             let common: Vec<Symbol> = common.into_iter().collect();
             for i in 0..common.len() {
                 for j in (i + 1)..common.len() {
@@ -239,6 +184,26 @@ impl<'tcx> LateLintPass<'tcx> for DerivedField {
                         (b, a, vb[0])
                     };
                     let Val::Variant(variant) = by else { continue };
+                    // A field that several enum fields each decide is a row
+                    // of a table, not a copy of one state.
+                    let column =
+                        |f: Symbol| -> Vec<&Val> { sites.iter().map(|s| &s.fields[&f]).collect() };
+                    let of_derived = column(derived);
+                    let deciders = common
+                        .iter()
+                        .filter(|&&c| {
+                            let vc = column(c);
+                            c != derived
+                                && vc.iter().all(|v| v.decides())
+                                && vc.iter().collect::<HashSet<_>>().len() >= 2
+                                && bijective(&vc, &of_derived)
+                        })
+                        .count();
+                    if deciders > 1 {
+                        continue;
+                    }
+                    // Point at a build the user wrote, not at a derive.
+                    let shown = sites.iter().find(|s| !s.derived).unwrap_or(&sites[0]).span;
                     let enum_name = cx.tcx.item_name(cx.tcx.parent(*variant));
                     emit_with_note(
                         cx,
@@ -251,7 +216,7 @@ impl<'tcx> LateLintPass<'tcx> for DerivedField {
                             sites.len(),
                             cx.tcx.def_path_str(did),
                         ),
-                        sites[0].span,
+                        shown,
                         "one of the constructions",
                         format!(
                             "add `fn {derived}(&self)` to `{enum_name}` and delete the `{derived}` field"

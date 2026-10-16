@@ -14,6 +14,7 @@ use rustc_span::symbol::Symbol;
 use crate::MordantConfig;
 use crate::adt_facts::impl_self_adt;
 use crate::baseline::emit_with_note;
+use crate::call_graph::resolve_item;
 use crate::hir_shapes::{
     FieldChain, def_path_names, dotted, field_chain, is_self_path, stmt_expr,
     strip_generic_segments,
@@ -102,15 +103,7 @@ fn impl_item_of<'tcx>(
     args: ty::GenericArgsRef<'tcx>,
 ) -> Option<DefId> {
     cx.tcx.trait_of_assoc(def)?;
-    let args = cx
-        .tcx
-        .try_normalize_erasing_regions(cx.typing_env(), ty::Unnormalized::new_wip(args))
-        .ok()?;
-    let instance = ty::Instance::try_resolve(cx.tcx, cx.typing_env(), def, args).ok()??;
-    match instance.def {
-        ty::InstanceKind::Item(item) if item != def => Some(item),
-        _ => None,
-    }
+    resolve_item(cx.tcx, cx.typing_env(), def, args).filter(|&item| item != def)
 }
 
 /// The spellings a pattern may match a callee under, each also prefixed

@@ -3,18 +3,18 @@ use std::collections::{HashMap, HashSet};
 use crate::adt_facts::{has_fixed_repr, has_positional_fields, private_local_struct, struct_field};
 use crate::baseline::emit_with_note;
 use crate::enum_facts::{arm_variant, ctor_literal_variant};
+use crate::field_writes::{self, WriteKind, is_placeholder};
 use clippy_utils::eq_expr_value;
-use clippy_utils::{get_enclosing_block, in_automatically_derived, is_default_equivalent};
+use clippy_utils::{get_enclosing_block, in_automatically_derived};
 use rustc_ast::LitKind;
 use rustc_hir::def_id::DefId;
 use rustc_hir::{
     Arm, BinOpKind, Block, BorrowKind, Expr, ExprKind, HirId, Mutability, Node, Pat, PatExpr,
-    PatExprKind, PatKind, StmtKind, StructTailExpr, UnOp,
+    PatExprKind, PatKind, StmtKind, UnOp,
 };
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty;
-use rustc_middle::ty::adjustment::{Adjust, AutoBorrow, AutoBorrowMutability};
-use rustc_span::{Span, Symbol, SyntaxContext, sym};
+use rustc_span::{Span, Symbol, SyntaxContext};
 
 rustc_lint::declare_lint! {
     /// Flags a struct field that only means something when a sibling field
@@ -40,7 +40,9 @@ rustc_lint::declare_lint! {
     /// assigns the sibling that value. A
     /// sibling never given the tested value by any literal or assignment
     /// keeps it quiet too (the field is then dead, not dependent). Reads in
-    /// derived impls are not counted.
+    /// derived impls are not counted. A derived `Default` is a construction
+    /// with every field at its default, but at least one placeholder must
+    /// come from code the user wrote.
     pub FIELD_VALID_ONLY_WHEN,
     Warn,
     "a field that only means something when a sibling field has one value"
@@ -76,6 +78,48 @@ struct Test {
 struct Init {
     value: Option<Value>,
     placeholder: bool,
+    /// Written by a derived impl, such as the derived `Default`.
+    derived: bool,
+}
+
+/// A written value as this lint compares it: a variant, a bool or an
+/// unsigned integer. Named constants are not values here: two names can be
+/// one value.
+fn as_value(v: &field_writes::Value) -> Option<Value> {
+    match *v {
+        field_writes::Value::Variant(d) => Some(Value::Variant(d)),
+        field_writes::Value::Bool(b) => Some(Value::Bool(b)),
+        field_writes::Value::Int(n) => Some(Value::Int(n)),
+        _ => None,
+    }
+}
+
+/// The value a write after construction leaves, when it spells one out.
+fn written_value(w: &field_writes::Write) -> Option<Value> {
+    matches!(w.kind, WriteKind::Assign)
+        .then(|| as_value(&w.value))
+        .flatten()
+}
+
+/// Per build of the struct `did`, what each field got.
+fn sites_of(did: DefId) -> Vec<HashMap<Symbol, Init>> {
+    field_writes::facts()
+        .builds(did)
+        .iter()
+        .map(|b| {
+            b.fields
+                .iter()
+                .map(|i| {
+                    let init = Init {
+                        value: as_value(&i.value),
+                        placeholder: i.placeholder,
+                        derived: b.derived,
+                    };
+                    (i.name, init)
+                })
+                .collect()
+        })
+        .collect()
 }
 
 /// One read of a field: where it is and the sibling tests that dominate it.
@@ -89,11 +133,6 @@ struct Read {
 pub struct FieldValidOnlyWhen {
     /// (struct, field) -> its reads.
     reads: HashMap<(DefId, Symbol), Vec<Read>>,
-    /// struct -> per literal construction site, what each named field got.
-    sites: HashMap<DefId, Vec<HashMap<Symbol, Init>>>,
-    /// (struct, field) -> the values assigned to it after construction
-    /// (`None` for one not spelled out), which the sites do not bound.
-    assigned: HashMap<(DefId, Symbol), HashSet<Option<Value>>>,
     /// (struct, field) -> per assignment of a real value, the sibling tests
     /// dominating it plus the sibling values assigned beside it in the same
     /// block: the cases that write can belong to.
@@ -190,24 +229,6 @@ fn negation_rules_out(cx: &LateContext<'_>, v: Value) -> bool {
             .fields
             .is_empty(),
     }
-}
-
-/// A don't-care initialiser: whatever `Default` would give, or a null
-/// pointer.
-fn is_placeholder(cx: &LateContext<'_>, e: &Expr<'_>) -> bool {
-    if is_default_equivalent(cx, e) {
-        return true;
-    }
-    if let ExprKind::Call(f, []) = e.kind
-        && let ExprKind::Path(qpath) = &f.kind
-        && let Some(def) = cx.qpath_res(qpath, f.hir_id).opt_def_id()
-    {
-        return matches!(
-            cx.tcx.get_diagnostic_name(def),
-            Some(sym::ptr_null | sym::ptr_null_mut)
-        );
-    }
-    false
 }
 
 /// Which sibling of the read field `e` names: `e` must be `<base>.g` over
@@ -421,25 +442,6 @@ fn assigned_beside(cx: &LateContext<'_>, base: &Expr<'_>, at: HirId, out: &mut H
     }
 }
 
-/// `x.g += ..`, `&mut x.g`, or the auto-`&mut` a mutating method call takes:
-/// `g` changes to something not spelled out.
-fn mutated_in_place(cx: &LateContext<'_>, place: &Expr<'_>, parent: Node<'_>) -> bool {
-    if let Node::Expr(p) = parent
-        && let ExprKind::AssignOp(_, lhs, _)
-        | ExprKind::AddrOf(BorrowKind::Ref | BorrowKind::Raw, Mutability::Mut, lhs) = p.kind
-        && lhs.hir_id == place.hir_id
-    {
-        return true;
-    }
-    cx.typeck_results().expr_adjustments(place).iter().any(|a| {
-        matches!(
-            a.kind,
-            Adjust::Borrow(AutoBorrow::Ref(AutoBorrowMutability::Mut { .. }))
-                | Adjust::Borrow(AutoBorrow::RawPtr(Mutability::Mut))
-        )
-    })
-}
-
 impl FieldValidOnlyWhen {
     fn record_read(&mut self, adt: DefId, field: Symbol, at: Span, tests: HashSet<Test>) {
         self.reads
@@ -451,82 +453,35 @@ impl FieldValidOnlyWhen {
 
 impl<'tcx> LateLintPass<'tcx> for FieldValidOnlyWhen {
     fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
-        match expr.kind {
-            ExprKind::Struct(_, fields, tail) => {
-                let Some(adt) = relevant(cx, cx.typeck_results().expr_ty(expr)) else {
-                    return;
-                };
-                // What `..` fills the unlisted fields with: don't-cares from
-                // `..Default::default()` or declared defaults, somebody's real
-                // values from `..other`.
-                let rest = match tail {
-                    StructTailExpr::None => None,
-                    StructTailExpr::Base(b) => Some(is_placeholder(cx, b)),
-                    StructTailExpr::DefaultFields(_) => Some(true),
-                    StructTailExpr::NoneWithError(_) => return,
-                };
-                let mut site: HashMap<Symbol, Init> = fields
-                    .iter()
-                    .map(|f| {
-                        let init = Init {
-                            value: expr_value(cx, f.expr),
-                            placeholder: is_placeholder(cx, f.expr),
-                        };
-                        (f.ident.name, init)
-                    })
-                    .collect();
-                if let Some(placeholder) = rest {
-                    for f in &adt.non_enum_variant().fields {
-                        site.entry(f.name).or_insert(Init {
-                            value: None,
-                            placeholder,
-                        });
-                    }
-                }
-                self.sites.entry(adt.did()).or_default().push(site);
-            }
-            ExprKind::Field(base, ident) => {
-                let Some(adt) = relevant(cx, cx.typeck_results().expr_ty_adjusted(base)) else {
-                    return;
-                };
-                if struct_field(adt, ident.name).is_none()
-                    || in_automatically_derived(cx.tcx, expr.hir_id)
-                {
-                    return;
-                }
-                // `base.f = ..` writes; everything else, `base.f += ..` and
-                // `&mut base.f` included, reads (and, through the `&mut`,
-                // may leave behind a value no site spells out).
-                let parent = cx.tcx.parent_hir_node(expr.hir_id);
-                if let Node::Expr(parent) = parent
-                    && let ExprKind::Assign(lhs, rhs, _) = parent.kind
-                    && lhs.hir_id == expr.hir_id
-                {
-                    self.assigned
-                        .entry((adt.did(), ident.name))
-                        .or_default()
-                        .insert(expr_value(cx, rhs));
-                    if !is_placeholder(cx, rhs) {
-                        let mut cases = dominating_tests(cx, expr, base);
-                        assigned_beside(cx, base, parent.hir_id, &mut cases);
-                        self.writes
-                            .entry((adt.did(), ident.name))
-                            .or_default()
-                            .push(cases);
-                    }
-                    return;
-                }
-                if mutated_in_place(cx, expr, parent) {
-                    self.assigned
-                        .entry((adt.did(), ident.name))
-                        .or_default()
-                        .insert(None);
-                }
-                let tests = dominating_tests(cx, expr, base);
-                self.record_read(adt.did(), ident.name, expr.span, tests);
-            }
-            _ => {}
+        let ExprKind::Field(base, ident) = expr.kind else {
+            return;
+        };
+        let Some(adt) = relevant(cx, cx.typeck_results().expr_ty_adjusted(base)) else {
+            return;
+        };
+        if struct_field(adt, ident.name).is_none() || in_automatically_derived(cx.tcx, expr.hir_id)
+        {
+            return;
         }
+        // `base.f = ..` writes. Everything else reads, `base.f += ..` and
+        // `&mut base.f` included. What those leave behind is in the facts.
+        let parent = cx.tcx.parent_hir_node(expr.hir_id);
+        if let Node::Expr(parent) = parent
+            && let ExprKind::Assign(lhs, rhs, _) = parent.kind
+            && lhs.hir_id == expr.hir_id
+        {
+            if !is_placeholder(cx, rhs) {
+                let mut cases = dominating_tests(cx, expr, base);
+                assigned_beside(cx, base, parent.hir_id, &mut cases);
+                self.writes
+                    .entry((adt.did(), ident.name))
+                    .or_default()
+                    .push(cases);
+            }
+            return;
+        }
+        let tests = dominating_tests(cx, expr, base);
+        self.record_read(adt.did(), ident.name, expr.span, tests);
     }
 
     fn check_pat(&mut self, cx: &LateContext<'tcx>, pat: &'tcx Pat<'tcx>) {
@@ -569,17 +524,17 @@ impl<'tcx> LateLintPass<'tcx> for FieldValidOnlyWhen {
             let mut candidates: Vec<Test> =
                 common.into_iter().filter(|t| t.sibling != *field).collect();
             candidates.sort_by_key(|t| order.iter().position(|n| *n == t.sibling));
-            let sites = self.sites.get(did).map_or(&[][..], Vec::as_slice);
+            let sites = sites_of(*did);
             for test in candidates {
                 // The tested case must be one the crate makes: a literal site
                 // or a later assignment giving the sibling that value or one
                 // not spelled out. Otherwise the field is never read at all,
                 // which is not this lint's claim.
                 let admits = |v: Option<Value>| v.is_none_or(|v| v == test.value);
-                let reached = self
-                    .assigned
-                    .get(&(*did, test.sibling))
-                    .is_some_and(|vs| vs.iter().copied().any(admits))
+                let reached = field_writes::facts()
+                    .writes(*did, test.sibling)
+                    .iter()
+                    .any(|w| admits(written_value(w)))
                     || sites
                         .iter()
                         .any(|s| s.get(&test.sibling).is_some_and(|i| admits(i.value)));
@@ -601,15 +556,20 @@ impl<'tcx> LateLintPass<'tcx> for FieldValidOnlyWhen {
                         .and_then(|i| i.value)
                         .is_some_and(|v| v != test.value)
                 });
-                let (mut placeholders, mut real) = (0usize, false);
+                // A derived `Default` alone does not show the case: it fills
+                // every field with a placeholder.
+                let (mut placeholders, mut written, mut real) = (0usize, false, false);
                 for site in elsewhere {
                     match site.get(field) {
-                        Some(init) if init.placeholder => placeholders += 1,
+                        Some(init) if init.placeholder => {
+                            placeholders += 1;
+                            written |= !init.derived;
+                        }
                         Some(_) => real = true,
                         None => {}
                     }
                 }
-                if placeholders == 0 || real {
+                if !written || real {
                     continue;
                 }
                 let Some(fdef) = struct_field(adt, *field) else {

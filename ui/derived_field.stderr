@@ -49,5 +49,22 @@ LL | |     }
    | |_____^
    = help: add `fn scale(&self)` to `Unit` and delete the `scale` field
 
-warning: 3 warnings emitted
+warning: `remaining` always has the same value for a given `header`, in all 3 places `EntriesTwin` is b$DIRlt. It is a stored copy of something `header` decides
+  --> $DIR/derived_field.rs:339:1
+   |
+LL | pub struct EntriesTwin<'a> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: one of the constructions
+  --> $DIR/derived_field.rs:346:5
+   |
+LL | /     EntriesTwin {
+LL | |         buf,
+LL | |         header: HeaderTwin::Narrow,
+LL | |         remaining: None,
+LL | |     }
+   | |_____^
+   = help: add `fn remaining(&self)` to `HeaderTwin` and delete the `remaining` field
+
+warning: 4 warnings emitted
 

@@ -47,5 +47,37 @@ LL | |     }
    | |_____^
    = help: replace `ok`, `err` with one enum field, one variant per case
 
-warning: 3 warnings emitted
+warning: `OutcomeTwin` is b$DIRlt in 2 places and none sets more than one of `ok`, `err` to `Some`. The fields are alternatives, but the struct allows both at once
+  --> $DIR/options_as_enum.rs:200:1
+   |
+LL | struct OutcomeTwin {
+   | ^^^^^^^^^^^^^^^^^^
+   |
+note: one of the constructions
+  --> $DIR/options_as_enum.rs:206:5
+   |
+LL | /     OutcomeTwin {
+LL | |         ok: Some(1),
+LL | |         err: None,
+LL | |     }
+   | |_____^
+   = help: replace `ok`, `err` with one enum field, one variant per case
+
+warning: `Filled` is b$DIRlt in 2 places and none sets more than one of `ok`, `err` to `Some`. The fields are alternatives, but the struct allows both at once
+  --> $DIR/options_as_enum.rs:263:1
+   |
+LL | struct Filled {
+   | ^^^^^^^^^^^^^
+   |
+note: one of the constructions
+  --> $DIR/options_as_enum.rs:269:5
+   |
+LL | /     Filled {
+LL | |         ok: Some(1),
+LL | |         ..Default::default()
+LL | |     }
+   | |_____^
+   = help: replace `ok`, `err` with one enum field, one variant per case
+
+warning: 5 warnings emitted
 

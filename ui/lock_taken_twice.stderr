@@ -1,0 +1,88 @@
+warning: `self.a` is locked here while this function already holds it. The lock is not reentrant, so the thread waits for itself forever
+  --> $DIR/lock_taken_twice.rs:15:18
+   |
+LL |         let g2 = self.a.lock().unwrap();
+   |                  ^^^^^^^^^^^^^
+   |
+note: `self.a` is first locked here
+  --> $DIR/lock_taken_twice.rs:14:18
+   |
+LL |         let g1 = self.a.lock().unwrap();
+   |                  ^^^^^^^^^^^^^
+   = help: release the first guard before this point, or pass the guard down instead of locking again
+   = note: `#[warn(lock_taken_twice)]` on by default
+
+warning: `self.a` is locked again here, through `S::read_a`, while this function already holds it. The lock is not reentrant, so the thread waits for itself forever
+  --> $DIR/lock_taken_twice.rs:22:14
+   |
+LL |         *g + self.read_a()
+   |              ^^^^^^^^^^^^^
+   |
+note: `self.a` is first locked here
+  --> $DIR/lock_taken_twice.rs:21:17
+   |
+LL |         let g = self.a.lock().unwrap();
+   |                 ^^^^^^^^^^^^^
+note: the call path ends here, where the lock is taken again
+  --> $DIR/lock_taken_twice.rs:26:10
+   |
+LL |         *self.a.lock().unwrap()
+   |          ^^^^^^^^^^^^^
+   = help: release the first guard before this point, or pass the guard down instead of locking again
+
+warning: `COUNT` is locked again here, through `bump`, while this function already holds it. The lock is not reentrant, so the thread waits for itself forever
+  --> $DIR/lock_taken_twice.rs:86:5
+   |
+LL |     bump();
+   |     ^^^^^^
+   |
+note: `COUNT` is first locked here
+  --> $DIR/lock_taken_twice.rs:85:14
+   |
+LL |     let _g = COUNT.lock().unwrap();
+   |              ^^^^^^^^^^^^
+note: the call path ends here, where the lock is taken again
+  --> $DIR/lock_taken_twice.rs:80:6
+   |
+LL |     *COUNT.lock().unwrap() += 1;
+   |      ^^^^^^^^^^^^
+   = help: release the first guard before this point, or pass the guard down instead of locking again
+
+warning: `REG` is locked again here, through `bump_reg`, while this function already holds it. The lock is not reentrant, so the thread waits for itself forever
+  --> $DIR/lock_taken_twice.rs:122:5
+   |
+LL |     bump_reg();
+   |     ^^^^^^^^^^
+   |
+note: `REG` is first locked here
+  --> $DIR/lock_taken_twice.rs:121:14
+   |
+LL |     let _g = registry().lock().unwrap();
+   |              ^^^^^^^^^^^^^^^^^
+note: the call path ends here, where the lock is taken again
+  --> $DIR/lock_taken_twice.rs:116:6
+   |
+LL |     *registry().lock().unwrap() += 1;
+   |      ^^^^^^^^^^^^^^^^^
+   = help: release the first guard before this point, or pass the guard down instead of locking again
+
+warning: `COUNT` is locked again here, through `<Ticket as std::ops::Drop>::drop` -> `bump`, while this function already holds it. The lock is not reentrant, so the thread waits for itself forever
+  --> $DIR/lock_taken_twice.rs:139:5
+   |
+LL |     }
+   |     ^
+   |
+note: `COUNT` is first locked here
+  --> $DIR/lock_taken_twice.rs:136:14
+   |
+LL |     let _g = COUNT.lock().unwrap();
+   |              ^^^^^^^^^^^^
+note: the call path ends here, where the lock is taken again
+  --> $DIR/lock_taken_twice.rs:80:6
+   |
+LL |     *COUNT.lock().unwrap() += 1;
+   |      ^^^^^^^^^^^^
+   = help: release the first guard before this point, or pass the guard down instead of locking again
+
+warning: 5 warnings emitted
+

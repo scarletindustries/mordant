@@ -501,3 +501,30 @@ fn main() {
     u.attach(1);
     let _ = (u.attached, u.handle);
 }
+
+// Flagged: `Conn` again with the common derives. The derived `Default`
+// writes `false` beside `None`, one more place that agrees.
+#[derive(Clone, Debug, Default)]
+struct ConnTwin {
+    peer: Option<String>,
+    connected: bool,
+}
+
+impl ConnTwin {
+    fn new() -> Self {
+        ConnTwin {
+            peer: None,
+            connected: false,
+        }
+    }
+
+    fn open(&mut self, peer: String) {
+        self.peer = Some(peer);
+        self.connected = true;
+    }
+
+    fn close(&mut self) {
+        self.connected = false;
+        self.peer = None;
+    }
+}

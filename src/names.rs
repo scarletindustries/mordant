@@ -61,7 +61,6 @@ pub const GROUPS: &[(&str, &[&str])] = &[
             "same_match_twice",
             "reimplemented_helper",
             "generic_body_not_generic",
-            "inline_always_too_big",
         ],
     ),
     (
@@ -76,7 +75,12 @@ pub const GROUPS: &[(&str, &[&str])] = &[
     ),
     (
         "keys_locks",
-        &["key_not_identity", "insert_then_unwrap", "lock_order"],
+        &[
+            "key_not_identity",
+            "insert_then_unwrap",
+            "lock_order",
+            "lock_taken_twice",
+        ],
     ),
     ("comments", &["stale_safety_comment", "stale_panic_message"]),
     (
@@ -129,7 +133,6 @@ mod tests {
                     "same_match_twice",
                     "reimplemented_helper",
                     "generic_body_not_generic",
-                    "inline_always_too_big",
                 ][..]
             )
         );

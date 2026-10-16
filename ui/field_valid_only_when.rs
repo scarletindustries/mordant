@@ -472,3 +472,58 @@ fn main() {
     let [u, v] = public(1);
     let _ = (public_data(&u), public_data(&v));
 }
+
+// Flagged: `Job` again with the common derives. The derived `Default` is one
+// more build that gives `Idle` a placeholder, and the derived reads do not
+// count.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+enum StateTwin {
+    #[default]
+    Idle,
+    Running,
+    Done,
+}
+
+#[derive(Clone, Debug, Default)]
+struct JobTwin {
+    state: StateTwin,
+    result: u64,
+}
+
+fn job_twin() -> JobTwin {
+    JobTwin {
+        state: StateTwin::Idle,
+        result: 0,
+    }
+}
+
+fn run_twin(j: &mut JobTwin, r: u64) {
+    j.state = StateTwin::Running;
+    if r > 2 {
+        j.state = StateTwin::Done;
+        j.result = r;
+    }
+}
+
+// Fine: the only build that gives `ready` another value is the derived
+// `Default`, which fills every field with a placeholder.
+#[derive(Default)]
+struct Loaded {
+    ready: bool,
+    data: u32,
+}
+
+fn loaded(ready: bool, data: u32) -> Loaded {
+    Loaded { ready, data }
+}
+
+fn loaded_data(l: &Loaded) -> u32 {
+    if l.ready { l.data } else { 0 }
+}
+
+fn finished_twin(j: &JobTwin) -> Option<u64> {
+    match j.state {
+        StateTwin::Done => Some(j.result),
+        StateTwin::Idle | StateTwin::Running => None,
+    }
+}
