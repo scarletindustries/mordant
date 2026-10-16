@@ -196,8 +196,8 @@ pub fn wire_b() -> Wire {
     Wire { kind: 2, width: 8 }
 }
 
-/// A `..base` literal overrides part of a value that already exists, so the
-/// fields written are the ones deliberately being made to differ.
+/// A `..base` literal is a site. The fields it copies from `BLANK` are unknown
+/// there, so they pair with nothing.
 #[derive(Clone, Copy)]
 pub struct Record {
     turn: u32,
@@ -250,3 +250,78 @@ pub fn attach(job: &mut Job, owner: u32) {
 }
 
 fn main() {}
+
+// Flagged: a derived `Clone` copies a value and shows nothing about the pairing.
+#[derive(Clone)]
+pub enum Unit {
+    Bytes,
+    Pages,
+}
+
+#[derive(Clone)]
+pub struct Measure {
+    unit: Unit,
+    scale: u32,
+}
+
+pub fn bytes() -> Measure {
+    Measure {
+        unit: Unit::Bytes,
+        scale: 1,
+    }
+}
+
+pub fn pages() -> Measure {
+    Measure {
+        unit: Unit::Pages,
+        scale: 4096,
+    }
+}
+
+// Silent: the `..base` literal pairs `Pages` with the scale of `bytes()`.
+#[derive(Clone)]
+pub struct Span2 {
+    unit: Unit,
+    scale: u32,
+}
+
+pub fn span_bytes() -> Span2 {
+    Span2 {
+        unit: Unit::Bytes,
+        scale: 1,
+    }
+}
+
+pub fn span_pages() -> Span2 {
+    Span2 {
+        unit: Unit::Pages,
+        scale: 4096,
+    }
+}
+
+pub fn span_odd() -> Span2 {
+    Span2 {
+        unit: Unit::Pages,
+        ..span_bytes()
+    }
+}
+
+// Silent: another crate can build `Open`, so these are not all its sites.
+pub struct Open {
+    pub unit: Unit,
+    pub scale: u32,
+}
+
+pub fn open_bytes() -> Open {
+    Open {
+        unit: Unit::Bytes,
+        scale: 1,
+    }
+}
+
+pub fn open_pages() -> Open {
+    Open {
+        unit: Unit::Pages,
+        scale: 4096,
+    }
+}

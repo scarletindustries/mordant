@@ -46,3 +46,41 @@ fn main() {
     c.alt = Some(3);
     let _ = c.ready() + c.doubled() + c.tag_or_zero() + c.tag_forced() + c.alt_once();
 }
+
+// Flagged: a derived `Debug` or `Clone` reads the field but does not handle `None`.
+#[derive(Debug, Clone)]
+struct Derived {
+    sock: Option<u32>,
+}
+
+impl Derived {
+    fn ready(&self) -> u32 {
+        self.sock.unwrap()
+    }
+
+    fn doubled(&self) -> u32 {
+        self.sock.unwrap() + 1
+    }
+}
+
+// Silent: an `allow` on the struct applies to its finding.
+#[allow(always_unwrapped_option)]
+struct Allowed {
+    sock: Option<u32>,
+}
+
+impl Allowed {
+    fn ready(&self) -> u32 {
+        self.sock.unwrap()
+    }
+
+    fn doubled(&self) -> u32 {
+        self.sock.unwrap() + 1
+    }
+}
+
+fn derived_and_allowed() -> u32 {
+    let d = Derived { sock: Some(1) };
+    let a = Allowed { sock: Some(1) };
+    d.clone().ready() + d.doubled() + a.ready() + a.doubled()
+}

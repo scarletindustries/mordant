@@ -35,6 +35,20 @@ pub(crate) fn private_local_struct<'tcx>(
     Some(*adt)
 }
 
+/// Can code in another crate build `variant` of `adt` with a literal? Then
+/// this crate does not see every place a value is built.
+pub(crate) fn buildable_in_other_crates(
+    cx: &LateContext<'_>,
+    adt: AdtDef<'_>,
+    variant: &VariantDef,
+) -> bool {
+    adt.did()
+        .as_local()
+        .is_some_and(|did| cx.effective_visibilities.is_exported(did))
+        && !variant.is_field_list_non_exhaustive()
+        && variant.fields.iter().all(|f| f.vis.is_public())
+}
+
 /// A field's declared type, with the struct's own generics left in place.
 pub(crate) fn field_ty<'tcx>(cx: &LateContext<'tcx>, f: &FieldDef) -> Ty<'tcx> {
     cx.tcx

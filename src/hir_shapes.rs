@@ -18,6 +18,16 @@ use rustc_middle::ty::AdtDef;
 use rustc_span::symbol::kw;
 use rustc_span::{Ident, Symbol};
 
+/// Is `id` inside a `#[derive(Clone)]` impl? That body copies a value
+/// that already exists, so it shows nothing about which values a field gets.
+pub(crate) fn in_derived_clone(cx: &LateContext<'_>, id: HirId) -> bool {
+    clippy_utils::in_automatically_derived(cx.tcx, id)
+        && cx.tcx.hir_parent_owner_iter(id).any(|(owner, node)| {
+            matches!(node, rustc_hir::OwnerNode::Item(item) if matches!(item.kind, ItemKind::Impl(Impl { of_trait: Some(_), .. })))
+                && cx.tcx.is_lang_item(cx.tcx.impl_trait_id(owner.def_id), LangItem::Clone)
+        })
+}
+
 /// The function an expression belongs to, with closures, coroutine bodies and inline consts folded
 /// into the function that wrote them: a check before a `.map(|..| v[x.f])` covers it.
 pub(crate) fn enclosing_fn(cx: &LateContext<'_>, hir_id: HirId) -> DefId {

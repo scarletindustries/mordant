@@ -3,11 +3,11 @@
 //! name in a comment or message; it holds if the name occurs in the file's
 //! code with comments removed, or is defined by this crate or any crate it
 //! links. Both callers run the same check: [`backticked_idents`] over the
-//! text, then [`word_in`] against [`file_code_only`] and [`DefNames::contains`]
+//! text, then [`FileWords`] and [`DefNames::contains`]
 //! for each name.
 
 use std::cell::OnceCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use rustc_hir::def_id::{DefId, DefIndex};
 use rustc_lint::LateContext;
@@ -100,32 +100,56 @@ pub(crate) fn comment_above(cx: &LateContext<'_>, span: Span) -> Option<(String,
     ))
 }
 
-/// The source of `span`'s whole file with the rest of every line cut at its
-/// first `//`, so a comment can never vouch for its own claims. The cut is
-/// textual: a `//` inside a string literal loses the rest of that line too,
-/// and `/* */` comments are left in.
-pub(crate) fn file_code_only(cx: &LateContext<'_>, span: Span) -> String {
-    let file_src = cx
-        .tcx
-        .sess
-        .source_map()
-        .span_to_lines(span)
-        .ok()
-        .and_then(|l| l.file.src.as_ref().map(|s| s.to_string()))
-        .unwrap_or_default();
-    file_src
-        .lines()
-        .map(|l| l.split("//").next().unwrap_or(""))
-        .collect::<Vec<_>>()
-        .join("\n")
+/// Each file's code, read once per file: the source with the rest of every
+/// line cut at its first `//`, so a comment can never vouch for its own
+/// claims, and how often each word occurs in it. The cut is textual: a `//`
+/// inside a string literal loses the rest of that line too, and `/* */`
+/// comments are left in.
+#[derive(Default)]
+pub(crate) struct FileWords {
+    files: HashMap<BytePos, FileCode>,
 }
 
-/// Whether `ident` occurs in `haystack` as a whole identifier token, so
-/// `frame` does not match `frames` or `frame_count`.
-pub(crate) fn word_in(haystack: &str, ident: &str) -> bool {
-    haystack
-        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .any(|w| w == ident)
+pub(crate) struct FileCode {
+    pub(crate) code: String,
+    counts: HashMap<String, usize>,
+}
+
+impl FileCode {
+    /// How often `ident` occurs as a whole word.
+    pub(crate) fn count(&self, ident: &str) -> usize {
+        self.counts.get(ident).copied().unwrap_or(0)
+    }
+}
+
+impl FileWords {
+    pub(crate) fn get(&mut self, cx: &LateContext<'_>, span: Span) -> &FileCode {
+        let file = cx.tcx.sess.source_map().lookup_source_file(span.lo());
+        self.files.entry(file.start_pos).or_insert_with(|| {
+            let src = file.src.as_ref().map(|s| s.as_str()).unwrap_or("");
+            let code: String = src
+                .lines()
+                .map(|l| l.split("//").next().unwrap_or(""))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let mut counts = HashMap::new();
+            for w in words(&code) {
+                *counts.entry(w.to_owned()).or_insert(0) += 1;
+            }
+            FileCode { code, counts }
+        })
+    }
+}
+
+/// The identifier tokens of `text`, so `frame` is not found in `frames`.
+fn words(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|w| !w.is_empty())
+}
+
+/// How often `ident` occurs in `text` as a whole identifier token.
+pub(crate) fn word_count(text: &str, ident: &str) -> usize {
+    words(text).filter(|w| *w == ident).count()
 }
 
 /// The definition names a claim may point at beyond its own file: everything

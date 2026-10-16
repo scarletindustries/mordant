@@ -151,3 +151,45 @@ fn spelled_right() -> Spelled {
         right: <Option<u32>>::Some(2),
     }
 }
+
+// Flagged: a derived `Clone` or `Default` is not a construction that matters.
+#[derive(Clone, Default)]
+struct DerivedOutcome {
+    ok: Option<u32>,
+    err: Option<u32>,
+}
+
+fn derived_success() -> DerivedOutcome {
+    DerivedOutcome {
+        ok: Some(1),
+        err: None,
+    }
+}
+
+fn derived_failure() -> DerivedOutcome {
+    DerivedOutcome {
+        ok: None,
+        err: Some(2),
+    }
+}
+
+// Silent: an `allow` on the struct applies to its finding.
+#[allow(options_as_enum)]
+struct AllowedOutcome {
+    ok: Option<u32>,
+    err: Option<u32>,
+}
+
+fn allowed_success() -> AllowedOutcome {
+    AllowedOutcome {
+        ok: Some(1),
+        err: None,
+    }
+}
+
+fn allowed_failure() -> AllowedOutcome {
+    AllowedOutcome {
+        ok: None,
+        err: Some(2),
+    }
+}
