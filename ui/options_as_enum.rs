@@ -193,3 +193,88 @@ fn allowed_failure() -> AllowedOutcome {
         err: Some(2),
     }
 }
+
+// Flagged: `Outcome` again with the common derives. A derived `Clone` copies
+// and a derived `Default` sets both to `None`, so neither changes the answer.
+#[derive(Clone, Debug, Default)]
+struct OutcomeTwin {
+    ok: Option<u32>,
+    err: Option<String>,
+}
+
+fn twin_success() -> OutcomeTwin {
+    OutcomeTwin {
+        ok: Some(1),
+        err: None,
+    }
+}
+
+fn twin_failure() -> OutcomeTwin {
+    OutcomeTwin {
+        ok: None,
+        err: Some("boom".to_owned()),
+    }
+}
+
+// Silent: `insert` takes `&mut` to `ok` and can set it beside `err`.
+struct Inserted {
+    ok: Option<u32>,
+    err: Option<u32>,
+}
+
+fn inserted_ok() -> Inserted {
+    Inserted {
+        ok: Some(1),
+        err: None,
+    }
+}
+
+fn inserted_err() -> Inserted {
+    let mut i = Inserted {
+        ok: None,
+        err: Some(2),
+    };
+    i.ok.insert(3);
+    i
+}
+
+// Silent: `..base` copies fields whose values are not known here.
+struct Copied {
+    ok: Option<u32>,
+    err: Option<u32>,
+}
+
+fn copied_ok() -> Copied {
+    Copied {
+        ok: Some(1),
+        err: None,
+    }
+}
+
+fn copied_err(base: Copied) -> Copied {
+    Copied {
+        err: Some(2),
+        ..base
+    }
+}
+
+// Flagged: `..Default::default()` of a derived `Default` fills in `None`.
+#[derive(Default)]
+struct Filled {
+    ok: Option<u32>,
+    err: Option<u32>,
+}
+
+fn filled_ok() -> Filled {
+    Filled {
+        ok: Some(1),
+        ..Default::default()
+    }
+}
+
+fn filled_err() -> Filled {
+    Filled {
+        err: Some(2),
+        ..Default::default()
+    }
+}

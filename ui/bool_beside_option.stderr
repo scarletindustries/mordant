@@ -38,5 +38,18 @@ LL |         self.linked = true;
    |         ^^^^^^^^^^^^^^^^^^
    = help: delete `linked` and call `up.is_some()` where it was read
 
-warning: 3 warnings emitted
+warning: `ConnTwin.connected` is only ever written next to `peer`, `true` with `Some` and `false` with `None`, in all 4 places. It is `peer.is_some()` stored twice
+  --> $DIR/bool_beside_option.rs:510:5
+   |
+LL |     connected: bool,
+   |     ^^^^^^^^^^^^^^^
+   |
+note: one of the paired writes
+  --> $DIR/bool_beside_option.rs:517:13
+   |
+LL |             connected: false,
+   |             ^^^^^^^^^^^^^^^^
+   = help: delete `connected` and call `peer.is_some()` where it was read
+
+warning: 4 warnings emitted
 

@@ -37,7 +37,6 @@ mod discarded_error;
 mod enum_facts;
 mod error_collapsed_to_bool;
 mod field_valid_only_when;
-#[allow(dead_code, unused_imports, reason = "the lints that read it move over next")]
 mod field_writes;
 mod forbidden_reach;
 mod freed_while_borrowed;

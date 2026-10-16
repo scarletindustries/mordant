@@ -46,23 +46,6 @@ pub(crate) fn is_none_expr(cx: &LateContext<'_>, expr: &Expr<'_>) -> bool {
         .is_lang_item(cx, LangItem::OptionNone)
 }
 
-/// `clippy_utils::as_some_expr`, resolving paths the same way as [`is_none_expr`].
-pub(crate) fn as_some_expr<'tcx>(
-    cx: &LateContext<'_>,
-    expr: &'tcx Expr<'tcx>,
-) -> Option<&'tcx Expr<'tcx>> {
-    if let ExprKind::Call(callee, [arg]) = expr.kind
-        && callee
-            .res(cx)
-            .ctor_parent(cx)
-            .is_lang_item(cx, LangItem::OptionSome)
-    {
-        Some(arg)
-    } else {
-        None
-    }
-}
-
 /// A signature the crate is free to change: not exported, not extern, not
 /// dictated by a trait. False for a closure, which has no written signature.
 pub(crate) fn owns_signature(cx: &LateContext<'_>, def_id: LocalDefId) -> bool {

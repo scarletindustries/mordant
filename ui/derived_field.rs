@@ -325,3 +325,82 @@ pub fn open_pages() -> Open {
         scale: 4096,
     }
 }
+
+// Flagged: `Entries` again with the common derives. The derived `Default`
+// is a third build, and it pairs the `#[default]` variant with `None` too.
+#[derive(Clone, Copy, Debug, Default)]
+pub enum HeaderTwin {
+    #[default]
+    Narrow,
+    Wide,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct EntriesTwin<'a> {
+    buf: &'a [u8],
+    header: HeaderTwin,
+    remaining: Option<u32>,
+}
+
+pub fn narrow_twin(buf: &[u8]) -> EntriesTwin<'_> {
+    EntriesTwin {
+        buf,
+        header: HeaderTwin::Narrow,
+        remaining: None,
+    }
+}
+
+pub fn wide_twin(buf: &[u8], count: u32) -> EntriesTwin<'_> {
+    EntriesTwin {
+        buf,
+        header: HeaderTwin::Wide,
+        remaining: Some(count),
+    }
+}
+
+// Silent: a table whose rows each have their own value in every enum field.
+// Several fields decide each other field, so none is a copy of one state.
+pub struct Row3 {
+    unit: Unit,
+    header: Header,
+    ceiling: Ceiling,
+    code: u32,
+}
+
+pub const ROW_A: Row3 = Row3 {
+    unit: Unit::Bytes,
+    header: Header::Narrow,
+    ceiling: Ceiling::Words,
+    code: 1,
+};
+
+pub const ROW_B: Row3 = Row3 {
+    unit: Unit::Pages,
+    header: Header::Wide,
+    ceiling: Ceiling::Types,
+    code: 2,
+};
+
+// Silent: a `&mut` to `remaining` can change it without `header`.
+pub struct Lent {
+    header: Header,
+    remaining: Option<u32>,
+}
+
+pub fn lent_narrow() -> Lent {
+    Lent {
+        header: Header::Narrow,
+        remaining: None,
+    }
+}
+
+pub fn lent_wide(count: u32) -> Lent {
+    Lent {
+        header: Header::Wide,
+        remaining: Some(count),
+    }
+}
+
+pub fn lend(l: &mut Lent) -> &mut Option<u32> {
+    &mut l.remaining
+}
