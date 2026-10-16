@@ -1,0 +1,122 @@
+warning: `unsafe impl Sync for CellAndPointer` covers fields that are not `Sync` for a reason other than a raw pointer
+  --> $DIR/unsafe_send_covers_more_than_pointers.rs:26:1
+   |
+LL | unsafe impl Sync for CellAndPointer {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: these fields are not `Sync` on their own
+  --> $DIR/unsafe_send_covers_more_than_pointers.rs:24:5
+   |
+LL |     count: Cell<u32>,
+   |     ^^^^^^^^^^^^^^^^ holds `std::cell::Cell<u32>`, which is declared not `Sync`
+   = help: wrap only the raw pointer fields in a small type with its own `unsafe impl Sync`. Then remove this impl so the compiler checks the other fields. Move a cell that a lock guards into that `Mutex`, or use an atomic
+   = note: `#[warn(unsafe_send_covers_more_than_pointers)]` on by default
+
+warning: `unsafe impl Send for HoldsRc` covers fields that are not `Send` for a reason other than a raw pointer
+  --> $DIR/unsafe_send_covers_more_than_pointers.rs:39:1
+   |
+LL | unsafe impl Send for HoldsRc {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: these fields are not `Send` on their own
+  --> $DIR/unsafe_send_covers_more_than_pointers.rs:37:5
+   |
+LL |     shared: Rc<String>,
+   |     ^^^^^^^^^^^^^^^^^^ holds `std::rc::Rc<std::string::String>`, which is declared not `Send`
+   = help: remove this impl and make these fields `Send`
+
+warning: `unsafe impl Sync for Outer` covers fields that are not `Sync` for a reason other than a raw pointer
+  --> $DIR/unsafe_send_covers_more_than_pointers.rs:49:1
+   |
+LL | unsafe impl Sync for Outer {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: these fields are not `Sync` on their own
+  --> $DIR/unsafe_send_covers_more_than_pointers.rs:46:5
+   |
+LL |     inner: Inner,
+   |     ^^^^^^^^^^^^ holds `std::cell::RefCell<std::vec::Vec<u8>>`, which is declared not `Sync`
+   = help: wrap only the raw pointer fields in a small type with its own `unsafe impl Sync`. Then remove this impl so the compiler checks the other fields. Move a cell that a lock guards into that `Mutex`, or use an atomic
+
+warning: `unsafe impl Sync for Guarded` covers fields that are not `Sync` for a reason other than a raw pointer
+  --> $DIR/unsafe_send_covers_more_than_pointers.rs:56:1
+   |
+LL | unsafe impl Sync for Guarded {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: these fields are not `Sync` on their own
+  --> $DIR/unsafe_send_covers_more_than_pointers.rs:54:5
+   |
+LL |     items: UnsafeCell<Vec<u32>>,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^ holds `std::cell::UnsafeCell<std::vec::Vec<u32>>`, which is declared not `Sync`
+   = help: remove this impl and make these fields `Sync`. Move a cell that a lock guards into that `Mutex`, or use an atomic
+
+warning: `unsafe impl Send for HoldsHandle` covers fields that are not `Send` for a reason other than a raw pointer
+  --> $DIR/unsafe_send_covers_more_than_pointers.rs:87:1
+   |
+LL | unsafe impl Send for HoldsHandle {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: these fields are not `Send` on their own
+  --> $DIR/unsafe_send_covers_more_than_pointers.rs:85:5
+   |
+LL |     h: Handle,
+   |     ^^^^^^^^^ holds `Handle`, which `PhantomData<*const ()>` marks as not `Send`
+   = help: remove this impl and make these fields `Send`
+
+warning: `unsafe impl Send for Task` covers fields that are not `Send` for a reason other than a raw pointer
+  --> $DIR/unsafe_send_covers_more_than_pointers.rs:103:1
+   |
+LL | unsafe impl Send for Task {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: these fields are not `Send` on their own
+  --> $DIR/unsafe_send_covers_more_than_pointers.rs:101:5
+   |
+LL |     promise: JsHandle,
+   |     ^^^^^^^^^^^^^^^^^ holds `JsHandle`, which `thread-affine-types` lists as tied to one thread
+   = help: remove this impl and make these fields `Send`
+
+warning: `unsafe impl Send for BorrowsRc` covers fields that are not `Send` for a reason other than a raw pointer
+  --> $DIR/unsafe_send_covers_more_than_pointers.rs:125:1
+   |
+LL | unsafe impl Send for BorrowsRc<'_> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: these fields are not `Send` on their own
+  --> $DIR/unsafe_send_covers_more_than_pointers.rs:123:5
+   |
+LL |     r: &'a Rc<u8>,
+   |     ^^^^^^^^^^^^^ holds `std::rc::Rc<u8>`, which is declared not `Sync`
+   = help: remove this impl and make these fields `Send`
+
+warning: `unsafe impl Sync for WrapsInner` covers fields that are not `Sync` for a reason other than a raw pointer
+  --> $DIR/unsafe_send_covers_more_than_pointers.rs:133:1
+   |
+LL | unsafe impl Sync for WrapsInner {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: these fields are not `Sync` on their own
+  --> $DIR/unsafe_send_covers_more_than_pointers.rs:132:19
+   |
+LL | struct WrapsInner(Inner);
+   |                   ^^^^^ holds `std::cell::RefCell<std::vec::Vec<u8>>`, which is declared not `Sync`
+   = help: remove this impl and make these fields `Sync`. Move a cell that a lock guards into that `Mutex`, or use an atomic
+
+warning: `unsafe impl Sync for TwoCells` covers fields that are not `Sync` for a reason other than a raw pointer
+  --> $DIR/unsafe_send_covers_more_than_pointers.rs:147:1
+   |
+LL | unsafe impl Sync for TwoCells {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: these fields are not `Sync` on their own
+  --> $DIR/unsafe_send_covers_more_than_pointers.rs:144:5
+   |
+LL |     reader: UnsafeCell<Vec<u8>>,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^ holds `std::cell::UnsafeCell<std::vec::Vec<u8>>`, which is declared not `Sync`
+LL |     state: UnsafeCell<u32>,
+   |     ^^^^^^^^^^^^^^^^^^^^^^ holds `std::cell::UnsafeCell<u32>`, which is declared not `Sync`
+   = help: remove this impl and make these fields `Sync`. Move a cell that a lock guards into that `Mutex`, or use an atomic
+
+warning: 9 warnings emitted
+

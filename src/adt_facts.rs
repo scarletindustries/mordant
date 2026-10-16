@@ -5,6 +5,7 @@
 //! lint fire or not -- privacy, `is_struct`, a minimum field count -- stays in
 //! the lint, so this module only ever answers, never decides.
 
+use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use rustc_hir::{HirId, find_attr};
@@ -177,4 +178,221 @@ pub(crate) fn cfg_selected(cx: &LateContext<'_>, mut did: DefId) -> bool {
             None => return false,
         }
     }
+}
+
+/// What kind of type stops a field from being `Send` or `Sync` on its own.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum BlockerKind {
+    /// A raw pointer, `NonNull`, an extern type, an `UnsafeCell` of nothing
+    /// (an opaque FFI handle), or a cell that a `Send` value only shares
+    /// through a reference.
+    Pointer,
+    /// A type with an `impl !Send` or `impl !Sync`, such as `Rc` or `Cell`.
+    Declared,
+    /// A type that holds `PhantomData<*const ()>` to opt out on purpose.
+    Marker,
+    /// A type the project lists as tied to one thread.
+    Listed,
+}
+
+/// One type inside a field that stops the field from being `Send` or `Sync`.
+#[derive(Clone, Copy)]
+pub(crate) struct ThreadBlocker<'tcx> {
+    pub kind: BlockerKind,
+    pub ty: Ty<'tcx>,
+    /// The bound `ty` fails: `Sync` for a `Cell` reached through `&`.
+    pub bound: DefId,
+    /// The struct or enum whose field holds `ty`, when the walk went through
+    /// one.
+    pub inside: Option<Ty<'tcx>>,
+}
+
+/// For each field of `adt` with `args`, the types inside it that stop it
+/// from being `Send` or `Sync` (`auto_trait`) on its own. Generic parameters
+/// and associated types count as meeting the bound. So does an impl whose
+/// bounds the walk cannot map, so the answer can miss a blocker but never
+/// invents one. `listed` names types tied to one thread, spelled as
+/// `matches_config_path` reads them.
+pub(crate) fn thread_blockers<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    adt: AdtDef<'tcx>,
+    args: ty::GenericArgsRef<'tcx>,
+    auto_trait: DefId,
+    listed: &[String],
+) -> Vec<(&'tcx FieldDef, Vec<ThreadBlocker<'tcx>>)> {
+    let mut out = Vec::new();
+    for f in adt.all_fields() {
+        let mut walk = BlockerWalk {
+            tcx,
+            listed,
+            root: auto_trait,
+            seen: Default::default(),
+            found: Vec::new(),
+        };
+        walk.ty(f.ty(tcx, args).skip_normalization(), auto_trait, None, 0);
+        if !walk.found.is_empty() {
+            out.push((f, walk.found));
+        }
+    }
+    out
+}
+
+/// `Cell`, `RefCell` or `UnsafeCell`.
+pub(crate) fn is_cell(tcx: TyCtxt<'_>, ty: Ty<'_>) -> bool {
+    let ty::Adt(adt, _) = ty.kind() else {
+        return false;
+    };
+    adt.is_unsafe_cell()
+        || matches!(
+            tcx.get_diagnostic_name(adt.did()),
+            Some(sym::Cell | sym::RefCell)
+        )
+}
+
+struct BlockerWalk<'a, 'tcx> {
+    tcx: TyCtxt<'tcx>,
+    listed: &'a [String],
+    /// The bound the walk started from.
+    root: DefId,
+    seen: FxHashSet<(Ty<'tcx>, DefId)>,
+    found: Vec<ThreadBlocker<'tcx>>,
+}
+
+impl<'tcx> BlockerWalk<'_, 'tcx> {
+    fn push(&mut self, kind: BlockerKind, ty: Ty<'tcx>, bound: DefId, inside: Option<Ty<'tcx>>) {
+        self.found.push(ThreadBlocker {
+            kind,
+            ty,
+            bound,
+            inside,
+        });
+    }
+
+    /// `owner` is the struct or enum whose field holds `ty`.
+    fn ty(&mut self, ty: Ty<'tcx>, tr: DefId, owner: Option<Ty<'tcx>>, depth: usize) {
+        if depth > 24 || !self.seen.insert((ty, tr)) {
+            return;
+        }
+        match *ty.kind() {
+            ty::RawPtr(..) | ty::Foreign(_) => self.push(BlockerKind::Pointer, ty, tr, owner),
+            // `&T` is `Send` only when `T` is `Sync`. `&mut T` follows `T`.
+            ty::Ref(_, inner, m) => {
+                let sync = self.tcx.get_diagnostic_item(sym::Sync);
+                let next = match (m, sync) {
+                    (ty::Mutability::Not, Some(s)) => s,
+                    _ => tr,
+                };
+                self.ty(inner, next, owner, depth + 1);
+            }
+            ty::Array(e, _) | ty::Slice(e) | ty::Pat(e, _) => self.ty(e, tr, owner, depth + 1),
+            ty::Tuple(tys) => {
+                for t in tys {
+                    self.ty(t, tr, owner, depth + 1);
+                }
+            }
+            ty::Adt(adt, args) => self.adt(ty, adt, args, tr, owner, depth),
+            // Primitives, fn types, parameters, trait objects and closures
+            // count as meeting the bound.
+            _ => {}
+        }
+    }
+
+    fn adt(
+        &mut self,
+        ty: Ty<'tcx>,
+        adt: AdtDef<'tcx>,
+        args: ty::GenericArgsRef<'tcx>,
+        tr: DefId,
+        owner: Option<Ty<'tcx>>,
+        depth: usize,
+    ) {
+        let tcx = self.tcx;
+        if matches_config_path(tcx, adt.did(), self.listed.iter().map(String::as_str)) {
+            self.push(BlockerKind::Listed, ty, tr, owner);
+            return;
+        }
+        if adt.is_phantom_data() {
+            self.ty(args.type_at(0), tr, owner, depth + 1);
+            return;
+        }
+        // A nested type that opts out with `PhantomData<*const ()>`. At the
+        // impl's own type the marker is only a pointer field.
+        if has_opt_out_marker(tcx, adt, args) {
+            self.push(BlockerKind::Marker, ty, tr, owner);
+            return;
+        }
+        // A label names the nearest owner the user wrote, not `RawVec`.
+        let std_lib = [sym::core, sym::alloc, sym::std].contains(&tcx.crate_name(adt.did().krate));
+        let here = if std_lib { owner } else { Some(ty) };
+        // With no impl of its own, the type is `Send` when its fields are.
+        let Some(imp) = tcx.non_blanket_impls_for_ty(tr, ty).next() else {
+            for f in adt.all_fields() {
+                let fty = f.ty(tcx, args).skip_normalization();
+                self.ty(fty, tr, here, depth + 1);
+            }
+            return;
+        };
+        if tcx.impl_polarity(imp) == ty::ImplPolarity::Negative {
+            // An `UnsafeCell<[u8; 0]>` holds no data: it is an opaque FFI
+            // handle. A cell that a `Send` value reaches only through a
+            // reference is shared the way a raw pointer shares it.
+            let opaque = adt.is_unsafe_cell() && is_zero_sized(tcx, args.type_at(0));
+            let shared = tr != self.root && is_cell(tcx, ty);
+            let kind = if opaque || shared || is_non_null(tcx, adt.did()) {
+                BlockerKind::Pointer
+            } else {
+                BlockerKind::Declared
+            };
+            self.push(kind, ty, tr, owner);
+            return;
+        }
+        // A positive impl such as `unsafe impl<T: Send> Sync for Mutex<T>`:
+        // follow each `Send` or `Sync` bound on an impl parameter to the
+        // argument in that position.
+        let impl_ty = tcx.type_of(imp).instantiate_identity().skip_normalization();
+        let ty::Adt(_, impl_args) = *impl_ty.kind() else {
+            return;
+        };
+        for (clause, _) in tcx.clauses_of(imp).clauses {
+            let Some(tc) = clause.as_trait_clause() else {
+                continue;
+            };
+            let bound = tc.def_id();
+            if !matches!(tcx.get_diagnostic_name(bound), Some(sym::Send | sym::Sync)) {
+                continue;
+            }
+            let bounded = tc.skip_binder().self_ty();
+            let at = impl_args.iter().position(|a| a.as_type() == Some(bounded));
+            if let Some(arg) = at.and_then(|i| args.get(i)).and_then(|a| a.as_type()) {
+                self.ty(arg, bound, here, depth + 1);
+            }
+        }
+    }
+}
+
+/// A field of type `PhantomData<*const ()>` or `PhantomData<*mut ()>`.
+fn has_opt_out_marker<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    adt: AdtDef<'tcx>,
+    args: ty::GenericArgsRef<'tcx>,
+) -> bool {
+    adt.all_fields().any(|f| {
+        let ty::Adt(p, pargs) = *f.ty(tcx, args).skip_normalization().kind() else {
+            return false;
+        };
+        p.is_phantom_data() && matches!(pargs.type_at(0).kind(), ty::RawPtr(t, _) if t.is_unit())
+    })
+}
+
+/// `()` or an array of length zero.
+fn is_zero_sized<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
+    match ty.kind() {
+        ty::Tuple(tys) => tys.is_empty(),
+        ty::Array(_, len) => len.try_to_target_usize(tcx) == Some(0),
+        _ => false,
+    }
+}
+
+fn is_non_null(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    tcx.crate_name(did.krate) == sym::core && tcx.item_name(did).as_str() == "NonNull"
 }

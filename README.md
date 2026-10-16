@@ -69,7 +69,7 @@ cargo mordant --workspace --keep-going
 
 ## Lints
 
-There are 45, in families. Each family is a lint group, so `#![allow(mordant_naming)]` silences every naming lint. The [lint reference](https://scarlet.industries/docs/mordant/lints) has an example and a fix for each.
+There are 48, in families. Each family is a lint group, so `#![allow(mordant_naming)]` silences every naming lint. The [lint reference](https://scarlet.industries/docs/mordant/lints) has an example and a fix for each.
 
 | Family         | Group                 | Lints |
 | -------------- | --------------------- | ----- |
@@ -81,8 +81,8 @@ There are 45, in families. Each family is a lint group, so `#![allow(mordant_nam
 | Naming         | `mordant_naming`      | `bare_bool_args` `arg_named_like_other_param` `interchangeable_aliases` `index_of_other_kind` `unit_mismatch` |
 | Keys and locks | `mordant_keys_locks`  | `key_not_identity` `insert_then_unwrap` `lock_order` |
 | Comments       | `mordant_comments`    | `stale_safety_comment` `stale_panic_message` |
+| Unsafe         | `mordant_unsafe`      | `safe_fn_returns_shared_mut` `unsafe_send_covers_more_than_pointers` |
 | Unused         | `mordant_unused`      | `unused_pub` |
-| Unsafe         | `mordant_unsafe`      | `safe_fn_returns_shared_mut` |
 | Custom         | `mordant_custom`      | `forbidden_reach` |
 
 ## Develop

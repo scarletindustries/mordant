@@ -26,8 +26,8 @@ mod baseline;
 mod baseline_file;
 mod bool_beside_option;
 mod bool_cluster;
-mod call_graph;
 mod bound_checked_only_in_debug;
+mod call_graph;
 mod cast_bypasses_from;
 mod claims;
 mod ctor_flow;
@@ -77,6 +77,7 @@ mod unchecked_construction;
 mod unchecked_input_len;
 mod unit_mismatch;
 mod unread_error_variant;
+mod unsafe_send_covers_more_than_pointers;
 mod unused_pub;
 mod variant_flow;
 mod wildcard_over_own_enum;
@@ -224,6 +225,11 @@ pub struct MordantConfig {
     /// In-crate call sites a large `#[inline(always)]` fn needs before
     /// `inline_always_too_big` names it.
     pub inline_always_too_big_min_call_sites: usize = 3,
+    /// Types that must stay on the thread that made them, for
+    /// `unsafe_send_covers_more_than_pointers`: a handle a runtime ties to
+    /// one thread although its fields are only pointers. Spelled like
+    /// `key-not-identity-types`. Empty by default.
+    pub thread_affine_types: Vec<String>,
 }
 
 /// Called by `mordant-driver` once per compiler session, before any lint
@@ -373,6 +379,9 @@ fn register(
     r.add(true, BareBoolArgs::default);
     r.add(true, TupleWantsStruct::default);
     r.add(true, || InterchangeableAliases);
+    r.add(true, move || {
+        unsafe_send_covers_more_than_pointers::UnsafeSendCoversMoreThanPointers { config }
+    });
     r.add(config.some_still_unchecked_enabled, || {
         some_still_unchecked::SomeStillUnchecked
     });
