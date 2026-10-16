@@ -54,6 +54,7 @@ fn ui() {
             some-still-unchecked-enabled = true
             generic-body-not-generic-enabled = true
             thread-affine-types = ["JsHandle"]
+            freed-while-borrowed-releases = ["Pool::release"]
 
             [[mordant.forbidden-reach]]
             from = "hot_path"

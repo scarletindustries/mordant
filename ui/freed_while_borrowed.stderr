@@ -1,0 +1,151 @@
+warning: this call to `destroy` frees the value behind `self` while `self` is still borrowed
+  --> $DIR/freed_while_borrowed.rs:21:18
+   |
+LL |         unsafe { Task::destroy(ptr::from_mut(self)) };
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: `self` is a reference parameter, so it must stay valid until the call returns
+  --> $DIR/freed_while_borrowed.rs:19:15
+   |
+LL |     fn finish(&mut self) {
+   |               ^^^^^^^^^
+note: the memory is freed here
+  --> $DIR/freed_while_borrowed.rs:15:9
+   |
+LL |         drop(unsafe { Box::from_raw(this) });
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: take `this: *mut Self` in place of the `self` reference, so no reference is live when the memory is freed
+   = note: `#[warn(freed_while_borrowed)]` on by default
+
+warning: this call to `drop` frees the value behind `self` while `self` is still borrowed
+  --> $DIR/freed_while_borrowed.rs:28:9
+   |
+LL |         drop(owned);
+   |         ^^^^^^^^^^^
+   |
+note: `self` is a reference parameter, so it must stay valid until the call returns
+  --> $DIR/freed_while_borrowed.rs:25:14
+   |
+LL |     fn close(&self) {
+   |              ^^^^^
+   = help: take `this: *mut Self` in place of the `self` reference, so no reference is live when the memory is freed
+
+warning: this call to `dealloc` frees the value behind `self` while `self` is still borrowed
+  --> $DIR/freed_while_borrowed.rs:34:18
+   |
+LL |         unsafe { dealloc(p, Layout::new::<Task>()) };
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: `self` is a reference parameter, so it must stay valid until the call returns
+  --> $DIR/freed_while_borrowed.rs:32:16
+   |
+LL |     fn release(&mut self) {
+   |                ^^^^^^^^^
+   = help: take `this: *mut Self` in place of the `self` reference, so no reference is live when the memory is freed
+
+warning: this call to `finalize` frees the value behind `self` while `self` is still borrowed
+  --> $DIR/freed_while_borrowed.rs:39:9
+   |
+LL |         Task::finalize(ptr::from_mut(self));
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: `self` is a reference parameter, so it must stay valid until the call returns
+  --> $DIR/freed_while_borrowed.rs:38:13
+   |
+LL |     fn done(&mut self) {
+   |             ^^^^^^^^^
+note: the memory is freed here
+  --> $DIR/freed_while_borrowed.rs:46:5
+   |
+LL |     }
+   |     ^
+   = help: take `this: *mut Self` in place of the `self` reference, so no reference is live when the memory is freed
+
+warning: this call to `destroy` frees the value behind `self` while `self` is still borrowed
+  --> $DIR/freed_while_borrowed.rs:51:22
+   |
+LL |             unsafe { Task::destroy(ptr::from_mut(self)) };
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: `self` is a reference parameter, so it must stay valid until the call returns
+  --> $DIR/freed_while_borrowed.rs:49:18
+   |
+LL |     fn finish_if(&mut self, last: bool) {
+   |                  ^^^^^^^^^
+note: the memory is freed here
+  --> $DIR/freed_while_borrowed.rs:15:9
+   |
+LL |         drop(unsafe { Box::from_raw(this) });
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: take `this: *mut Self` in place of the `self` reference, so no reference is live when the memory is freed
+
+warning: this call to `deref` can free the value behind `self` while `self` is still borrowed
+  --> $DIR/freed_while_borrowed.rs:57:18
+   |
+LL |         unsafe { deref(ptr::from_mut(self)) };
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: `self` is a reference parameter, so it must stay valid until the call returns
+  --> $DIR/freed_while_borrowed.rs:56:14
+   |
+LL |     fn unref(&mut self) {
+   |              ^^^^^^^^^
+note: it is freed here on some paths only, so the code relies on another owner keeping it alive
+  --> $DIR/freed_while_borrowed.rs:15:9
+   |
+LL |         drop(unsafe { Box::from_raw(this) });
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: take `this: *mut Self` in place of the `self` reference, so no reference is live when the memory is freed
+
+warning: this call to `release_all` frees the value behind `self` while `self` is still borrowed
+  --> $DIR/freed_while_borrowed.rs:62:18
+   |
+LL |         unsafe { release_all(ptr::from_mut(self)) };
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: `self` is a reference parameter, so it must stay valid until the call returns
+  --> $DIR/freed_while_borrowed.rs:61:23
+   |
+LL |     fn drop_via_trait(&mut self) {
+   |                       ^^^^^^^^^
+note: the memory is freed here
+  --> $DIR/freed_while_borrowed.rs:103:9
+   |
+LL |         drop(unsafe { Box::from_raw(this) });
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: take `this: *mut Self` in place of the `self` reference, so no reference is live when the memory is freed
+
+warning: this call to `release` can free the value behind `self` while `self` is still borrowed
+  --> $DIR/freed_while_borrowed.rs:125:9
+   |
+LL |         Pool::release(ptr::from_mut(self));
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: `self` is a reference parameter, so it must stay valid until the call returns
+  --> $DIR/freed_while_borrowed.rs:124:18
+   |
+LL |     fn give_back(&mut self) {
+   |                  ^^^^^^^^^
+   = note: it frees on some paths only, so the code relies on another owner keeping it alive
+   = help: take `this: *mut Self` in place of the `self` reference, so no reference is live when the memory is freed
+
+warning: this call to `destroy` frees the value behind `t` while `t` is still borrowed
+  --> $DIR/freed_while_borrowed.rs:136:41
+   |
+LL |     let close = |t: &mut Task| unsafe { Task::destroy(ptr::from_mut(t)) };
+   |                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: `t` is a reference parameter, so it must stay valid until the call returns
+  --> $DIR/freed_while_borrowed.rs:136:18
+   |
+LL |     let close = |t: &mut Task| unsafe { Task::destroy(ptr::from_mut(t)) };
+   |                  ^^^^^^^^^^^^
+note: the memory is freed here
+  --> $DIR/freed_while_borrowed.rs:15:9
+   |
+LL |         drop(unsafe { Box::from_raw(this) });
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: take a raw pointer for `t` in place of the reference, so no reference is live when the memory is freed
+
+warning: 9 warnings emitted
+

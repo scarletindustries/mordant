@@ -38,6 +38,8 @@ mod enum_facts;
 mod error_collapsed_to_bool;
 mod field_valid_only_when;
 mod forbidden_reach;
+mod freed_while_borrowed;
+mod frees;
 mod generic_body_not_generic;
 mod guard_blind_to_action;
 mod hir_clone;
@@ -230,6 +232,14 @@ pub struct MordantConfig {
     /// one thread although its fields are only pointers. Spelled like
     /// `key-not-identity-types`. Empty by default.
     pub thread_affine_types: Vec<String>,
+    /// Fns that free the value behind their first pointer argument on every
+    /// path, for `freed_while_borrowed`. Needed for fns of other crates,
+    /// whose bodies a check build cannot read (`bun_core::heap::destroy`).
+    /// Matched by `::`-segment suffix of the path, generics left out.
+    pub freed_while_borrowed_frees: Vec<String>,
+    /// Like `freed-while-borrowed-frees`, for fns that free only on some
+    /// paths, such as a reference count release that frees on the last one.
+    pub freed_while_borrowed_releases: Vec<String>,
 }
 
 /// Called by `mordant-driver` once per compiler session, before any lint
@@ -377,6 +387,9 @@ fn register(
         ParallelParams::new(config)
     });
     r.add(true, BareBoolArgs::default);
+    r.add(true, move || freed_while_borrowed::FreedWhileBorrowed {
+        config,
+    });
     r.add(true, TupleWantsStruct::default);
     r.add(true, || InterchangeableAliases);
     r.add(true, move || {

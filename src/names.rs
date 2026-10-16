@@ -84,6 +84,7 @@ pub const GROUPS: &[(&str, &[&str])] = &[
         &[
             "safe_fn_returns_shared_mut",
             "unsafe_send_covers_more_than_pointers",
+            "freed_while_borrowed",
         ],
     ),
     ("unused", &["unused_pub"]),
