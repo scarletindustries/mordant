@@ -66,6 +66,18 @@ impl Header {
         Ok(s.len() as u32)
     }
 
+    // Like `next_field`, but takes itself as a pointer instead of `&mut self`.
+    fn next_field_ptr(this: *mut Self, s: &str) -> Result<u32, ParseError> {
+        // SAFETY: callers pass a live, unshared `Header`.
+        unsafe {
+            if (*this).pos >= 4 {
+                return Err(ParseError::Empty);
+            }
+            (*this).pos += 1;
+        }
+        Ok(s.len() as u32)
+    }
+
     // A `bool` answer.
     fn is_open(&self, s: &str) -> Result<bool, ParseError> {
         if s.is_empty() {
@@ -238,6 +250,10 @@ fn receiver_decided_is_fine(h: &mut Header, s: &str) -> u32 {
     h.next_field(s).unwrap_or(0)
 }
 
+fn pointer_receiver_decided_is_fine(h: &mut Header, s: &str) -> u32 {
+    Header::next_field_ptr(h, s).unwrap_or(0)
+}
+
 fn bool_defaulted_to_false_is_fine(h: &Header, s: &str) -> bool {
     h.is_open(s).unwrap_or(false)
 }
@@ -371,6 +387,7 @@ fn main() {
     let _ = option_callee_is_fine("on");
     let _ = option_callee_default_fn_is_fine("on");
     let _ = receiver_decided_is_fine(&mut hm, "a");
+    let _ = pointer_receiver_decided_is_fine(&mut hm, "a");
     let _ = bool_defaulted_to_false_is_fine(&h, "a");
     let _ = bool_defaulted_by_default_is_fine(&h, "a");
     let _ = bool_defaulted_to_false_by_thunk_is_fine(&h, "a");

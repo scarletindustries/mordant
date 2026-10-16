@@ -1,5 +1,5 @@
 warning: `parse_port` can reject its input, and `.unwrap_or` here replaces the rejection with a fixed value. Rejected input carries on as if it were fine
-  --> $DIR/defaulted_failure.rs:156:5
+  --> $DIR/defaulted_failure.rs:168:5
    |
 LL |     parse_port(s).unwrap_or(0)
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -13,7 +13,7 @@ LL |     if s.is_empty() {
    = note: `#[warn(defaulted_failure)]` on by default
 
 warning: `parse_port` can reject its input, and `.unwrap_or_default` here replaces the rejection with a fixed value. Rejected input carries on as if it were fine
-  --> $DIR/defaulted_failure.rs:160:5
+  --> $DIR/defaulted_failure.rs:172:5
    |
 LL |     parse_port(s).unwrap_or_default()
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -26,7 +26,7 @@ LL |     if s.is_empty() {
    = help: pass the error on with `?`, or match on it here while the reason is still attached
 
 warning: `parse_port` can reject its input, and `.unwrap_or_else` here replaces the rejection with a fixed value. Rejected input carries on as if it were fine
-  --> $DIR/defaulted_failure.rs:164:5
+  --> $DIR/defaulted_failure.rs:176:5
    |
 LL |     parse_port(s).unwrap_or_else(|_| u16::MAX)
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -39,7 +39,7 @@ LL |     if s.is_empty() {
    = help: pass the error on with `?`, or match on it here while the reason is still attached
 
 warning: `parse_port` can reject its input, and `.unwrap_or_else` here replaces the rejection with a fixed value. Rejected input carries on as if it were fine
-  --> $DIR/defaulted_failure.rs:168:5
+  --> $DIR/defaulted_failure.rs:180:5
    |
 LL |     parse_port(s).unwrap_or_else(|_| Default::default())
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -52,7 +52,7 @@ LL |     if s.is_empty() {
    = help: pass the error on with `?`, or match on it here while the reason is still attached
 
 warning: `parse_port` can reject its input, and `.unwrap_or` here replaces the rejection with a fixed value. Rejected input carries on as if it were fine
-  --> $DIR/defaulted_failure.rs:172:5
+  --> $DIR/defaulted_failure.rs:184:5
    |
 LL |     parse_port(s).ok().unwrap_or(80)
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -65,20 +65,20 @@ LL |     if s.is_empty() {
    = help: pass the error on with `?`, or match on it here while the reason is still attached
 
 warning: `Header::is_open` can reject its input, and `.unwrap_or` here replaces the rejection with a fixed value. Rejected input carries on as if it were fine
-  --> $DIR/defaulted_failure.rs:176:5
+  --> $DIR/defaulted_failure.rs:188:5
    |
 LL |     h.is_open(s).unwrap_or(true)
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
 note: the check in `Header::is_open` that gets overridden
-  --> $DIR/defaulted_failure.rs:71:12
+  --> $DIR/defaulted_failure.rs:83:12
    |
 LL |         if s.is_empty() {
    |            ^^^^^^^^^^^^
    = help: pass the error on with `?`, or match on it here while the reason is still attached
 
 warning: `parse_pair` can reject its input, and `.unwrap_or` here replaces the rejection with a fixed value. Rejected input carries on as if it were fine
-  --> $DIR/defaulted_failure.rs:180:5
+  --> $DIR/defaulted_failure.rs:192:5
    |
 LL |     parse_pair(s).unwrap_or((0, 0))
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -91,7 +91,7 @@ LL |     let (a, b) = s.split_once(':').ok_or(ParseError::Empty)?;
    = help: pass the error on with `?`, or match on it here while the reason is still attached
 
 warning: `Header::parse_limit` can reject its input, and `.unwrap_or` here replaces the rejection with a fixed value. Rejected input carries on as if it were fine
-  --> $DIR/defaulted_failure.rs:184:5
+  --> $DIR/defaulted_failure.rs:196:5
    |
 LL |     h.parse_limit(s).unwrap_or(0)
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -104,7 +104,7 @@ LL |         if n > self.limit {
    = help: pass the error on with `?`, or match on it here while the reason is still attached
 
 warning: `parse_port` can reject its input, and the `else` here returns success when that happens. Rejected input is reported as handled
-  --> $DIR/defaulted_failure.rs:188:5
+  --> $DIR/defaulted_failure.rs:200:5
    |
 LL | /     let Ok(port) = parse_port(s) else {
 LL | |         return Ok(());
@@ -119,7 +119,7 @@ LL |     if s.is_empty() {
    = help: pass the error on with `?`, or match on it here while the reason is still attached
 
 warning: `parse_port` can reject its input, and the `else` here returns success when that happens. Rejected input is reported as handled
-  --> $DIR/defaulted_failure.rs:196:5
+  --> $DIR/defaulted_failure.rs:208:5
    |
 LL |     let Ok(port) = parse_port(s) else { return };
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -132,7 +132,7 @@ LL |     if s.is_empty() {
    = help: pass the error on with `?`, or match on it here while the reason is still attached
 
 warning: `parse_port` can reject its input, and the `else` here returns success when that happens. Rejected input is reported as handled
-  --> $DIR/defaulted_failure.rs:201:5
+  --> $DIR/defaulted_failure.rs:213:5
    |
 LL | /     let Some(port) = parse_port(s).ok() else {
 LL | |         return Ok(());
@@ -147,7 +147,7 @@ LL |     if s.is_empty() {
    = help: pass the error on with `?`, or match on it here while the reason is still attached
 
 warning: `parse_port` can reject its input, and the `else` here returns success when that happens. Rejected input is reported as handled
-  --> $DIR/defaulted_failure.rs:209:5
+  --> $DIR/defaulted_failure.rs:221:5
    |
 LL |     let Some(port) = parse_port(s).ok() else { return };
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -160,33 +160,33 @@ LL |     if s.is_empty() {
    = help: pass the error on with `?`, or match on it here while the reason is still attached
 
 warning: `Header::send_checked` can reject its input, and `.unwrap_or` here replaces the rejection with a fixed value. Rejected input carries on as if it were fine
-  --> $DIR/defaulted_failure.rs:214:5
+  --> $DIR/defaulted_failure.rs:226:5
    |
 LL |     h.send_checked(s).unwrap_or(0)
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
 note: the check in `Header::send_checked` that gets overridden
-  --> $DIR/defaulted_failure.rs:93:16
+  --> $DIR/defaulted_failure.rs:105:16
    |
 LL |             if s.is_empty() {
    |                ^^^^^^^^^^^^
    = help: pass the error on with `?`, or match on it here while the reason is still attached
 
 warning: `check_port` can reject its input, and `.unwrap_or_default` here replaces the rejection with a fixed value. Rejected input carries on as if it were fine
-  --> $DIR/defaulted_failure.rs:218:5
+  --> $DIR/defaulted_failure.rs:230:5
    |
 LL |     check_port(s).unwrap_or_default()
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
 note: the check in `check_port` that gets overridden
-  --> $DIR/defaulted_failure.rs:103:5
+  --> $DIR/defaulted_failure.rs:115:5
    |
 LL |     parse_port(s)?;
    |     ^^^^^^^^^^^^^^
    = help: pass the error on with `?`, or match on it here while the reason is still attached
 
 warning: `listed_by_config` is listed in `defaulted-failure-callees` as able to reject its input, and `.unwrap_or` here replaces the rejection with a fixed value. Rejected input carries on as if it were fine
-  --> $DIR/defaulted_failure.rs:222:5
+  --> $DIR/defaulted_failure.rs:234:5
    |
 LL |     listed_by_config(s).unwrap_or(0)
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -194,7 +194,7 @@ LL |     listed_by_config(s).unwrap_or(0)
    = help: pass the error on with `?`, or match on it here while the reason is still attached
 
 warning: `core::num::<impl u32>::from_str_radix` is listed in `defaulted-failure-callees` as able to reject its input, and `.unwrap_or` here replaces the rejection with a fixed value. Rejected input carries on as if it were fine
-  --> $DIR/defaulted_failure.rs:226:5
+  --> $DIR/defaulted_failure.rs:238:5
    |
 LL |     u32::from_str_radix(s, 16).unwrap_or(0)
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -202,13 +202,13 @@ LL |     u32::from_str_radix(s, 16).unwrap_or(0)
    = help: pass the error on with `?`, or match on it here while the reason is still attached
 
 warning: `let_else_reporting_failure_is_fine` turns its `ParseError` into `false`, and this call ignores the `false`. A failure inside `let_else_reporting_failure_is_fine` is treated as success
-  --> $DIR/defaulted_failure.rs:393:13
+  --> $DIR/defaulted_failure.rs:410:13
    |
 LL |     let _ = let_else_reporting_failure_is_fine("a", &mut ports);
    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
 note: the error becomes `false` here
-  --> $DIR/defaulted_failure.rs:328:9
+  --> $DIR/defaulted_failure.rs:344:9
    |
 LL |         return false;
    |         ^^^^^^^^^^^^
@@ -216,13 +216,13 @@ LL |         return false;
    = note: `#[warn(error_collapsed_to_bool)]` on by default
 
 warning: `let_else_returning_none_is_fine` turns its `ParseError` into `None`, and this call ignores the `None`. A failure inside `let_else_returning_none_is_fine` is treated as success
-  --> $DIR/defaulted_failure.rs:394:13
+  --> $DIR/defaulted_failure.rs:411:13
    |
 LL |     let _ = let_else_returning_none_is_fine("a");
    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
 note: the error becomes `None` here
-  --> $DIR/defaulted_failure.rs:336:9
+  --> $DIR/defaulted_failure.rs:352:9
    |
 LL |         return None;
    |         ^^^^^^^^^^^
