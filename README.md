@@ -74,7 +74,7 @@ There are 45, in families. Each family is a lint group, so `#![allow(mordant_nam
 | Family         | Group                 | Lints |
 | -------------- | --------------------- | ----- |
 | State          | `mordant_state`       | `options_as_enum` `parallel_bools` `bool_cluster` `runtime_typestate` `always_unwrapped_option` `derived_field` `field_valid_only_when` `bool_beside_option` `parallel_vecs` `parallel_params` `stringly_state` `tuple_wants_struct` `some_still_unchecked` |
-| Checks         | `mordant_checks`      | `unchecked_construction` `defaulted_failure` `unchecked_input_len` `guard_blind_to_action` `stale_across_reentry` `error_collapsed_to_bool` `narrowed_two_ways` `cast_bypasses_from` `sentinel_integer` |
+| Checks         | `mordant_checks`      | `unchecked_construction` `defaulted_failure` `unchecked_input_len` `guard_blind_to_action` `stale_across_reentry` `error_collapsed_to_bool` `narrowed_two_ways` `cast_bypasses_from` `sentinel_integer` `bound_checked_only_in_debug` |
 | Errors         | `mordant_errors`      | `stringly_error` `stringified_error` `discarded_error` `unread_error_variant` |
 | Enums          | `mordant_enums`       | `wildcard_over_own_enum` `param_wider_than_callers` `return_wider_than_body` |
 | Duplication    | `mordant_duplication` | `same_match_twice` `reimplemented_helper` `generic_body_not_generic` `inline_always_too_big` |

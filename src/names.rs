@@ -35,6 +35,7 @@ pub const GROUPS: &[(&str, &[&str])] = &[
             "narrowed_two_ways",
             "cast_bypasses_from",
             "sentinel_integer",
+            "bound_checked_only_in_debug",
         ],
     ),
     (

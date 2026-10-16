@@ -13,6 +13,7 @@ use rustc_span::{Span, Symbol, sym};
 use crate::adt_facts::has_fixed_repr;
 use crate::baseline::emit_with_note;
 use crate::hir_shapes::{Callee, callee_of, enclosing_fn};
+use crate::int_facts::{IntLayout, int_layout, lossy};
 
 rustc_lint::declare_lint! {
     /// Flags an integer place (a struct field, or a local or parameter
@@ -73,37 +74,6 @@ pub struct NarrowedTwoWays {
 }
 
 rustc_lint::impl_lint_pass!(NarrowedTwoWays => [NARROWED_TWO_WAYS]);
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct IntLayout {
-    bits: u64,
-    signed: bool,
-}
-
-/// `usize`/`isize` take the target's pointer width: whether `u64 as usize`
-/// narrows is a question about the target being linted, not about all of
-/// them.
-fn int_layout(cx: &LateContext<'_>, ty: Ty<'_>) -> Option<IntLayout> {
-    let ptr_bits = || cx.tcx.data_layout.pointer_size().bits();
-    match ty.kind() {
-        ty::Int(i) => Some(IntLayout {
-            bits: i.bit_width().unwrap_or_else(ptr_bits),
-            signed: true,
-        }),
-        ty::Uint(u) => Some(IntLayout {
-            bits: u.bit_width().unwrap_or_else(ptr_bits),
-            signed: false,
-        }),
-        _ => None,
-    }
-}
-
-/// Some value of `src` has no representation in `dst`.
-fn lossy(src: IntLayout, dst: IntLayout) -> bool {
-    let preserving = (src.signed == dst.signed && dst.bits >= src.bits)
-        || (!src.signed && dst.signed && dst.bits > src.bits);
-    !preserving
-}
 
 /// The integer place `e` reads, through `&`, `*`, HIR temporaries and inner
 /// integer-to-integer casts (which change representation, not which place is

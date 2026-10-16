@@ -1,0 +1,96 @@
+warning: `inner` is masked with `& 0xfffffff`, which drops its high bits silently. Only a debug assertion bounds it, and release mode removes that check
+  --> $DIR/bound_checked_only_in_debug.rs:19:5
+   |
+LL |     (inner as u64 & INNER_BITS) | ((src as u64) << 32)
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the only bound check, which runs with debug assertions on and nowhere else
+  --> $DIR/bound_checked_only_in_debug.rs:18:5
+   |
+LL |     debug_assert!((inner as u64) <= INNER_BITS);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: Use `assert!` so the check also runs in release mode, or make the packed value with a constructor that returns `Option`
+   = note: `#[warn(bound_checked_only_in_debug)]` on by default
+
+warning: `request` is shifted left by 16 in a `u32`, which drops its high bits silently. Only a debug assertion bounds it, and release mode removes that check
+  --> $DIR/bound_checked_only_in_debug.rs:25:12
+   |
+LL |     kind | request << 16
+   |            ^^^^^^^^^^^^^
+   |
+note: the only bound check, which runs with debug assertions on and nowhere else
+  --> $DIR/bound_checked_only_in_debug.rs:24:5
+   |
+LL |     debug_assert!(request <= u16::MAX as u32);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: Use `assert!` so the check also runs in release mode, or make the packed value with a constructor that returns `Option`
+
+warning: `p.lexer.start` is a `usize` cast to `u32` with `as`, which wraps silently. Only a debug assertion bounds it, and release mode removes that check
+  --> $DIR/bound_checked_only_in_debug.rs:31:5
+   |
+LL |     p.lexer.start as u32
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+note: the only bound check, which runs with debug assertions on and nowhere else
+  --> $DIR/bound_checked_only_in_debug.rs:30:5
+   |
+LL |     debug_assert!(p.lexer.start <= (u32::MAX >> 1) as usize);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: Use `assert!` so the check also runs in release mode, or convert with `u32::try_from(p.lexer.start)` and handle the error
+
+warning: `s.len()` is a `usize` cast to `u32` with `as`, which wraps silently. Only a debug assertion bounds it, and release mode removes that check
+  --> $DIR/bound_checked_only_in_debug.rs:37:5
+   |
+LL |     s.len() as u32
+   |     ^^^^^^^^^^^^^^
+   |
+note: the only bound check, which runs with debug assertions on and nowhere else
+  --> $DIR/bound_checked_only_in_debug.rs:36:5
+   |
+LL |     debug_assert!(s.len() <= u32::MAX as usize);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: Use `assert!` so the check also runs in release mode, or convert with `u32::try_from(s.len())` and handle the error
+
+warning: `n` is a `usize` cast to `u8` with `as`, which wraps silently. Only a debug assertion bounds it, and release mode removes that check
+  --> $DIR/bound_checked_only_in_debug.rs:45:5
+   |
+LL |     n as u8
+   |     ^^^^^^^
+   |
+note: the only bound check, which runs with debug assertions on and nowhere else
+  --> $DIR/bound_checked_only_in_debug.rs:42:5
+   |
+LL | /     if cfg!(debug_assertions) {
+LL | |         assert!(n < 256);
+LL | |     }
+   | |_____^
+   = help: Use `assert!` so the check also runs in release mode, or convert with `u8::try_from(n)` and handle the error
+
+warning: `len` is a `usize` cast to `u32` with `as`, which wraps silently. Only a debug assertion bounds it, and release mode removes that check
+  --> $DIR/bound_checked_only_in_debug.rs:51:6
+   |
+LL |     (len as u32, off as u32)
+   |      ^^^^^^^^^^
+   |
+note: the only bound check, which runs with debug assertions on and nowhere else
+  --> $DIR/bound_checked_only_in_debug.rs:50:5
+   |
+LL |     debug_assert!(off <= u32::MAX as usize && len <= u32::MAX as usize);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: Use `assert!` so the check also runs in release mode, or convert with `u32::try_from(len)` and handle the error
+
+warning: `off` is a `usize` cast to `u32` with `as`, which wraps silently. Only a debug assertion bounds it, and release mode removes that check
+  --> $DIR/bound_checked_only_in_debug.rs:51:18
+   |
+LL |     (len as u32, off as u32)
+   |                  ^^^^^^^^^^
+   |
+note: the only bound check, which runs with debug assertions on and nowhere else
+  --> $DIR/bound_checked_only_in_debug.rs:50:5
+   |
+LL |     debug_assert!(off <= u32::MAX as usize && len <= u32::MAX as usize);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: Use `assert!` so the check also runs in release mode, or convert with `u32::try_from(off)` and handle the error
+
+warning: 7 warnings emitted
+

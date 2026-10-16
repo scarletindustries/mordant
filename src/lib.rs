@@ -27,6 +27,7 @@ mod baseline_file;
 mod bool_beside_option;
 mod bool_cluster;
 mod call_graph;
+mod bound_checked_only_in_debug;
 mod cast_bypasses_from;
 mod claims;
 mod ctor_flow;
@@ -44,6 +45,7 @@ mod hir_shapes;
 mod index_of_other_kind;
 mod inline_always_too_big;
 mod insert_then_unwrap;
+mod int_facts;
 mod interchangeable_aliases;
 mod key_not_identity;
 mod lock_order;
@@ -360,6 +362,10 @@ fn register(
     r.add(true, ParallelVecs::default);
     r.add(true, bool_beside_option::BoolBesideOption::default);
     r.add(true, SentinelInteger::default);
+    r.add(
+        true,
+        bound_checked_only_in_debug::BoundCheckedOnlyInDebug::default,
+    );
     r.add(true, StringlyState::default);
     r.add(config.parallel_params_enabled, move || {
         ParallelParams::new(config)
