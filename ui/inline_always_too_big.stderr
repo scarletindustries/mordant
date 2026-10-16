@@ -1,0 +1,55 @@
+warning: `parse_value` is `#[inline(always)]` but calls itself: parse_value -> parse_list -> parse_value. Not every call in the cycle can be inlined, and each call from outside gets a copy of the body
+  --> $DIR/inline_always_too_big.rs:10:1
+   |
+LL | pub fn parse_value(src: &[u8], at: &mut usize) -> Option<Value> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: this call goes back to `parse_value`
+  --> $DIR/inline_always_too_big.rs:24:20
+   |
+LL |         items.push(parse_value(src, at)?);
+   |                    ^^^^^^^^^^^^^^^^^^^^
+   = help: use `#[inline]` and let the compiler decide, or move the recursive part into an `#[inline(never)]` fn
+   = note: `#[warn(inline_always_too_big)]` on by default
+
+warning: `depth` is `#[inline(always)]` but calls itself: depth -> depth. Not every call in the cycle can be inlined, and each call from outside gets a copy of the body
+  --> $DIR/inline_always_too_big.rs:32:1
+   |
+LL | pub fn depth(v: &Value) -> usize {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: this call goes back to `depth`
+  --> $DIR/inline_always_too_big.rs:36:33
+   |
+LL |             most = most.max(1 + depth(item));
+   |                                 ^^^^^^^^^^^
+   = help: use `#[inline]` and let the compiler decide, or move the recursive part into an `#[inline(never)]` fn
+
+warning: `mix` is `#[inline(always)]` with 212 MIR statements and 3 call sites in this crate, so its body is copied 3 times (about 636 statements)
+  --> $DIR/inline_always_too_big.rs:53:1
+   |
+LL | pub fn mix(state: &mut [u32; 8], input: &[u8]) -> u32 {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the first call site
+  --> $DIR/inline_always_too_big.rs:93:13
+   |
+LL |     let a = mix(&mut state, input);
+   |             ^^^^^^^^^^^^^^^^^^^^^^
+   = help: use `#[inline]` and let the compiler decide, or keep a small `#[inline(always)]` fast path and move the rest into an `#[inline(never)]` fn
+
+warning: `mix_any` is `#[inline(always)]` with 192 MIR statements and 3 call sites in this crate, so its body is copied 3 times (about 576 statements)
+  --> $DIR/inline_always_too_big.rs:180:1
+   |
+LL | pub fn mix_any<T: AsRef<[u8]>>(state: &mut [u32; 8], input: T) -> u32 {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the first call site
+  --> $DIR/inline_always_too_big.rs:217:5
+   |
+LL |     mix_any(&mut state, input) ^ mix_any(&mut state, text) ^ mix_any(&mut state, owned)
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: use `#[inline]` and let the compiler decide, or keep a small `#[inline(always)]` fast path and move the rest into an `#[inline(never)]` fn
+
+warning: 4 warnings emitted
+

@@ -26,6 +26,7 @@ mod baseline;
 mod baseline_file;
 mod bool_beside_option;
 mod bool_cluster;
+mod call_graph;
 mod cast_bypasses_from;
 mod claims;
 mod ctor_flow;
@@ -41,6 +42,7 @@ mod guard_blind_to_action;
 mod hir_clone;
 mod hir_shapes;
 mod index_of_other_kind;
+mod inline_always_too_big;
 mod insert_then_unwrap;
 mod interchangeable_aliases;
 mod key_not_identity;
@@ -212,6 +214,12 @@ pub struct MordantConfig {
     /// the fn at before its body counts as duplicated. One instantiation
     /// duplicates nothing.
     pub generic_body_not_generic_min_instantiations: usize = 2,
+    /// The smallest body, in MIR statements, that `inline_always_too_big`
+    /// counts as large. About what a 30 line fn produces.
+    pub inline_always_too_big_min_statements: usize = 100,
+    /// In-crate call sites a large `#[inline(always)]` fn needs before
+    /// `inline_always_too_big` names it.
+    pub inline_always_too_big_min_call_sites: usize = 3,
 }
 
 /// Called by `mordant-driver` once per compiler session, before any lint
@@ -363,6 +371,9 @@ fn register(
     r.add(config.generic_body_not_generic_enabled, move || {
         GenericBodyNotGeneric::new(config)
     });
+    r.add(true, move || {
+        inline_always_too_big::InlineAlwaysTooBig::new(config)
+    });
     r.add_recorder(
         true,
         vec![unused_pub::UNUSED_PUB],
@@ -492,6 +503,8 @@ fn config_default_thresholds_match_docs() {
     assert_eq!(c.parallel_params_min_fns, 3);
     assert_eq!(c.generic_body_not_generic_min_statements, 24);
     assert_eq!(c.generic_body_not_generic_min_instantiations, 2);
+    assert_eq!(c.inline_always_too_big_min_statements, 100);
+    assert_eq!(c.inline_always_too_big_min_call_sites, 3);
 }
 
 /// An empty table (file present, keys omitted) must not drift from
@@ -621,6 +634,7 @@ fn disabled_expands_a_group_to_its_members() {
             "same_match_twice",
             "reimplemented_helper",
             "generic_body_not_generic",
+            "inline_always_too_big",
             "group:nope"
         ]
     );

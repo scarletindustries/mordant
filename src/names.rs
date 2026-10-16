@@ -60,6 +60,7 @@ pub const GROUPS: &[(&str, &[&str])] = &[
             "same_match_twice",
             "reimplemented_helper",
             "generic_body_not_generic",
+            "inline_always_too_big",
         ],
     ),
     (
@@ -119,6 +120,7 @@ mod tests {
                     "same_match_twice",
                     "reimplemented_helper",
                     "generic_body_not_generic",
+                    "inline_always_too_big",
                 ][..]
             )
         );
