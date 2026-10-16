@@ -82,6 +82,7 @@ There are 45, in families. Each family is a lint group, so `#![allow(mordant_nam
 | Keys and locks | `mordant_keys_locks`  | `key_not_identity` `insert_then_unwrap` `lock_order` |
 | Comments       | `mordant_comments`    | `stale_safety_comment` `stale_panic_message` |
 | Unused         | `mordant_unused`      | `unused_pub` |
+| Unsafe         | `mordant_unsafe`      | `safe_fn_returns_shared_mut` |
 | Custom         | `mordant_custom`      | `forbidden_reach` |
 
 ## Develop

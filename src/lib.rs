@@ -55,10 +55,12 @@ mod parallel_bools;
 mod parallel_params;
 mod parallel_vecs;
 mod param_wider_than_callers;
+mod pointer_origin;
 pub mod protocol;
 mod reimplemented_helper;
 mod return_wider_than_body;
 mod runtime_typestate;
+mod safe_fn_returns_shared_mut;
 mod same_match_twice;
 mod sentinel_integer;
 mod some_still_unchecked;
@@ -374,6 +376,10 @@ fn register(
     r.add(true, move || {
         inline_always_too_big::InlineAlwaysTooBig::new(config)
     });
+    r.add(
+        true,
+        safe_fn_returns_shared_mut::SafeFnReturnsSharedMut::default,
+    );
     r.add_recorder(
         true,
         vec![unused_pub::UNUSED_PUB],

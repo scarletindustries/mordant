@@ -79,6 +79,7 @@ pub const GROUPS: &[(&str, &[&str])] = &[
     ),
     ("comments", &["stale_safety_comment", "stale_panic_message"]),
     ("unused", &["unused_pub"]),
+    ("unsafe", &["safe_fn_returns_shared_mut"]),
     ("custom", &["forbidden_reach"]),
 ];
 
