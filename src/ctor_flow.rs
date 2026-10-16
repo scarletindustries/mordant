@@ -117,14 +117,7 @@ pub(crate) fn argument_decided_failure(
     callee: LocalDefId,
     extra_resource_errors: &[String],
 ) -> Option<Span> {
-    let first_argument = if tcx
-        .opt_associated_item(callee.to_def_id())
-        .is_some_and(|item| item.is_method())
-    {
-        2
-    } else {
-        1
-    };
+    let first_argument = if has_receiver(tcx, callee) { 2 } else { 1 };
     let body = mir_for(tcx, callee)?;
     if body.tainted_by_errors.is_some() {
         return None;
@@ -157,6 +150,39 @@ pub(crate) fn argument_decided_failure(
         }
     }
     None
+}
+
+/// Does `f` take its own value first, as `self` or as a pointer to `Self`?
+/// A `this: *mut Self` argument is a receiver too: code that must not
+/// borrow the whole value passes it that way.
+fn has_receiver(tcx: TyCtxt<'_>, f: LocalDefId) -> bool {
+    let Some(item) = tcx.opt_associated_item(f.to_def_id()) else {
+        return false;
+    };
+    if item.is_method() {
+        return true;
+    }
+    let Some(&first) = tcx
+        .fn_sig(f)
+        .instantiate_identity()
+        .skip_binder()
+        .inputs()
+        .first()
+    else {
+        return false;
+    };
+    let pointee = match first.kind() {
+        ty::RawPtr(inner, _) => *inner,
+        ty::Adt(adt, args) if tcx.is_lang_item(adt.did(), LangItem::NonNull) => args.type_at(0),
+        _ => return false,
+    };
+    let owner = tcx.parent(f.to_def_id());
+    tcx.def_kind(owner) == rustc_hir::def::DefKind::Impl { of_trait: false }
+        && pointee
+            == tcx
+                .type_of(owner)
+                .instantiate_identity()
+                .skip_normalization()
 }
 
 // ── def facts ────────────────────────────────────────────────────────────────
