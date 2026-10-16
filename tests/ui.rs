@@ -47,7 +47,6 @@ fn ui() {
             stale-across-reentry-callees = ["Vm::run_callback", "dispatch*", "Worker::run_job", "Runner::schedule"]
             defaulted-failure-callees = ["from_str_radix", "listed_by_config"]
             defaulted-failure-ignored-errors = ["Pending"]
-            bool-cluster-enabled = true
             stale-safety-comment-enabled = true
             unchecked-input-len-enabled = true
             parallel-params-enabled = true

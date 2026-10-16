@@ -14,7 +14,7 @@ use rustc_span::{Span, Symbol};
 use super::value::{block_part, classify, default_of, is_derived_default, is_placeholder};
 use super::{Access, Build, FACTS, FieldWrites, Init, Value, Write, WriteKind};
 use crate::adt_facts::{buildable_in_other_crates, field_ty, private_local_struct};
-use crate::hir_shapes::{in_derived_clone, peel_blocks_unsafe};
+use crate::hir_shapes::{enclosing_fn, in_derived_clone, peel_blocks_unsafe};
 
 /// Methods that borrow a field mutably but cannot replace it whole, so they
 /// cannot change which variant it holds.
@@ -198,6 +198,7 @@ impl FieldWritesPass {
             .push(Build {
                 span: expr.span,
                 hir_id: expr.hir_id,
+                func: enclosing_fn(cx, expr.hir_id),
                 derived: clippy_utils::in_automatically_derived(cx.tcx, expr.hir_id),
                 fields: inits,
             });

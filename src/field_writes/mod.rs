@@ -33,6 +33,9 @@ pub(crate) use value::{Value, is_placeholder};
 pub(crate) struct Build {
     pub span: Span,
     pub hir_id: HirId,
+    /// The fn the literal is in, with closures folded into the fn that wrote
+    /// them.
+    pub func: DefId,
     /// Built by a derived impl, such as the derived `Default`.
     pub derived: bool,
     /// Every field of the variant, in declaration order.

@@ -87,23 +87,12 @@ mod wildcard_over_own_enum;
 
 /// Read from `mordant.toml` under `[mordant]` in the linted workspace root.
 ///
-/// `bool_cluster` is allowed on this one struct, and it is the lawful-lattice
-/// case the lint's own help describes rather than an exemption from it. The
-/// bools are opt-ins belonging to *different* lints: every combination is
-/// reachable from `mordant.toml` and each means what it says, so there is no
-/// invariant between them for a type to carry. The field set is also this
-/// pack's public interface — every field is a TOML key, and Scarlet's `xtask`
-/// gate reads these field names out of the pinned source to decide which keys
-/// it may set — so grouping them into sub-structs would rename user-visible
-/// keys to satisfy a lint about internal invariants.
-///
 /// `register_lints` uses `Default` when the linted workspace has no
 /// `mordant.toml` or the file has no `[mordant]` table; the container-level
 /// `serde(default)` fills any omitted key from it too.
 #[derive(Default, serde::Deserialize)]
 #[cfg_attr(test, derive(Debug, PartialEq))]
 #[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
-#[cfg_attr(mordant, allow(bool_cluster))]
 pub struct MordantConfig {
     /// Lints, by name, that stay registered (so an `allow` of one still
     /// resolves) but never run. `group:<name>` stands for every lint in that
@@ -174,9 +163,9 @@ pub struct MordantConfig {
     /// name). Empty by default; the lint then reports only callees whose
     /// body it can see the check in.
     pub defaulted_failure_callees: Vec<String>,
-    /// Opt-in: run `bool_cluster`. Off by default because most structs it
-    /// names are option bags; the state machines among them are found by
-    /// running it once, not by gating on it.
+    /// No longer needed: `bool_cluster` is on by default now that it fires
+    /// only on proof. The key is still accepted so that older files parse,
+    /// and its value is not read.
     pub bool_cluster_enabled: bool,
     /// Opt-in: run `stale_safety_comment`. Off by default because a name a
     /// crate cannot see is usually defined in C++, a script, or a downstream
@@ -361,7 +350,7 @@ fn register(
     r.add(true, || StringifiedError);
     r.add(true, move || OptionsAsEnum::new(config));
     r.add(true, ParallelBools::default);
-    r.add(config.bool_cluster_enabled, move || BoolCluster { config });
+    r.add(true, move || BoolCluster { config });
     r.add(true, move || UncheckedConstruction::new(config));
     r.add(true, UnreadErrorVariant::default);
     r.add(true, GuardBlindToAction::default);
@@ -594,6 +583,15 @@ fn unknown_key_is_an_error_naming_it() {
         msg.contains("wildcard-local-enum-max-variants"),
         "error should name the offending key: {msg}"
     );
+}
+
+/// `bool_cluster` is on by default now, and files written when it was an
+/// opt-in still parse.
+#[test]
+fn bool_cluster_enabled_is_still_accepted() {
+    let parsed: MordantConfig =
+        toml::from_str("bool-cluster-enabled = true\n").expect("the old key parses");
+    assert!(parsed.bool_cluster_enabled);
 }
 
 #[test]

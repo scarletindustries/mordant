@@ -37,7 +37,7 @@ Settings go in a `[mordant]` table in `mordant.toml` at the workspace root:
 ```toml
 [mordant]
 disabled = ["unit_mismatch", "group:duplication"]
-bool-cluster-enabled = true
+parallel-params-enabled = true
 
 [[mordant.forbidden-reach]]
 from = "sched::pick"
