@@ -4,7 +4,7 @@ use clippy_utils::higher::Range;
 use clippy_utils::macros::{find_assert_eq_args, root_macro_call_first_node};
 use clippy_utils::res::MaybeResPath;
 use rustc_ast::LitKind;
-use rustc_hir::attrs::lang_items::LangItem;
+use rustc_attr_ir::lang_items::LangItem;
 use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::DefId;
 use rustc_hir::{
@@ -112,7 +112,7 @@ fn is_minus_one(lit: LitKind) -> bool {
 /// A constant that spells a sentinel: `core`'s `MAX`, or one named for
 /// absence.
 fn sentinel_const(cx: &LateContext<'_>, res: Res) -> Option<Sentinel> {
-    let Res::Def(DefKind::Const { .. } | DefKind::AssocConst { .. }, did) = res else {
+    let Res::Def(DefKind::Const | DefKind::AssocConst, did) = res else {
         return None;
     };
     let name = cx.tcx.item_name(did);

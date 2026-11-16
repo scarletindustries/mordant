@@ -26,7 +26,7 @@ use rustc_middle::mir::{
     BasicBlock, Body, Local, Operand, Place, ProjectionElem, Rvalue, START_BLOCK, StatementKind,
     TerminatorKind,
 };
-use rustc_middle::ty::{self, Instance, Ty, TyCtxt, TypingEnv};
+use rustc_middle::ty::{self, CallerBoundsIterator, Instance, Ty, TyCtxt, TypingEnv};
 use rustc_span::{Span, sym};
 
 use crate::call_graph::resolve_instance;
@@ -434,11 +434,16 @@ fn returns_box_of_pointer<'tcx>(
     if !matches!(param.kind(), ty::Param(_)) {
         return None;
     }
-    let bounded = tcx.param_env(def).caller_bounds().any(|clause| {
-        clause.as_trait_clause().is_some_and(|t| {
-            t.self_ty().skip_binder() == param && !tcx.is_sizedness_trait(t.def_id())
-        })
-    });
+    let bounded = tcx
+        .param_env(def)
+        .caller_bounds()
+        .all_clauses(tcx)
+        .iter()
+        .any(|clause| {
+            clause.as_trait_clause().is_some_and(|t| {
+                t.self_ty().skip_binder() == param && !tcx.is_sizedness_trait(t.def_id())
+            })
+        });
     let mut naming = inputs
         .iter()
         .enumerate()

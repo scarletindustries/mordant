@@ -46,7 +46,7 @@ fn main() -> ExitCode {
     let early_dcx = EarlyDiagCtxt::new(ErrorOutputType::default());
     rustc_driver::init_rustc_env_logger(&early_dcx);
     rustc_driver::install_ice_hook(BUG_REPORT_URL, |dcx| {
-        dcx.handle().note(format!(
+        dcx.note(format!(
             "mordant {} ({})",
             env!("CARGO_PKG_VERSION"),
             env!("MORDANT_SOURCE_REV")
@@ -63,7 +63,7 @@ fn main() -> ExitCode {
             args.remove(1);
         }
         if is_info_query(&args) {
-            rustc_driver::run_compiler(&args, &mut PlainCallbacks);
+            rustc_driver::compiler_entrypoint(&args, &mut PlainCallbacks);
         } else {
             args.push(LINTING_CFG.to_string());
             // A test build is compiled only for `unused_pub` to see what the
@@ -75,7 +75,7 @@ fn main() -> ExitCode {
             if let Ok(flags) = env::var(RUSTFLAGS_ENV) {
                 args.extend(flags.split_whitespace().map(String::from));
             }
-            rustc_driver::run_compiler(&args, &mut MordantCallbacks);
+            rustc_driver::compiler_entrypoint(&args, &mut MordantCallbacks);
         }
         ExitCode::SUCCESS
     })

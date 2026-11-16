@@ -8,7 +8,7 @@ use clippy_utils::macros::{find_assert_args, root_macro_call_first_node};
 use clippy_utils::res::{MaybeDef as _, MaybeQPath as _};
 use clippy_utils::source::snippet;
 use rustc_abi::ExternAbi;
-use rustc_hir::attrs::lang_items::LangItem;
+use rustc_attr_ir::lang_items::LangItem;
 use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_hir::{
@@ -412,8 +412,8 @@ pub(crate) fn value_expr<'h>(mut e: &'h Expr<'h>) -> &'h Expr<'h> {
 /// The type alias a written type names, through `&`/`&mut`: `A` and `&A`
 /// for `type A = ..`. None for anything that is not a plain path to an alias.
 pub(crate) fn written_alias(mut ty: &HirTy<'_>) -> Option<DefId> {
-    while let TyKind::Ref(_, inner) = ty.kind {
-        ty = inner.ty;
+    while let TyKind::Ref(_, inner, _) = ty.kind {
+        ty = inner;
     }
     match ty.kind {
         TyKind::Path(QPath::Resolved(None, path)) => match path.res {
@@ -496,10 +496,9 @@ pub(crate) fn declared_ty<'tcx>(
     match e.kind {
         ExprKind::Path(ref qpath) => match cx.qpath_res(qpath, e.hir_id) {
             Res::Local(binding) => local_decl_ty(cx, binding),
-            Res::Def(
-                DefKind::Const { .. } | DefKind::Static { .. } | DefKind::AssocConst { .. },
-                did,
-            ) => cx.tcx.hir_node_by_def_id(did.as_local()?).ty(),
+            Res::Def(DefKind::Const | DefKind::Static { .. } | DefKind::AssocConst, did) => {
+                cx.tcx.hir_node_by_def_id(did.as_local()?).ty()
+            }
             _ => None,
         },
         ExprKind::Field(base, _) => {

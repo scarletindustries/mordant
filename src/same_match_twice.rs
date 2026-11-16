@@ -93,7 +93,10 @@ impl<'tcx> LateLintPass<'tcx> for SameMatchTwice {
             for (i, site) in sites.iter().enumerate() {
                 // A macro that expands its argument twice (`log!`) yields two
                 // matches from one piece of source; that is one copy.
-                if sites[..i].iter().any(|e| e.span.source_equal(site.span)) {
+                if sites[..i]
+                    .iter()
+                    .any(|e| e.span.lo_hi() == site.span.lo_hi())
+                {
                     continue;
                 }
                 let bucket = buckets.entry(site.hash).or_default();

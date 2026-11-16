@@ -173,7 +173,7 @@ fn is_constant<'tcx>(cx: &LateContext<'tcx>, e: &'tcx Expr<'tcx>) -> bool {
         ExprKind::Path(ref qpath) => matches!(
             cx.qpath_res(qpath, e.hir_id),
             Res::Def(
-                DefKind::Const { .. } | DefKind::AssocConst { .. } | DefKind::ConstParam,
+                DefKind::Const | DefKind::AssocConst | DefKind::ConstParam,
                 _
             )
         ),

@@ -5,10 +5,11 @@
 //! lint fire or not -- privacy, `is_struct`, a minimum field count -- stays in
 //! the lint, so this module only ever answers, never decides.
 
+use rustc_attr_ir::find_attr;
 use rustc_data_structures::fx::FxHashSet;
+use rustc_hir::HirId;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
-use rustc_hir::{HirId, find_attr};
 use rustc_lint::LateContext;
 use rustc_middle::ty::{self, AdtDef, FieldDef, Ty, TyCtxt, VariantDef};
 use rustc_span::{Symbol, sym};
@@ -216,7 +217,7 @@ pub(crate) struct ThreadBlocker<'tcx> {
 pub(crate) fn thread_blockers<'tcx>(
     tcx: TyCtxt<'tcx>,
     adt: AdtDef<'tcx>,
-    args: ty::GenericArgsRef<'tcx>,
+    args: ty::GenericArgs<'tcx>,
     auto_trait: DefId,
     listed: &[String],
 ) -> Vec<(&'tcx FieldDef, Vec<ThreadBlocker<'tcx>>)> {
@@ -301,7 +302,7 @@ impl<'tcx> BlockerWalk<'_, 'tcx> {
         &mut self,
         ty: Ty<'tcx>,
         adt: AdtDef<'tcx>,
-        args: ty::GenericArgsRef<'tcx>,
+        args: ty::GenericArgs<'tcx>,
         tr: DefId,
         owner: Option<Ty<'tcx>>,
         depth: usize,
@@ -374,7 +375,7 @@ impl<'tcx> BlockerWalk<'_, 'tcx> {
 fn has_opt_out_marker<'tcx>(
     tcx: TyCtxt<'tcx>,
     adt: AdtDef<'tcx>,
-    args: ty::GenericArgsRef<'tcx>,
+    args: ty::GenericArgs<'tcx>,
 ) -> bool {
     adt.all_fields().any(|f| {
         let ty::Adt(p, pargs) = *f.ty(tcx, args).skip_normalization().kind() else {

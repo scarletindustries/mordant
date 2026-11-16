@@ -131,7 +131,7 @@ fn plain_data<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>, seen: &mut HashSet<Ty<
                 return true;
             }
             adt.all_fields()
-                .all(|f| plain_data(cx, f.ty(cx.tcx, args).skip_normalization(), seen))
+                .all(|f| plain_data(cx, f.ty(cx.tcx, *args).skip_normalization(), seen))
         }
         _ => false,
     }

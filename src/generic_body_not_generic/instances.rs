@@ -5,15 +5,15 @@ use std::collections::VecDeque;
 use std::ops::ControlFlow;
 
 use clippy_utils::visitors::for_each_expr_without_closures;
+use rustc_attr_ir::lang_items::LangItem;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet, FxIndexMap, FxIndexSet};
-use rustc_hir::attrs::lang_items::LangItem;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_hir::{ConstContext, Expr, ExprKind, Node};
 use rustc_middle::mir::TerminatorKind;
 use rustc_middle::ty::adjustment::{Adjust, DerefAdjustKind};
 use rustc_middle::ty::{
-    self, GenericArgsRef, Ty, TyCtxt, TypeSuperVisitable, TypeVisitable, TypeVisitableExt,
+    self, GenericArgs, Ty, TyCtxt, TypeSuperVisitable, TypeVisitable, TypeVisitableExt,
     TypeVisitor, TypeckResults,
 };
 use rustc_span::Span;
@@ -26,16 +26,16 @@ use crate::mir_flow::mir_for;
 struct DependentUse<'tcx> {
     caller: LocalDefId,
     callee: DefId,
-    args: GenericArgsRef<'tcx>,
+    args: GenericArgs<'tcx>,
     site: Span,
 }
 
-type Instantiation<'tcx> = (LocalDefId, GenericArgsRef<'tcx>);
+type Instantiation<'tcx> = (LocalDefId, GenericArgs<'tcx>);
 
 #[derive(Default)]
 pub(super) struct InstantiationCounts<'tcx> {
-    pub(super) concrete: FxIndexMap<LocalDefId, FxIndexSet<GenericArgsRef<'tcx>>>,
-    pub(super) first_site: FxHashMap<LocalDefId, (Span, GenericArgsRef<'tcx>)>,
+    pub(super) concrete: FxIndexMap<LocalDefId, FxIndexSet<GenericArgs<'tcx>>>,
+    pub(super) first_site: FxHashMap<LocalDefId, (Span, GenericArgs<'tcx>)>,
     dependent_uses: Vec<DependentUse<'tcx>>,
     queue: VecDeque<Instantiation<'tcx>>,
     drop_fn: Option<DefId>,
@@ -47,7 +47,7 @@ impl<'tcx> InstantiationCounts<'tcx> {
         tcx: TyCtxt<'tcx>,
         caller: LocalDefId,
         callee: DefId,
-        args: GenericArgsRef<'tcx>,
+        args: GenericArgs<'tcx>,
         site: Span,
     ) {
         if args.has_non_region_param() {
@@ -63,7 +63,7 @@ impl<'tcx> InstantiationCounts<'tcx> {
     }
 
     /// `drop_glue::<T>` is one `Drop::drop` use per local `Drop` impl inside `T`.
-    fn record(&mut self, tcx: TyCtxt<'tcx>, callee: DefId, args: GenericArgsRef<'tcx>, site: Span) {
+    fn record(&mut self, tcx: TyCtxt<'tcx>, callee: DefId, args: GenericArgs<'tcx>, site: Span) {
         if !tcx.is_lang_item(callee, LangItem::DropGlue) {
             self.count(tcx, callee, args, site);
         } else if let Some(drop_fn) = self.drop_fn {
@@ -73,7 +73,7 @@ impl<'tcx> InstantiationCounts<'tcx> {
         }
     }
 
-    fn count(&mut self, tcx: TyCtxt<'tcx>, callee: DefId, args: GenericArgsRef<'tcx>, site: Span) {
+    fn count(&mut self, tcx: TyCtxt<'tcx>, callee: DefId, args: GenericArgs<'tcx>, site: Span) {
         let Some((item, args)) = resolve(tcx, callee, args) else {
             return;
         };
@@ -93,7 +93,7 @@ impl<'tcx> InstantiationCounts<'tcx> {
 fn resolve<'tcx>(
     tcx: TyCtxt<'tcx>,
     callee: DefId,
-    args: GenericArgsRef<'tcx>,
+    args: GenericArgs<'tcx>,
 ) -> Option<Instantiation<'tcx>> {
     // A foreign trait's item can still resolve to an impl in this crate.
     if !callee.is_local() && tcx.trait_of_assoc(callee).is_none() {
@@ -197,7 +197,7 @@ fn fn_uses<'tcx>(
     tcx: TyCtxt<'tcx>,
     typeck: &TypeckResults<'tcx>,
     e: &Expr<'_>,
-    mut each: impl FnMut(DefId, GenericArgsRef<'tcx>, Span),
+    mut each: impl FnMut(DefId, GenericArgs<'tcx>, Span),
 ) {
     let Some(ty) = typeck.expr_ty_opt(e) else {
         return;
@@ -332,7 +332,7 @@ struct TypeDepth<'tcx> {
 }
 
 impl<'tcx> TypeDepth<'tcx> {
-    fn of(&mut self, args: GenericArgsRef<'tcx>) -> usize {
+    fn of(&mut self, args: GenericArgs<'tcx>) -> usize {
         self.depth = 0;
         args.visit_with(self);
         self.depth

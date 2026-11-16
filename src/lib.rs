@@ -4,6 +4,7 @@
 
 extern crate rustc_abi;
 extern crate rustc_ast;
+extern crate rustc_attr_ir;
 extern crate rustc_data_structures;
 extern crate rustc_errors;
 extern crate rustc_hir;
@@ -17,6 +18,7 @@ extern crate rustc_span;
 extern crate rustc_structures;
 
 use rustc_data_structures::sync;
+use rustc_structures::LintName;
 
 mod adt_facts;
 mod always_unwrapped_option;
@@ -276,9 +278,12 @@ pub fn baseline_path() -> Option<std::path::PathBuf> {
 /// Every lint this pack registers, whatever the configuration: a disabled
 /// lint stays registered.
 pub fn lints() -> Vec<&'static rustc_lint::Lint> {
-    let mut store = rustc_lint::LintStore::new();
-    register(Box::leak(Box::default()), &mut store, false);
-    store.get_lints().to_vec()
+    // The store interns each lint's name.
+    rustc_span::create_default_session_globals_then(|| {
+        let mut store = rustc_lint::LintStore::new();
+        register(Box::leak(Box::default()), &mut store, false);
+        store.get_lints().to_vec()
+    })
 }
 
 /// The `[mordant]` table of `mordant.toml`. Any other table is not read.
@@ -475,7 +480,7 @@ impl Registrar<'_> {
         for (group, members) in table {
             let ids = members
                 .iter()
-                .flat_map(|m| match self.store.find_lints(m) {
+                .flat_map(|m| match self.store.find_lints(LintName::from_str(m)) {
                     Some(ids) => ids.to_vec(),
                     None => panic!("mordant: group {group} lists {m}, which is not a lint"),
                 })
@@ -645,40 +650,44 @@ fn registered_store(config: MordantConfig) -> (rustc_lint::LintStore, Vec<String
 
 #[test]
 fn every_lint_is_in_exactly_one_group_and_the_group_resolves_to_it() {
-    let (store, _) = registered_store(MordantConfig::default());
-    for lint in store.get_lints() {
-        let name = lint.name_lower();
-        let homes: Vec<&str> = names::GROUPS
-            .iter()
-            .filter(|(_, members)| members.contains(&name.as_str()))
-            .map(|(g, _)| *g)
-            .collect();
-        assert_eq!(homes.len(), 1, "{name} is in {homes:?}");
-        let group = store
-            .find_lints(&names::group_id(homes[0]))
-            .expect("group is registered");
-        assert!(group.contains(&rustc_lint::LintId::of(lint)), "{name}");
-    }
-    let grouped: usize = names::GROUPS.iter().map(|(_, m)| m.len()).sum();
-    assert_eq!(grouped, store.get_lints().len());
+    rustc_span::create_default_session_globals_then(|| {
+        let (store, _) = registered_store(MordantConfig::default());
+        for lint in store.get_lints() {
+            let name = lint.name_lower();
+            let homes: Vec<&str> = names::GROUPS
+                .iter()
+                .filter(|(_, members)| members.contains(&name.as_str()))
+                .map(|(g, _)| *g)
+                .collect();
+            assert_eq!(homes.len(), 1, "{name} is in {homes:?}");
+            let group = store
+                .find_lints(LintName::from_str(&names::group_id(homes[0])))
+                .expect("group is registered");
+            assert!(group.contains(&rustc_lint::LintId::of(lint)), "{name}");
+        }
+        let grouped: usize = names::GROUPS.iter().map(|(_, m)| m.len()).sum();
+        assert_eq!(grouped, store.get_lints().len());
+    });
 }
 
 #[test]
 fn disabled_expands_a_group_to_its_members() {
-    let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    let disabled = resolve_disabled(&names(&["group:duplication", "group:nope"]));
-    assert_eq!(
-        disabled,
-        [
-            "same_match_twice",
-            "reimplemented_helper",
-            "generic_body_not_generic",
-            "group:nope"
-        ]
-    );
-    let (_, unknown) = registered_store(MordantConfig {
-        disabled: names(&["group:duplication", "group:nope"]),
-        ..MordantConfig::default()
+    rustc_span::create_default_session_globals_then(|| {
+        let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let disabled = resolve_disabled(&names(&["group:duplication", "group:nope"]));
+        assert_eq!(
+            disabled,
+            [
+                "same_match_twice",
+                "reimplemented_helper",
+                "generic_body_not_generic",
+                "group:nope"
+            ]
+        );
+        let (_, unknown) = registered_store(MordantConfig {
+            disabled: names(&["group:duplication", "group:nope"]),
+            ..MordantConfig::default()
+        });
+        assert_eq!(unknown, ["group:nope"]);
     });
-    assert_eq!(unknown, ["group:nope"]);
 }

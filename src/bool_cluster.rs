@@ -104,9 +104,9 @@ fn combinations<'a>(builds: &'a [Build], bools: &[Symbol]) -> Option<Vec<Combina
         }
     }
     for c in &mut combos {
-        c.builds.sort_by_key(|b| b.span);
+        c.builds.sort_by_key(|b| b.span.lo_hi());
     }
-    combos.sort_by_key(|c| c.builds[0].span);
+    combos.sort_by_key(|c| c.builds[0].span.lo_hi());
     Some(combos)
 }
 

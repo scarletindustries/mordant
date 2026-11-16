@@ -33,10 +33,10 @@ impl<'tcx> LateLintPass<'tcx> for StringifiedError {
         let ty::Adt(err_adt, _) = err_ty.peel_refs().kind() else {
             return;
         };
-        if cx.tcx.is_lang_item(
-            err_adt.did(),
-            rustc_hir::attrs::lang_items::LangItem::String,
-        ) {
+        if cx
+            .tcx
+            .is_lang_item(err_adt.did(), rustc_attr_ir::lang_items::LangItem::String)
+        {
             return;
         }
         // The call must actually produce a string error, or nothing was
@@ -48,7 +48,7 @@ impl<'tcx> LateLintPass<'tcx> for StringifiedError {
         let is_string_out = match out_err.peel_refs().kind() {
             ty::Adt(a, _) => cx
                 .tcx
-                .is_lang_item(a.did(), rustc_hir::attrs::lang_items::LangItem::String),
+                .is_lang_item(a.did(), rustc_attr_ir::lang_items::LangItem::String),
             _ => out_err.peel_refs().is_str(),
         };
         if !is_string_out {

@@ -76,7 +76,7 @@ impl StaleAcrossReentry {
         &self,
         cx: &LateContext<'tcx>,
         def: DefId,
-        args: ty::GenericArgsRef<'tcx>,
+        args: ty::GenericArgs<'tcx>,
     ) -> bool {
         let callees = &self.config.stale_across_reentry_callees;
         if callees.is_empty() {
@@ -100,7 +100,7 @@ impl StaleAcrossReentry {
 fn impl_item_of<'tcx>(
     cx: &LateContext<'tcx>,
     def: DefId,
-    args: ty::GenericArgsRef<'tcx>,
+    args: ty::GenericArgs<'tcx>,
 ) -> Option<DefId> {
     cx.tcx.trait_of_assoc(def)?;
     resolve_item(cx.tcx, cx.typing_env(), def, args).filter(|&item| item != def)
@@ -308,11 +308,11 @@ fn changes_behind_shared<'tcx>(cx: &LateContext<'tcx>, ty: ty::Ty<'tcx>, depth: 
         ty::Tuple(elems) => elems.iter().any(inner),
         ty::Adt(adt, args) if adt.did().is_local() => adt
             .all_fields()
-            .any(|f| inner(f.ty(cx.tcx, args).skip_normalization())),
+            .any(|f| inner(f.ty(cx.tcx, *args).skip_normalization())),
         ty::Adt(adt, _) if adt.is_phantom_data() => false,
         ty::Adt(adt, args) => {
             cx.tcx
-                .is_lang_item(adt.did(), rustc_hir::attrs::lang_items::LangItem::NonNull)
+                .is_lang_item(adt.did(), rustc_attr_ir::lang_items::LangItem::NonNull)
                 || args.types().any(inner)
         }
         _ => false,

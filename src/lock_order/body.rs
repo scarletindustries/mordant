@@ -120,16 +120,16 @@ impl<'c, 'tcx> Kinds<'c, 'tcx> {
         let name = tcx.item_name(def);
         let name = name.as_str();
         let krate = tcx.crate_name(def.krate);
-        #[allow(
-            deprecated,
-            reason = "the attribute is a tool attribute with no parsed form"
-        )]
-        let marked = clippy_utils::attrs::get_builtin_attr(
-            tcx.get_all_attrs(def),
-            clippy_utils::sym::has_significant_drop,
-        )
-        .next()
-        .is_some();
+        let marked = tcx
+            .tool_attrs(
+                def,
+                &[
+                    rustc_span::sym::clippy,
+                    clippy_utils::sym::has_significant_drop,
+                ],
+            )
+            .next()
+            .is_some();
         let is_guard = (LOCK_CRATES.contains(&krate.as_str()) && STD_GUARDS.contains(&name))
             || marked
             || self.listed(def, &self.config.guard_types);

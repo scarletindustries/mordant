@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::ControlFlow;
 
 use clippy_utils::visitors::for_each_expr_without_closures;
-use rustc_hir::attrs::lang_items::LangItem;
+use rustc_attr_ir::lang_items::LangItem;
 use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::DefId;
 use rustc_hir::intravisit::FnKind;

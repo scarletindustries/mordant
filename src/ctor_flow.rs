@@ -40,7 +40,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use rustc_abi::FieldIdx;
-use rustc_hir::attrs::lang_items::LangItem;
+use rustc_attr_ir::lang_items::LangItem;
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_index::IndexVec;
 use rustc_lint::LateContext;

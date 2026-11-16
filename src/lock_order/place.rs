@@ -3,8 +3,8 @@
 //! parameter, a static or a local) and the fields taken from it.
 
 use rustc_abi::{FIRST_VARIANT, FieldIdx, VariantIdx};
+use rustc_attr_ir::lang_items::LangItem;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
-use rustc_hir::attrs::lang_items::LangItem;
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_index::IndexVec;
 use rustc_middle::mir::{

@@ -62,7 +62,7 @@ impl<'tcx> LateLintPass<'tcx> for ParallelBools {
                 {
                     continue;
                 }
-                let Some(first) = writes.iter().map(|w| w.span).min() else {
+                let Some(first) = writes.iter().map(|w| w.span).min_by_key(|s| s.lo_hi()) else {
                     continue;
                 };
                 let sites = writes

@@ -111,7 +111,7 @@ impl KeyNotIdentity {
                 .non_enum_variant()
                 .fields
                 .iter()
-                .map(|f| f.ty(cx.tcx, args).skip_normalization())
+                .map(|f| f.ty(cx.tcx, *args).skip_normalization())
                 .collect(),
             _ => return None,
         };

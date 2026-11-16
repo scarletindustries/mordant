@@ -220,7 +220,7 @@ fn is_constant_res(res: Res) -> bool {
     matches!(
         res,
         Res::Def(
-            DefKind::Const { .. } | DefKind::AssocConst { .. } | DefKind::Ctor(_, CtorKind::Const),
+            DefKind::Const | DefKind::AssocConst | DefKind::Ctor(_, CtorKind::Const),
             _
         )
     )
