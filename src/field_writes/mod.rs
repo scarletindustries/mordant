@@ -149,7 +149,7 @@ impl FieldWrites {
     /// in definition order.
     pub fn variants(&self, tcx: TyCtxt<'_>) -> Vec<DefId> {
         let mut out: Vec<DefId> = self.access.keys().copied().collect();
-        out.sort_by_key(|d| tcx.def_span(*d));
+        out.sort_by_key(|d| tcx.def_span(*d).lo_hi());
         out
     }
 

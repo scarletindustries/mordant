@@ -117,7 +117,7 @@ impl<'tcx> LateLintPass<'tcx> for AlwaysUnwrappedOption {
             })
             .collect();
         // Deterministic order: findings are compared against a baseline.
-        found.sort_by_key(|(span, ..)| *span);
+        found.sort_by_key(|(span, ..)| span.lo_hi());
         for (span, adt, field, facts) in found {
             let owner = cx.tcx.item_name(*adt);
             emit_with_note(

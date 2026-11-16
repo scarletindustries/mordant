@@ -389,12 +389,12 @@ fn level_source(cx: &LateContext<'_>, level: Level, src: LintLevelSource) -> Vec
         LintLevelSource::CommandLine(flag_value, set) => {
             let flag = set.to_cmd_flag();
             let hyphenated = name.replace('_', "-");
-            if flag_value.as_str() == name {
+            if flag_value.to_string() == name {
                 return vec![note(format!(
                     "requested on the command line with `{flag} {hyphenated}`"
                 ))];
             }
-            let group = flag_value.as_str().replace('_', "-");
+            let group = flag_value.to_string().replace('_', "-");
             vec![
                 note(format!("`{flag} {hyphenated}` implied by `{flag} {group}`")),
                 Note {
@@ -412,7 +412,7 @@ fn level_source(cx: &LateContext<'_>, level: Level, src: LintLevelSource) -> Vec
                 message: "the lint level is defined here".to_string(),
                 at: files::locate(cx, span),
             }];
-            if attr.as_str() != name {
+            if attr.to_string() != name {
                 let level = level.as_str();
                 notes.push(note(format!(
                     "`#[{level}({name})]` implied by `#[{level}({attr})]`"
@@ -426,10 +426,7 @@ fn level_source(cx: &LateContext<'_>, level: Level, src: LintLevelSource) -> Vec
 /// The trait or, for an inherent impl, the type an associated item
 /// belongs to.
 fn parent_key(cx: &LateContext<'_>, did: DefId) -> Option<String> {
-    if !matches!(
-        cx.tcx.def_kind(did),
-        DefKind::AssocFn | DefKind::AssocConst { .. }
-    ) {
+    if !matches!(cx.tcx.def_kind(did), DefKind::AssocFn | DefKind::AssocConst) {
         return None;
     }
     let parent = cx.tcx.parent(did);
@@ -452,7 +449,7 @@ fn enclosing_impl_self_adt(cx: &LateContext<'_>, hir_id: HirId) -> Option<DefId>
     let owner = hir_id.owner.to_def_id();
     let impl_id = match cx.tcx.def_kind(owner) {
         DefKind::Impl { .. } => owner,
-        DefKind::AssocFn | DefKind::AssocConst { .. } | DefKind::AssocTy => cx.tcx.parent(owner),
+        DefKind::AssocFn | DefKind::AssocConst | DefKind::AssocTy => cx.tcx.parent(owner),
         _ => return None,
     };
     if !matches!(cx.tcx.def_kind(impl_id), DefKind::Impl { .. }) {

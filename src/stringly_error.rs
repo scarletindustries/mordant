@@ -56,7 +56,7 @@ impl StringlyError {
             ty::Adt(adt, args) => {
                 if cx
                     .tcx
-                    .is_lang_item(adt.did(), rustc_hir::attrs::lang_items::LangItem::String)
+                    .is_lang_item(adt.did(), rustc_attr_ir::lang_items::LangItem::String)
                 {
                     Some("String")
                 } else if cx.tcx.is_diagnostic_item(sym::Cow, adt.did()) && args.type_at(1).is_str()

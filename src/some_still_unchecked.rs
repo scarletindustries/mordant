@@ -1,7 +1,7 @@
 use clippy_utils::source::snippet;
 use clippy_utils::visitors::is_local_used;
 use clippy_utils::{SpanlessEq, is_lang_item_or_ctor, is_refutable};
-use rustc_hir::attrs::lang_items::LangItem;
+use rustc_attr_ir::lang_items::LangItem;
 use rustc_hir::def::Res;
 use rustc_hir::{Arm, BinOpKind, Expr, ExprKind, HirId, LetExpr, MatchSource, Pat, PatKind};
 use rustc_lint::{LateContext, LateLintPass};

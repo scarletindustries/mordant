@@ -144,7 +144,7 @@ impl Held {
         cx: &LateContext<'_>,
         span: Span,
         msg: String,
-        decorate: impl FnOnce(&mut Diag<'_, ()>),
+        decorate: impl FnOnce(&mut Diag<'_>),
     ) {
         let mut diag = cx.tcx.dcx().struct_span_warn(span, msg);
         decorate(&mut diag);
@@ -283,7 +283,7 @@ pub fn emit_hir_then(
     hir_id: HirId,
     span: Span,
     msg: impl Into<String>,
-    decorate: impl FnOnce(&mut Diag<'_, ()>),
+    decorate: impl FnOnce(&mut Diag<'_>),
 ) {
     match weigh(cx, lint, span, hir_id) {
         Verdict::Silent => {}
@@ -358,7 +358,7 @@ fn print_over(
 ) -> usize {
     // By position: a lint that reports when the crate is done finds things
     // in an order of its own.
-    held.sort_by_key(|(_, diag)| diag.sort_span.lo());
+    held.sort_by_key(|(_, diag)| diag.span.primary_span().map(|s| s.lo()));
     let mut found: Vec<(Key, usize)> = Vec::new();
     for (key, _) in &held {
         match found.iter_mut().find(|(k, _)| k == key) {

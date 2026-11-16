@@ -77,7 +77,7 @@ fn is_stringy(cx: &LateContext<'_>, ty: Ty<'_>) -> bool {
         ty::Adt(adt, args) => {
             if cx
                 .tcx
-                .is_lang_item(adt.did(), rustc_hir::attrs::lang_items::LangItem::String)
+                .is_lang_item(adt.did(), rustc_attr_ir::lang_items::LangItem::String)
             {
                 true
             } else if adt.is_box() {

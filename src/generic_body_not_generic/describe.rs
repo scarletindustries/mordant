@@ -2,8 +2,8 @@
 //! notes and the help lines.
 
 use clippy_utils::source::snippet_opt;
+use rustc_attr_ir::InlineAttr;
 use rustc_data_structures::fx::FxHashMap;
-use rustc_hir::attrs::InlineAttr;
 use rustc_hir::def_id::LocalDefId;
 use rustc_index::IndexVec;
 use rustc_index::bit_set::DenseBitSet;
@@ -14,7 +14,7 @@ use rustc_middle::mir::{
     StatementKind, TerminatorKind,
 };
 use rustc_middle::ty::print::with_no_trimmed_paths;
-use rustc_middle::ty::{self, GenericArgsRef, GenericParamDefKind, Ty, TyCtxt, TypeVisitableExt};
+use rustc_middle::ty::{self, GenericArgs, GenericParamDefKind, Ty, TyCtxt, TypeVisitableExt};
 use rustc_span::{Span, Symbol};
 
 use super::GENERIC_BODY_NOT_GENERIC;
@@ -52,7 +52,7 @@ fn entry_blocks(body: &mir::Body<'_>) -> Vec<BasicBlock> {
     while run.len() <= body.basic_blocks.len() {
         run.push(block);
         let next = match body.basic_blocks[block].terminator().kind {
-            TerminatorKind::Goto { target }
+            TerminatorKind::Goto { target, .. }
             | TerminatorKind::Drop { target, .. }
             | TerminatorKind::Assert { target, .. }
             | TerminatorKind::Call {
@@ -242,7 +242,7 @@ fn param_names(tcx: TyCtxt<'_>, def: LocalDefId) -> Vec<String> {
         .collect()
 }
 
-fn render_args<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId, args: GenericArgsRef<'tcx>) -> String {
+fn render_args<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId, args: GenericArgs<'tcx>) -> String {
     let generics = tcx.generics_of(def);
     let pairs: Vec<String> = args
         .iter()
@@ -474,7 +474,7 @@ pub(super) fn report<'tcx>(
     cx: &LateContext<'tcx>,
     part: &Finding,
     sets: usize,
-    site: Option<(Span, GenericArgsRef<'tcx>)>,
+    site: Option<(Span, GenericArgs<'tcx>)>,
     min_statements: usize,
 ) {
     let tcx = cx.tcx;

@@ -17,7 +17,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(mordant)'] }
 
 [dependencies]
 annotate-snippets = "0.12"
-clippy_utils = { git = "https://github.com/rust-lang/rust-clippy", rev = "34ace9862f3584a9493049347c3158607f7586e8" }
+clippy_utils = { git = "https://github.com/rust-lang/rust-clippy", rev = "ab650f430a436892e88820e2058d6b987961812c" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"

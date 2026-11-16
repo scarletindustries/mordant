@@ -669,7 +669,7 @@ impl<'a, 'tcx> Analysis<'a, 'tcx> {
                 TerminatorKind::Call {
                     target: Some(next), ..
                 }
-                | TerminatorKind::Goto { target: next } => bb = *next,
+                | TerminatorKind::Goto { target: next, .. } => bb = *next,
                 _ => return false,
             }
         }
@@ -813,7 +813,7 @@ impl<'a, 'tcx> Analysis<'a, 'tcx> {
                             };
                             (
                                 field.name.to_string(),
-                                field.ty(self.tcx, args).skip_normalization(),
+                                field.ty(self.tcx, *args).skip_normalization(),
                             )
                         }
                         ty::Tuple(tys) => match tys.get(idx.as_usize()) {

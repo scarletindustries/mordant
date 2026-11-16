@@ -8,7 +8,7 @@ use std::ops::ControlFlow;
 use clippy_utils::visitors::for_each_expr_without_closures;
 use clippy_utils::{hash_expr, is_default_equivalent};
 use rustc_ast::LitKind;
-use rustc_hir::attrs::lang_items::LangItem;
+use rustc_attr_ir::lang_items::LangItem;
 use rustc_hir::def::{CtorOf, DefKind, Res};
 use rustc_hir::def_id::DefId;
 use rustc_hir::{BorrowKind, Expr, ExprKind, HirId, Node, QPath, Stmt};
@@ -76,7 +76,7 @@ fn value_of<'tcx>(cx: &LateContext<'tcx>, e: &Expr<'tcx>, ty: Ty<'tcx>) -> Value
             ref other => Value::OtherLit(format!("{other:?}")),
         },
         ExprKind::Path(ref qpath) => match cx.qpath_res(qpath, e.hir_id) {
-            Res::Def(DefKind::Const { .. } | DefKind::AssocConst { .. }, did) => Value::Const(did),
+            Res::Def(DefKind::Const | DefKind::AssocConst, did) => Value::Const(did),
             _ => Value::Unknown,
         },
         ExprKind::Call(callee, []) if is_default_fn(cx, callee) => default_of(cx, ty),

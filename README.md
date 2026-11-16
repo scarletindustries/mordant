@@ -15,8 +15,8 @@ Mordant is a lint pack for Rust. It finds rules your code depends on but its typ
 Mordant lints stable Rust projects. It is built with the nightly pinned in [`rust-toolchain`](rust-toolchain), and your own toolchain does not change.
 
 ```sh
-rustup toolchain install nightly-2026-09-01 --component rustc-dev --component llvm-tools-preview
-cargo +nightly-2026-09-01 install --locked --git https://github.com/scarletindustries/mordant
+rustup toolchain install nightly-2026-11-14 --component rustc-dev --component llvm-tools-preview
+cargo +nightly-2026-11-14 install --locked --git https://github.com/scarletindustries/mordant
 ```
 
 Add `--rev <commit>` to pin the lints to one version.

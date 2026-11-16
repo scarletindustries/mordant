@@ -302,7 +302,7 @@ impl<'a, 'b, 'tcx> Walk<'a, 'b, 'tcx> {
 
     /// The fn a call runs: the impl's item for a trait method whose impl
     /// the argument types pick.
-    fn resolve(&self, def: DefId, args: ty::GenericArgsRef<'tcx>) -> Option<DefId> {
+    fn resolve(&self, def: DefId, args: ty::GenericArgs<'tcx>) -> Option<DefId> {
         let tcx = self.origins.tcx;
         if tcx.trait_of_assoc(def).is_none() {
             return Some(def);
@@ -340,11 +340,7 @@ fn holds_pointer(ty: Ty<'_>) -> bool {
 /// stores none), shaped `fn(&self) -> *mut U` where `Self` holds an
 /// `UnsafeCell<U>`. A cell type's accessor of that shape returns a pointer
 /// to its own contents.
-fn points_into_own_cell<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def: DefId,
-    args: ty::GenericArgsRef<'tcx>,
-) -> bool {
+fn points_into_own_cell<'tcx>(tcx: TyCtxt<'tcx>, def: DefId, args: ty::GenericArgs<'tcx>) -> bool {
     let sig = tcx
         .fn_sig(def)
         .instantiate(tcx, args)

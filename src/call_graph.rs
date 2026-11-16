@@ -14,7 +14,7 @@ use rustc_data_structures::fx::{FxHashMap, FxHashSet, FxIndexMap};
 use rustc_hir::ConstContext;
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_middle::mir::{AggregateKind, BasicBlock, Body, Rvalue, StatementKind, TerminatorKind};
-use rustc_middle::ty::{self, GenericArgsRef, Instance, Ty, TyCtxt, TypingEnv};
+use rustc_middle::ty::{self, GenericArgs, Instance, Ty, TyCtxt, TypingEnv};
 use rustc_span::Span;
 
 use crate::mir_flow::{assert_panic_lang_item, mir_for};
@@ -210,7 +210,7 @@ pub(crate) fn resolve_instance<'tcx>(
     tcx: TyCtxt<'tcx>,
     env: TypingEnv<'tcx>,
     def: DefId,
-    args: GenericArgsRef<'tcx>,
+    args: GenericArgs<'tcx>,
 ) -> Option<Instance<'tcx>> {
     let args = tcx
         .try_normalize_erasing_regions(env, ty::Unnormalized::new_wip(args))
@@ -225,7 +225,7 @@ pub(crate) fn resolve_item<'tcx>(
     tcx: TyCtxt<'tcx>,
     env: TypingEnv<'tcx>,
     def: DefId,
-    args: GenericArgsRef<'tcx>,
+    args: GenericArgs<'tcx>,
 ) -> Option<DefId> {
     match resolve_instance(tcx, env, def, args)?.def {
         ty::InstanceKind::Item(item) => Some(item),

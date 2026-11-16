@@ -90,7 +90,7 @@ impl<'tcx> ParamUses<'tcx> {
         value.has_non_region_param() && value.visit_with(self).is_break()
     }
 
-    fn closure_uses_param(&mut self, def: DefId, args: ty::GenericArgsRef<'tcx>) -> bool {
+    fn closure_uses_param(&mut self, def: DefId, args: ty::GenericArgs<'tcx>) -> bool {
         let parts = args.as_closure();
         self.any(&parts.tupled_upvars_ty())
             || self.any(&parts.sig_as_fn_ptr_ty())

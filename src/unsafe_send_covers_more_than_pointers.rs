@@ -1,7 +1,7 @@
 use rustc_errors::MultiSpan;
 use rustc_hir::{Item, ItemKind};
 use rustc_lint::{LateContext, LateLintPass};
-use rustc_middle::ty::{self, AdtDef, FieldDef, GenericArgsRef, Ty, TyCtxt, TypeVisitableExt};
+use rustc_middle::ty::{self, AdtDef, FieldDef, GenericArgs, Ty, TyCtxt, TypeVisitableExt};
 use rustc_span::{Span, Symbol, sym};
 
 use crate::MordantConfig;
@@ -130,7 +130,7 @@ enum Primitive {
 fn primitive_shape<'tcx>(
     tcx: TyCtxt<'tcx>,
     adt: AdtDef<'tcx>,
-    args: GenericArgsRef<'tcx>,
+    args: GenericArgs<'tcx>,
 ) -> Primitive {
     let tys: Vec<Ty<'tcx>> = adt
         .all_fields()
@@ -154,7 +154,7 @@ fn shared_cell<'tcx>(
     tcx: TyCtxt<'tcx>,
     primitive: Primitive,
     field: &FieldDef,
-    args: GenericArgsRef<'tcx>,
+    args: GenericArgs<'tcx>,
     cell: Ty<'tcx>,
 ) -> bool {
     if !is_cell(tcx, cell) {

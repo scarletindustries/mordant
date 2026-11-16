@@ -359,7 +359,7 @@ impl<'tcx> LateLintPass<'tcx> for InterchangeableAliases {
         } else if matches!(node, Node::Item(_) | Node::ImplItem(_) | Node::TraitItem(_))
             && matches!(
                 cx.tcx.def_kind(owner),
-                DefKind::Const { .. } | DefKind::Static { .. } | DefKind::AssocConst { .. }
+                DefKind::Const | DefKind::Static { .. } | DefKind::AssocConst
             )
             && let Some(dest) = node.ty()
         {
